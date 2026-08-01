@@ -1,0 +1,77 @@
+# =============================================================================
+# Install into: heavy-rental-react-web-portal
+# Path:         .github/workflows/portal-ci-caller.yml
+# =============================================================================
+# GitHub Flow CI caller — validates feature-branch pull requests before merge.
+#
+# Place both files in the React web portal repository:
+#
+#   .github/workflows/portal-ci-caller.yml       ← this file (triggers)
+#   .github/workflows/integration-pipeline.yml   ← reusable pipeline (called)
+#
+# GitHub Flow
+# -----------
+#   1. Branch from develop
+#   2. Open a pull request into develop → this workflow runs (Integration first)
+#   3. Review + green checks → merge into develop
+#   4. Release packaging → portal-release-caller.yml on GitHub Release
+#                          publish, or on PR develop → master
+#
+# Reusable workflow (same repository):
+#   ./.github/workflows/integration-pipeline.yml
+#
+# Job priority (do not reorder conceptually)
+# -----------------------------------------
+#   1. Integration           ← HIGHEST PRIORITY (required status check)
+#   2. Quality Control       (needs Integration)
+#   2. Security Testing      (needs Integration; parallel with QC)
+#   2. CodeQL Analysis       (needs Integration; JS/TS Code Scanning)
+#   3. REST Endpoint Tests   (needs Integration; when mock scripts exist)
+#
+# Setup
+# -----
+# 1. Copy into the portal repo:
+#      .github/workflows/portal-ci-caller.yml
+#      .github/workflows/integration-pipeline.yml
+# 2. Branch protection on develop (Settings → Branches):
+#      - Require a pull request before merging
+#      - Require status checks to pass before merging:
+#          * Integration              ← require this first / highest priority
+#          * Quality Control
+#          * Security Testing
+#          * CodeQL Analysis
+#      - Do not allow bypassing the above for administrators (recommended)
+# =============================================================================
+
+name: CI
+
+on:
+  # GitHub Flow: every PR targeting develop
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Re-validate after merge (and direct pushes to develop)
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+# One run per PR (or branch); cancel superseded commits on the same PR
+concurrency:
+  group: portal-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  # Forwarded to reusable workflow for CodeQL / Code Scanning
+  security-events: write
+  actions: read
+
+jobs:
+  # Integration is the first / highest-priority job inside the reusable workflow
+  integration-pipeline:
+    name: Integration pipeline
+    # Same-repo reusable workflow — both files live under .github/workflows/
+    uses: ./.github/workflows/integration-pipeline.yml
+    # No inputs: checks out this portal repo at github.sha
+    # (PR head merge commit on pull_request — correct for GitHub Flow PR CI).
