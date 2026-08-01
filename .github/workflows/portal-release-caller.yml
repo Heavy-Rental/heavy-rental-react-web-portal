@@ -1,0 +1,90 @@
+# =============================================================================
+# Install into: heavy-rental-react-web-portal
+# Path:         .github/workflows/portal-release-caller.yml
+# =============================================================================
+# Release caller — runs only when:
+#   1. A GitHub Release is published, or
+#   2. A pull request is opened/updated from develop → master
+#
+# Feature-branch PR validation remains CI (portal-ci-caller.yml).
+#
+# Place both files in the React web portal repository:
+#
+#   .github/workflows/portal-release-caller.yml  ← this file (triggers)
+#   .github/workflows/release-pipeline.yml       ← reusable pipeline (called)
+#
+# When this runs
+# --------------
+#   A) GitHub → Releases → Publish release
+#      (or gh release create / API that publishes a release)
+#
+#   B) Pull request whose head is develop and base is master
+#      (opened, synchronize, reopened, ready_for_review)
+#
+#   Does NOT run on:
+#     - push to master/develop alone
+#     - PRs from feature branches (even into master)
+#     - PRs into develop
+#     - tag push alone (publish a GitHub Release, or open develop→master PR)
+#
+# Flow
+# ----
+#   feature → develop (CI) → PR develop→master (this release pipeline)
+#   and/or: publish GitHub Release → this pipeline
+#     → Integration → QC → Security → CodeQL → Packaging
+#
+# Reusable workflow (same repository):
+#   ./.github/workflows/release-pipeline.yml
+#
+# Job priority inside the reusable workflow
+# -----------------------------------------
+#   1. Integration           ← HIGHEST PRIORITY
+#   2. Quality Control       (needs Integration)
+#   2. Security Testing      (needs Integration)
+#   2. CodeQL Analysis       (needs Integration; JS/TS Code Scanning)
+#   3. Packaging             (needs Integration + QC + Security + CodeQL)
+#      → Vite dist/ archive for deploy
+#
+# Setup
+# -----
+# 1. Copy into the portal repo:
+#      .github/workflows/portal-release-caller.yml
+#      .github/workflows/release-pipeline.yml
+# =============================================================================
+
+name: Release
+
+on:
+  # When a GitHub Release is published
+  release:
+    types: [published]
+  # PRs targeting master; job-level if further requires head branch == develop
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# One run per release tag or develop→master PR; do not cancel in-flight packaging
+concurrency:
+  group: portal-release-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  # Forwarded to reusable workflow for CodeQL / Code Scanning
+  security-events: write
+  actions: read
+
+jobs:
+  release-pipeline:
+    name: Release pipeline
+    # release published, OR pull request develop → master only
+    if: >
+      github.event_name == 'release' ||
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'develop' &&
+       github.base_ref == 'master')
+    # Same-repo reusable workflow — both files live under .github/workflows/
+    uses: ./.github/workflows/release-pipeline.yml
+    # No inputs: checks out this portal repo at github.sha
+    # (release tag commit, or PR merge commit for develop→master)
