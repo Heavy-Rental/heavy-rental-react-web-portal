@@ -2,11 +2,12 @@
 # Heavy Rental Web Portal — Integration CI Pipeline (reusable)
 # =============================================================================
 # Stages:
-#   1. Integration       — checkout, Node 22, npm ci, install health
-#   2. Quality Control   — ESLint + TypeScript (needs Integration)
-#   3. Security Testing  — Semgrep + npm audit + Trivy (needs Integration)
-#   4. CodeQL Analysis   — GitHub CodeQL for JavaScript/TypeScript (needs Integration)
+#   1. Integration         — checkout, Node 22, npm ci, install health
+#   2. Quality Control     — ESLint + TypeScript (needs Integration)
+#   3. Security Testing    — Semgrep + npm audit + Trivy (needs Integration)
+#   4. CodeQL Analysis     — GitHub CodeQL for JavaScript/TypeScript (needs Integration)
 #   5. REST Endpoint Tests — mock server HTTP tests (needs Integration)
+#   6. GitHub Flow CI Gate — aggregate: Integration first, then QC + Security + CodeQL + REST
 #   Security report format (standard): SARIF 2.1.0
 #     - Semgrep → semgrep.sarif
 #     - npm audit → npm-audit.sarif (converted from audit JSON)
@@ -979,3 +980,73 @@ jobs:
           path: test-reports/
           retention-days: 14
           if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # 6. GitHub Flow CI gate — aggregate status for branch protection
+  #    Integration is evaluated first (highest priority); then QC, Security,
+  #    CodeQL, and REST Endpoint Tests.
+  # ---------------------------------------------------------------------------
+  github-flow-gate:
+    name: GitHub Flow CI Gate
+    runs-on: ubuntu-latest
+    # Always run so a failed Integration still produces a red gate check
+    if: always()
+    needs:
+      - integration
+      - quality-control
+      - security-testing
+      - codeql
+      - rest-endpoint-tests
+    timeout-minutes: 5
+    steps:
+      - name: Enforce Integration priority and full CI green
+        env:
+          INTEGRATION: ${{ needs.integration.result }}
+          QUALITY: ${{ needs.quality-control.result }}
+          SECURITY: ${{ needs.security-testing.result }}
+          CODEQL: ${{ needs.codeql.result }}
+          REST_TESTS: ${{ needs.rest-endpoint-tests.result }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "### GitHub Flow CI gate (web portal)"
+            echo ""
+            echo "| Job | Result | Priority |"
+            echo "| --- | --- | --- |"
+            echo "| Integration | \`${INTEGRATION}\` | **1 (highest)** |"
+            echo "| Quality Control | \`${QUALITY}\` | 2 |"
+            echo "| Security Testing | \`${SECURITY}\` | 2 |"
+            echo "| CodeQL Analysis | \`${CODEQL}\` | 2 |"
+            echo "| REST Endpoint Tests | \`${REST_TESTS}\` | 3 |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Integration (priority 1): ${INTEGRATION}"
+          echo "Quality Control (priority 2): ${QUALITY}"
+          echo "Security Testing (priority 2): ${SECURITY}"
+          echo "CodeQL Analysis (priority 2): ${CODEQL}"
+          echo "REST Endpoint Tests (priority 3): ${REST_TESTS}"
+
+          if [ "${INTEGRATION}" != "success" ]; then
+            echo "::error::Integration is the highest-priority gate and did not succeed (result=${INTEGRATION})."
+            echo "Fix Integration before Quality Control / Security / CodeQL / REST tests can proceed."
+            exit 1
+          fi
+          if [ "${QUALITY}" != "success" ]; then
+            echo "::error::Quality Control did not succeed (result=${QUALITY})."
+            exit 1
+          fi
+          if [ "${SECURITY}" != "success" ]; then
+            echo "::error::Security Testing did not succeed (result=${SECURITY})."
+            exit 1
+          fi
+          if [ "${CODEQL}" != "success" ]; then
+            echo "::error::CodeQL Analysis did not succeed (result=${CODEQL})."
+            exit 1
+          fi
+          if [ "${REST_TESTS}" != "success" ]; then
+            echo "::error::REST Endpoint Tests did not succeed (result=${REST_TESTS})."
+            exit 1
+          fi
+
+          echo "GitHub Flow CI gate passed: Integration first, then QC + Security + CodeQL + REST Endpoint Tests."
