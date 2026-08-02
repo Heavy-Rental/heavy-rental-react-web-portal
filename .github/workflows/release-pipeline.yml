@@ -424,7 +424,7 @@ jobs:
           npm audit --audit-level=high --json > "${REPORT_DIR}/npm-audit.json" 2>"${REPORT_DIR}/npm-audit-stderr.txt"
           AUDIT_EXIT=$?
           set -e
-          # <<'PY' is unexpanded — read paths from the environment, not shell ${{ }}
+          # Quoted heredoc (<<'PY') does not expand shell vars; use os.environ in Python.
           python3 <<'PY'
           import json
           import os
@@ -804,7 +804,7 @@ jobs:
         id: package
         working-directory: ${{ env.APP_PATH }}
         env:
-          # Bind github context for use in shell (Semgrep: no ${{ github.* }} in run:)
+          # Bind github context for use in shell (Semgrep: no github context in run: scripts)
           GH_RUN_NUMBER: ${{ github.run_number }}
           GH_REPOSITORY_OWNER: ${{ github.repository_owner }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
