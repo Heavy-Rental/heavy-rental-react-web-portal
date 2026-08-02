@@ -1,11 +1,11 @@
 import { useState, useRef } from "react";
 import {
-  Search, MapPin, Calendar, ArrowRight, X, Truck, Wrench,
-  CheckCircle, ChevronLeft, BarChart2, Activity, DollarSign, AlertTriangle,
+  Search, MapPin, Calendar, X, Truck, Wrench,
+  CheckCircle, BarChart2, Activity, DollarSign, AlertTriangle,
   User, LogOut, TrendingUp, Lock, RefreshCw, Info,
 } from "lucide-react";
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
 
@@ -94,17 +94,6 @@ const MONTHLY_UTILIZATION = [
   { month: "Jul", utilization: 76, revenue: 243000 },
 ];
 
-const STATUS_DIST = [
-  { name: "Rented Out", value: 68, color: "#f5a623" },
-  { name: "Available", value: 22, color: "#4ade80" },
-  { name: "Maintenance", value: 7, color: "#f87171" },
-  { name: "In Transit", value: 3, color: "#60a5fa" },
-];
-
-const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-
-
 interface AssetRecord {
   id: number;
   name: string;
@@ -178,14 +167,58 @@ const EMPTY_ASSET: Omit<AssetRecord, "id"> = {
 // ─── ASSET FORM MODAL ─────────────────────────────────────────────────────────
 
 
-function ChartTip({ active, payload, label }: any) {
+interface ChartTipPayloadItem {
+  name?: string | number;
+  value?: number | string;
+  color?: string;
+}
+
+function ChartTip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: readonly ChartTipPayloadItem[];
+  label?: string | number;
+}) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-card border border-border px-3 py-2 text-xs">
       <p className="text-foreground font-semibold mb-1">{label}</p>
-      {payload.map((p: any) => (
-        <p key={p.name} style={{ color: p.color ?? "#f5a623" }}>{p.name}: {p.value}</p>
+      {payload.map((p, i) => (
+        <p key={String(p.name ?? i)} style={{ color: p.color ?? "#f5a623" }}>{p.name}: {p.value}</p>
       ))}
+    </div>
+  );
+}
+
+
+function AssetFormField({
+  label, type = "text", placeholder = "", required = false,
+  value, error, onChange,
+}: {
+  label: string;
+  type?: string;
+  placeholder?: string;
+  required?: boolean;
+  value: string | number | boolean;
+  error?: string;
+  onChange: (val: string | number) => void;
+}) {
+  return (
+    <div>
+      <label className="text-xs text-muted-foreground mb-1.5 block">
+        {label}{required && <span className="text-primary ml-0.5">*</span>}
+      </label>
+      <input
+        type={type}
+        value={String(value)}
+        onChange={e => onChange(type === "number" ? Number(e.target.value) : e.target.value)}
+        placeholder={placeholder}
+        className={`w-full bg-secondary/50 border px-3 py-2 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors ${error ? "border-red-500/60" : "border-border"}`}
+      />
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
     </div>
   );
 }
@@ -205,7 +238,7 @@ export function AssetFormModal({
   const [dragOver, setDragOver] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  const set = (field: keyof typeof form, val: any) =>
+  const set = <K extends keyof Omit<AssetRecord, "id">>(field: K, val: Omit<AssetRecord, "id">[K]) =>
     setForm(prev => ({ ...prev, [field]: val }));
 
   const handlePhotoFile = (file: File) => {
@@ -230,22 +263,6 @@ export function AssetFormModal({
     if (!validate()) return;
     onSave({ ...form, id: asset?.id ?? Date.now() });
   };
-
-  const Field = ({ label, name, type = "text", placeholder = "", required = false }: { label: string; name: keyof typeof form; type?: string; placeholder?: string; required?: boolean }) => (
-    <div>
-      <label className="text-xs text-muted-foreground mb-1.5 block">
-        {label}{required && <span className="text-primary ml-0.5">*</span>}
-      </label>
-      <input
-        type={type}
-        value={String(form[name])}
-        onChange={e => set(name, type === "number" ? Number(e.target.value) : e.target.value)}
-        placeholder={placeholder}
-        className={`w-full bg-secondary/50 border px-3 py-2 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors ${errors[name] ? "border-red-500/60" : "border-border"}`}
-      />
-      {errors[name] && <p className="text-xs text-red-400 mt-1">{errors[name]}</p>}
-    </div>
-  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm">
@@ -307,7 +324,7 @@ export function AssetFormModal({
           <div>
             <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-3 pb-2 border-b border-border" style={mono}>Basic Information</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="sm:col-span-2"><Field label="Equipment Name" name="name" placeholder="e.g. CAT 320 Hydraulic Excavator" required /></div>
+              <div className="sm:col-span-2"><AssetFormField label="Equipment Name" placeholder="e.g. CAT 320 Hydraulic Excavator" required value={form.name} error={errors.name} onChange={v => set("name", String(v))} /></div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1.5 block">Category<span className="text-primary ml-0.5">*</span></label>
                 <select value={form.category} onChange={e => set("category", e.target.value)}
@@ -315,8 +332,8 @@ export function AssetFormModal({
                   {CATEGORIES_LIST.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
-              <Field label="Year" name="year" type="number" placeholder="2024" required />
-              <Field label="Serial Number" name="serialNo" placeholder="e.g. CAT-320-2024-00412" required />
+              <AssetFormField label="Year" type="number" placeholder="2024" required value={form.year} error={errors.year} onChange={v => set("year", Number(v))} />
+              <AssetFormField label="Serial Number" placeholder="e.g. CAT-320-2024-00412" required value={form.serialNo} error={errors.serialNo} onChange={v => set("serialNo", String(v))} />
               <div>
                 <label className="text-xs text-muted-foreground mb-1.5 block">Location<span className="text-primary ml-0.5">*</span></label>
                 <select value={form.location} onChange={e => set("location", e.target.value)}
@@ -337,12 +354,12 @@ export function AssetFormModal({
           <div>
             <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-3 pb-2 border-b border-border" style={mono}>Specs & Pricing</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Field label="Capacity (tons)" name="tons" type="number" placeholder="20" required />
-              <Field label="Daily Rate ($)" name="daily" type="number" placeholder="890" required />
-              <Field label="Weekly Rate ($)" name="weekly" type="number" placeholder="4200" />
+              <AssetFormField label="Capacity (tons)" type="number" placeholder="20" required value={form.tons} error={errors.tons} onChange={v => set("tons", Number(v))} />
+              <AssetFormField label="Daily Rate ($)" type="number" placeholder="890" required value={form.daily} error={errors.daily} onChange={v => set("daily", Number(v))} />
+              <AssetFormField label="Weekly Rate ($)" type="number" placeholder="4200" value={form.weekly} error={errors.weekly} onChange={v => set("weekly", Number(v))} />
               <div>
                 <label className="text-xs text-muted-foreground mb-1.5 block">Condition</label>
-                <select value={form.condition} onChange={e => set("condition", e.target.value as any)}
+                <select value={form.condition} onChange={e => set("condition", e.target.value as AssetRecord["condition"])}
                   className="w-full bg-secondary/50 border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 transition-colors">
                   {CONDITIONS.map(c => <option key={c}>{c}</option>)}
                 </select>
@@ -360,8 +377,8 @@ export function AssetFormModal({
           <div>
             <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-3 pb-2 border-b border-border" style={mono}>Status & Maintenance</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <Field label="Last Service Date" name="lastService" type="date" />
-              <Field label="Next Service Date" name="nextService" type="date" />
+              <AssetFormField label="Last Service Date" type="date" value={form.lastService} error={errors.lastService} onChange={v => set("lastService", String(v))} />
+              <AssetFormField label="Next Service Date" type="date" value={form.nextService} error={errors.nextService} onChange={v => set("nextService", String(v))} />
               <div>
                 <label className="text-xs text-muted-foreground mb-1.5 block">Availability</label>
                 <div className="flex gap-2 mt-0.5">
@@ -380,8 +397,8 @@ export function AssetFormModal({
                 <input type="number" min={0} max={100} value={form.utilization} onChange={e => set("utilization", Number(e.target.value))}
                   className="w-full bg-secondary/50 border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 transition-colors" />
               </div>
-              <Field label="Hours This Month" name="hoursThisMonth" type="number" />
-              <Field label="Revenue This Month ($)" name="revenue" type="number" />
+              <AssetFormField label="Hours This Month" type="number" value={form.hoursThisMonth} error={errors.hoursThisMonth} onChange={v => set("hoursThisMonth", Number(v))} />
+              <AssetFormField label="Revenue This Month ($)" type="number" value={form.revenue} error={errors.revenue} onChange={v => set("revenue", Number(v))} />
             </div>
           </div>
 
@@ -439,11 +456,6 @@ const buildFleetAssets = (): FleetAsset[] => EQUIPMENT_LIST.map((e, i) => {
   };
 });
 
-const LIFECYCLE_ORDER: LifecycleStatus[] = [
-  "Reserved", "Preparing", "Dispatched", "Active",
-  "Return Initiated", "Returned", "Inspecting", "Cleared",
-];
-
 const LIFECYCLE_META: Record<LifecycleStatus, { color: string; bg: string; border: string; desc: string }> = {
   Reserved:          { color: "text-primary",    bg: "bg-primary/10",    border: "border-primary/30",    desc: "Deposit paid — equipment held" },
   Preparing:         { color: "text-blue-400",   bg: "bg-blue-500/10",   border: "border-blue-500/30",   desc: "Equipment being serviced & loaded" },
@@ -454,18 +466,6 @@ const LIFECYCLE_META: Record<LifecycleStatus, { color: string; bg: string; borde
   Inspecting:        { color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/30", desc: "Post-return condition inspection" },
   Cleared:           { color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30",  desc: "Cleared — back in available pool" },
   Maintenance:       { color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30",    desc: "Sent for repair / service" },
-};
-
-const NEXT_STATUSES: Record<LifecycleStatus, LifecycleStatus[]> = {
-  Reserved:           ["Preparing", "Maintenance"],
-  Preparing:          ["Dispatched"],
-  Dispatched:         ["Active"],
-  Active:             ["Return Initiated"],
-  "Return Initiated": ["Returned"],
-  Returned:           ["Inspecting"],
-  Inspecting:         ["Cleared", "Maintenance"],
-  Cleared:            [],
-  Maintenance:        ["Cleared"],
 };
 
 const INITIAL_LIFECYCLES: RentalLifecycle[] = [
@@ -549,6 +549,99 @@ interface PricingRule {
   locked: boolean;
 }
 
+
+function FleetUpdateModal({
+  asset,
+  onClose,
+  onSave,
+}: {
+  asset: FleetAsset;
+  onClose: () => void;
+  onSave: (id: number, patch: Partial<FleetAsset>) => void;
+}) {
+  const [status, setStatus] = useState<DeploymentStatus>(asset.deploymentStatus);
+  const [site, setSite] = useState(asset.currentSite);
+  const [booking, setBooking] = useState(asset.assignedBooking);
+  const [customer, setCustomer] = useState(asset.assignedCustomer);
+  const [notes, setNotes] = useState(asset.notes);
+  const [condition, setCondition] = useState<AssetRecord["condition"]>(asset.condition);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
+      <div className="bg-card border border-border w-full sm:max-w-lg max-h-[95vh] overflow-y-auto" style={sans}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-card z-10">
+          <div>
+            <p className="text-xs text-red-400 font-semibold tracking-widest uppercase" style={mono}>Update Asset Status</p>
+            <h2 className="text-xl font-black text-foreground leading-tight" style={display}>{asset.name}</h2>
+            <p className="text-xs text-muted-foreground">{asset.serialNo}</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
+        </div>
+        <div className="p-6 flex flex-col gap-5">
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-3" style={mono}>Deployment Status</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.keys(DEPLOYMENT_META) as DeploymentStatus[]).map(s => {
+                const m = DEPLOYMENT_META[s];
+                return (
+                  <button key={s} type="button" onClick={() => setStatus(s)}
+                    className={`flex items-start gap-3 p-3 border transition-all text-left ${status === s ? `${m.bg} ${m.border}` : "border-border bg-secondary/20 hover:border-primary/30"}`}>
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${status === s ? m.dot : "bg-muted-foreground/30"}`} />
+                    <div>
+                      <p className={`text-sm font-bold ${status === s ? m.color : "text-foreground"}`}>{s}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{m.desc}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">Current Location / Site</label>
+            <input value={site} onChange={e => setSite(e.target.value)} placeholder="e.g. Houston Depot / 4820 Main St, Houston"
+              className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors" />
+          </div>
+          {status !== "Available" && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Linked Booking</label>
+                <input value={booking} onChange={e => setBooking(e.target.value)} placeholder="RNT-XXXX"
+                  className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors" style={mono} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Customer</label>
+                <input value={customer} onChange={e => setCustomer(e.target.value)} placeholder="Full name"
+                  className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors" />
+              </div>
+            </div>
+          )}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-2" style={mono}>Equipment Condition</p>
+            <div className="flex gap-2 flex-wrap">
+              {(["Excellent","Good","Fair","Needs Repair"] as const).map(c => (
+                <button key={c} type="button" onClick={() => setCondition(c)}
+                  className={`px-3 py-1.5 text-xs font-bold border transition-all ${condition === c ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>{c}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">Status Notes</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
+              placeholder="Describe current situation, any issues, or relevant context…"
+              className="w-full bg-secondary/50 border border-border px-3 py-2 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-red-400/60 transition-colors resize-none" />
+          </div>
+          <div className="flex gap-3 pt-2 border-t border-border">
+            <button onClick={onClose}
+              className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all">Cancel</button>
+            <button onClick={() => onSave(asset.id, { deploymentStatus: status, currentSite: site, assignedBooking: booking, assignedCustomer: customer, notes, condition })}
+              className="flex-1 py-2.5 bg-red-500 text-white text-xs font-black tracking-widest uppercase hover:bg-red-600 transition-all">Save Status</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLogout: () => void; onHome: () => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [assets, setAssets] = useState<AssetRecord[]>(
@@ -598,15 +691,8 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
     showToast("Asset status updated.");
   };
 
-  // Lifecycle state
-  const [lifecycles, setLifecycles] = useState<RentalLifecycle[]>(INITIAL_LIFECYCLES);
-  const [selectedLC, setSelectedLC] = useState<string | null>(null);
-  const [transitionOpen, setTransitionOpen] = useState(false);
-  const [lcSearch, setLcSearch] = useState("");
-  const [lcStatusFilter, setLcStatusFilter] = useState("All");
-
-  // Settings state
-  const [settings, setSettings] = useState({ depositRate: 30, siteName: "Heavy Rental", supportEmail: "support@heavyrental.com", maintenanceMode: false, allowNewRegistrations: true, requireApproval: false });
+  // Lifecycle data (read-only overview feed)
+  const [lifecycles] = useState<RentalLifecycle[]>(INITIAL_LIFECYCLES);
 
   // Pricing state (hoisted to top level — Rules of Hooks)
   const [pricingRules, setPricingRules] = useState<PricingRule[]>(
@@ -670,29 +756,6 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
 
   const conditionColor = (c: AssetRecord["condition"]) => ({ Excellent: "text-green-400 bg-green-500/10 border-green-500/30", Good: "text-blue-400 bg-blue-500/10 border-blue-500/30", Fair: "text-amber-400 bg-amber-500/10 border-amber-500/30", "Needs Repair": "text-red-400 bg-red-500/10 border-red-500/30" }[c]);
   const bookingStatusColor = (s: string) => ({ Confirmed: "text-green-400 bg-green-500/10 border-green-500/30", Pending: "text-amber-400 bg-amber-500/10 border-amber-500/30", Completed: "text-blue-400 bg-blue-500/10 border-blue-500/30", Cancelled: "text-red-400 bg-red-500/10 border-red-500/30" }[s] ?? "text-muted-foreground border-border");
-
-  const handleLifecycleTransition = (bookingId: string, newStatus: LifecycleStatus, officer: string, notes: string, odometer: string, condition: string) => {
-    setLifecycles(prev => prev.map(lc => {
-      if (lc.bookingId !== bookingId) return lc;
-      const event: LifecycleEvent = {
-        id: `e-${Date.now()}`,
-        timestamp: new Date().toLocaleString("en-US", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(",", ""),
-        status: newStatus, officer, notes,
-        ...(odometer ? { odometer } : {}),
-        ...(condition ? { condition: condition as AssetRecord["condition"] } : {}),
-      };
-      return { ...lc, currentStatus: newStatus, events: [...lc.events, event] };
-    }));
-    setTransitionOpen(false);
-    showToast(`${bookingId} moved to "${newStatus}".`);
-  };
-
-  const filteredLifecycles = lifecycles.filter(lc => {
-    const q = lcSearch.toLowerCase();
-    const matchStatus = lcStatusFilter === "All" || lc.currentStatus === lcStatusFilter;
-    const matchSearch = !q || lc.bookingId.toLowerCase().includes(q) || lc.customer.toLowerCase().includes(q) || lc.equipment.toLowerCase().includes(q);
-    return matchStatus && matchSearch;
-  });
 
   const TABS: { key: AdminTab; label: string; icon: React.ElementType }[] = [
     { key: "overview",  label: "Overview",      icon: BarChart2 },
@@ -945,7 +1008,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                     <BarChart data={utilizationByAsset} barGap={4}>
                       <XAxis key="adm-ua-xaxis" dataKey="name" tick={{ fill:"#8a8478", fontSize:10 }} axisLine={false} tickLine={false} />
                       <YAxis key="adm-ua-yaxis" domain={[0,100]} tick={{ fill:"#8a8478", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`} />
-                      <Tooltip key="adm-ua-tip" content={(p:any) => <ChartTip {...p} />} cursor={{ fill:"rgba(255,255,255,0.03)" }} />
+                      <Tooltip key="adm-ua-tip" content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} cursor={{ fill:"rgba(255,255,255,0.03)" }} />
                       <Bar key="adm-ua-bar" dataKey="utilization" radius={[2,2,0,0]} name="adm-util-asset">
                         {utilizationByAsset.map((entry, i) => (
                           <Cell key={`adm-ua-${i}`} fill={entry.utilization >= 80 ? "#f5a623" : entry.utilization >= 60 ? "#fbbf24" : "#f87171"} />
@@ -963,7 +1026,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                       <Pie key="adm-fh-pie" data={fleetHealthData} cx="50%" cy="50%" innerRadius={42} outerRadius={60} dataKey="value" paddingAngle={2} name="adm-fleet-health">
                         {fleetHealthData.map((d, i) => <Cell key={`adm-fh-${i}`} fill={d.color} />)}
                       </Pie>
-                      <Tooltip key="adm-fh-tip" content={(p:any) => <ChartTip {...p} />} />
+                      <Tooltip key="adm-fh-tip" content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="flex flex-col gap-2 mt-2">
@@ -990,7 +1053,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                     <BarChart data={MONTHLY_UTILIZATION}>
                       <XAxis key="adm-rev-xaxis" dataKey="month" tick={{ fill:"#8a8478", fontSize:10 }} axisLine={false} tickLine={false} />
                       <YAxis key="adm-rev-yaxis" tick={{ fill:"#8a8478", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}K`} />
-                      <Tooltip key="adm-rev-tip" content={(p:any) => <ChartTip {...p} />} />
+                      <Tooltip key="adm-rev-tip" content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
                       <Bar key="adm-rev-bar" dataKey="revenue" fill="#f5a623" radius={[2,2,0,0]} name="adm-revenue-trend" />
                     </BarChart>
                   </ResponsiveContainer>
@@ -1245,101 +1308,15 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
 
           const conditionColor = (c: AssetRecord["condition"]) => ({ Excellent: "text-green-400", Good: "text-blue-400", Fair: "text-amber-400", "Needs Repair": "text-red-400" }[c]);
 
-          // ── Status Update Modal ───────────────────────────────────────────
-          const UpdateModal = () => {
-            if (!fleetUpdateOpen || !fleetSelected) return null;
-            const [status, setStatus] = useState<DeploymentStatus>(fleetSelected.deploymentStatus);
-            const [site, setSite] = useState(fleetSelected.currentSite);
-            const [booking, setBooking] = useState(fleetSelected.assignedBooking);
-            const [customer, setCustomer] = useState(fleetSelected.assignedCustomer);
-            const [notes, setNotes] = useState(fleetSelected.notes);
-            const [condition, setCondition] = useState<AssetRecord["condition"]>(fleetSelected.condition);
-            const meta = DEPLOYMENT_META[status];
-
-            return (
-              <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
-                <div className="bg-card border border-border w-full sm:max-w-lg max-h-[95vh] overflow-y-auto" style={sans}>
-                  <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-card z-10">
-                    <div>
-                      <p className="text-xs text-red-400 font-semibold tracking-widest uppercase" style={mono}>Update Asset Status</p>
-                      <h2 className="text-xl font-black text-foreground leading-tight" style={display}>{fleetSelected.name}</h2>
-                      <p className="text-xs text-muted-foreground">{fleetSelected.serialNo}</p>
-                    </div>
-                    <button onClick={() => { setFleetUpdateOpen(false); setFleetSelected(null); }} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
-                  </div>
-                  <div className="p-6 flex flex-col gap-5">
-                    {/* Status selector */}
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-3" style={mono}>Deployment Status</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        {(Object.keys(DEPLOYMENT_META) as DeploymentStatus[]).map(s => {
-                          const m = DEPLOYMENT_META[s];
-                          return (
-                            <button key={s} type="button" onClick={() => setStatus(s)}
-                              className={`flex items-start gap-3 p-3 border transition-all text-left ${status === s ? `${m.bg} ${m.border}` : "border-border bg-secondary/20 hover:border-primary/30"}`}>
-                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${status === s ? m.dot : "bg-muted-foreground/30"}`} />
-                              <div>
-                                <p className={`text-sm font-bold ${status === s ? m.color : "text-foreground"}`}>{s}</p>
-                                <p className="text-xs text-muted-foreground mt-0.5">{m.desc}</p>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    {/* Location */}
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1.5 block">Current Location / Site</label>
-                      <input value={site} onChange={e => setSite(e.target.value)} placeholder="e.g. Houston Depot / 4820 Main St, Houston"
-                        className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors" />
-                    </div>
-                    {/* Booking & customer — show when not Available */}
-                    {status !== "Available" && (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-xs text-muted-foreground mb-1.5 block">Linked Booking</label>
-                          <input value={booking} onChange={e => setBooking(e.target.value)} placeholder="RNT-XXXX"
-                            className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors" style={mono} />
-                        </div>
-                        <div>
-                          <label className="text-xs text-muted-foreground mb-1.5 block">Customer</label>
-                          <input value={customer} onChange={e => setCustomer(e.target.value)} placeholder="Full name"
-                            className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors" />
-                        </div>
-                      </div>
-                    )}
-                    {/* Condition */}
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-2" style={mono}>Equipment Condition</p>
-                      <div className="flex gap-2 flex-wrap">
-                        {(["Excellent","Good","Fair","Needs Repair"] as const).map(c => (
-                          <button key={c} type="button" onClick={() => setCondition(c)}
-                            className={`px-3 py-1.5 text-xs font-bold border transition-all ${condition === c ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>{c}</button>
-                        ))}
-                      </div>
-                    </div>
-                    {/* Notes */}
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1.5 block">Status Notes</label>
-                      <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
-                        placeholder="Describe current situation, any issues, or relevant context…"
-                        className="w-full bg-secondary/50 border border-border px-3 py-2 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-red-400/60 transition-colors resize-none" />
-                    </div>
-                    <div className="flex gap-3 pt-2 border-t border-border">
-                      <button onClick={() => { setFleetUpdateOpen(false); setFleetSelected(null); }}
-                        className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all">Cancel</button>
-                      <button onClick={() => handleFleetUpdate(fleetSelected.id, { deploymentStatus: status, currentSite: site, assignedBooking: booking, assignedCustomer: customer, notes, condition })}
-                        className="flex-1 py-2.5 bg-red-500 text-white text-xs font-black tracking-widest uppercase hover:bg-red-600 transition-all">Save Status</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          };
-
           return (
             <>
-              <UpdateModal />
+              {fleetUpdateOpen && fleetSelected && (
+                <FleetUpdateModal
+                  asset={fleetSelected}
+                  onClose={() => { setFleetUpdateOpen(false); setFleetSelected(null); }}
+                  onSave={handleFleetUpdate}
+                />
+              )}
 
               {/* Header */}
               <div className="flex items-start justify-between mb-8 gap-4 flex-wrap">
