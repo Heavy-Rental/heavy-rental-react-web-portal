@@ -1,11 +1,11 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import {
-  Search, MapPin, Calendar, ChevronDown, ArrowRight, Star,
+  Search, Calendar, ArrowRight, Star,
   Phone, Mail, Menu, X, Truck, Wrench,
   CheckCircle, ChevronLeft, ChevronRight,
   BarChart2, Activity, DollarSign, AlertTriangle,
   MessageCircle, Send, User, LogOut, ShoppingCart, Trash2, Bot,
-  TrendingUp, Lock, RefreshCw, Info, Upload,
+  Upload,
 } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -249,13 +249,27 @@ const sans = { fontFamily: "'DM Sans', sans-serif" } as const;
 
 // ─── CHART TOOLTIP ────────────────────────────────────────────────────────────
 
-function ChartTip({ active, payload, label }: any) {
+interface ChartTipPayloadItem {
+  name?: string | number;
+  value?: number | string;
+  color?: string;
+}
+
+function ChartTip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: readonly ChartTipPayloadItem[];
+  label?: string | number;
+}) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-card border border-border px-3 py-2 text-xs">
       <p className="text-foreground font-semibold mb-1">{label}</p>
-      {payload.map((p: any) => (
-        <p key={p.name} style={{ color: p.color ?? "#f5a623" }}>{p.name}: {p.value}</p>
+      {payload.map((p, i) => (
+        <p key={String(p.name ?? i)} style={{ color: p.color ?? "#f5a623" }}>{p.name}: {p.value}</p>
       ))}
     </div>
   );
@@ -317,17 +331,6 @@ function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string) 
 
 // ─── CUSTOMER ONBOARDING ──────────────────────────────────────────────────────
 
-interface QuoteLine {
-  equipment: EquipmentItem;
-  recommendedDays: number;
-  reason: string;
-  matchedKeywords: string[];
-  matchScore: number;
-  costTip: string;
-  priority: "Essential" | "Recommended" | "Optional";
-  weeklyAdvised: boolean;
-  savingVsDaily: number;
-}
 
 function MachineCalendar({ machine, onClose, onAddToCart }: { machine: EquipmentItem; onClose: () => void; onAddToCart: (item: CartItem) => void }) {
   const today = new Date();
@@ -702,7 +705,7 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
   if (selectedPlan) {
     const plan = selectedPlan;
     const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const NavBar = () => (
+    const navBar = (
       <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between h-14">
           <button onClick={onHome} className="text-xl font-black text-primary hover:opacity-80 transition-opacity" style={display}>HEAVY<span className="text-foreground"> RENTAL</span></button>
@@ -723,7 +726,7 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
 
     return (
       <div className="min-h-screen bg-background text-foreground" style={sans}>
-        <NavBar />
+        {navBar}
         <div className="max-w-4xl mx-auto px-6 py-10">
           {/* Back */}
           <button onClick={() => setSelectedPlan(null)}
@@ -843,7 +846,7 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
   if (profileOpen) {
     const initials = userName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 
-    const NavBar = () => (
+    const navBar = (
       <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="max-w-5xl mx-auto px-6 flex items-center justify-between h-14">
           <button onClick={onHome} className="text-xl font-black text-primary hover:opacity-80 transition-opacity" style={display}>HEAVY<span className="text-foreground"> RENTAL</span></button>
@@ -864,7 +867,7 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
 
     return (
       <div className="min-h-screen bg-background text-foreground" style={sans}>
-        <NavBar />
+        {navBar}
         <div className="max-w-5xl mx-auto px-6 py-10">
           {/* Back */}
           <button onClick={() => setProfileOpen(false)}
@@ -1010,11 +1013,6 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
   // ── EQUIPMENT DETAIL PAGE ────────────────────────────────────────────────────
   if (detailItem) {
     const inCart = cart.some(c => c.equipment.id === detailItem.id);
-    const MOCK_REVIEWS = [
-      { name: "Marcus T.", rating: 5, date: "Jun 2025", text: "Showed up on time, ran perfectly for the full rental period. Operator said it was the cleanest machine he's used." },
-      { name: "Sandra R.", rating: 5, date: "May 2025", text: "Great condition, responsive support team. Will rent again for our next site phase." },
-      { name: "Jim L.", rating: 4, date: "Apr 2025", text: "Equipment was solid. Delivery was slightly delayed but team communicated proactively." },
-    ];
     const SPEC_ROWS: [string, string][] = [
       ["Category", detailItem.category],
       ["Year", String(detailItem.year)],
@@ -1442,6 +1440,34 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
 
 // ─── DEPOSIT CHECKOUT ─────────────────────────────────────────────────────────
 
+
+// Cryptographically secure 4-digit id (avoids CodeQL insecure-randomness on refs/tokens)
+function secureFourDigit(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return 1000 + (buf[0] % 9000);
+}
+
+function CheckoutInputField({
+  label, value, onChange, placeholder, maxLen, error,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  maxLen?: number;
+  error?: string;
+}) {
+  return (
+    <div>
+      <label className="text-xs text-muted-foreground mb-1.5 block">{label}</label>
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} maxLength={maxLen}
+        className={`w-full bg-secondary/50 border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors ${error ? "border-red-500/60" : "border-border"}`} />
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+    </div>
+  );
+}
+
 function DepositCheckout({
   cart, totalCost, userName, onClose, onPaid,
 }: {
@@ -1476,19 +1502,10 @@ function DepositCheckout({
     if (!validate()) return;
     setStep("processing");
     setTimeout(() => {
-      const rid = `RNT-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+      const rid = `RNT-${String(secureFourDigit())}`;
       onPaid(rid);
     }, 2200);
   };
-
-  const InputField = ({ label, field, value, onChange, placeholder, maxLen }: { label: string; field: string; value: string; onChange: (v: string) => void; placeholder?: string; maxLen?: number }) => (
-    <div>
-      <label className="text-xs text-muted-foreground mb-1.5 block">{label}</label>
-      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} maxLength={maxLen}
-        className={`w-full bg-secondary/50 border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors ${errors[field] ? "border-red-500/60" : "border-border"}`} />
-      {errors[field] && <p className="text-xs text-red-400 mt-1">{errors[field]}</p>}
-    </div>
-  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
@@ -1594,15 +1611,15 @@ function DepositCheckout({
 
             {payMethod === "card" ? (
               <div className="flex flex-col gap-4">
-                <InputField label="Card Number" field="number" value={card.number}
-                  onChange={v => setCard(p => ({ ...p, number: fmtCard(v) }))} placeholder="1234 5678 9012 3456" />
-                <InputField label="Name on Card" field="name" value={card.name}
-                  onChange={v => setCard(p => ({ ...p, name: v }))} placeholder={userName} />
+                <CheckoutInputField label="Card Number" value={card.number}
+                  onChange={v => setCard(p => ({ ...p, number: fmtCard(v) }))} placeholder="1234 5678 9012 3456" error={errors.number} />
+                <CheckoutInputField label="Name on Card" value={card.name}
+                  onChange={v => setCard(p => ({ ...p, name: v }))} placeholder={userName} error={errors.name} />
                 <div className="grid grid-cols-2 gap-4">
-                  <InputField label="Expiry (MM/YY)" field="expiry" value={card.expiry}
-                    onChange={v => setCard(p => ({ ...p, expiry: fmtExpiry(v) }))} placeholder="08/27" maxLen={5} />
-                  <InputField label="CVV" field="cvv" value={card.cvv}
-                    onChange={v => setCard(p => ({ ...p, cvv: v.replace(/\D/g,"").slice(0,4) }))} placeholder="•••" maxLen={4} />
+                  <CheckoutInputField label="Expiry (MM/YY)" value={card.expiry}
+                    onChange={v => setCard(p => ({ ...p, expiry: fmtExpiry(v) }))} placeholder="08/27" maxLen={5} error={errors.expiry} />
+                  <CheckoutInputField label="CVV" value={card.cvv}
+                    onChange={v => setCard(p => ({ ...p, cvv: v.replace(/\D/g,"").slice(0,4) }))} placeholder="•••" maxLen={4} error={errors.cvv} />
                 </div>
                 <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -1664,17 +1681,6 @@ interface AssetRecord {
 }
 
 const CATEGORIES_LIST = ["Excavator", "Crane", "Bulldozer", "Forklift", "Boom Lift", "Dump Truck", "Compactor"];
-const CONDITIONS = ["Excellent", "Good", "Fair", "Needs Repair"] as const;
-const LOCATIONS_LIST = ["Houston, TX", "Dallas, TX", "Austin, TX", "San Antonio, TX", "Fort Worth, TX"];
-
-const EMPTY_ASSET: Omit<AssetRecord, "id"> = {
-  name: "", category: "Excavator", year: 2024, location: "Houston, TX",
-  daily: 0, weekly: 0, tons: 0, available: true, utilization: 0,
-  hoursThisMonth: 0, revenue: 0, tags: "", desc: "",
-  serialNo: "", lastService: "", nextService: "",
-  condition: "Good", photo: null,
-};
-
 // ─── EMPLOYEE DASHBOARD ─────────────────────────────────────────────────────
 
 function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; onLogout: () => void; onHome: () => void }) {
@@ -1785,7 +1791,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
             { key: "dashboard", icon: BarChart2, label: "Dashboard" },
             { key: "assets", icon: Wrench, label: "Asset Records" },
           ].map(({ key, icon: Icon, label }) => (
-            <button key={key} onClick={() => setTab(key as any)}
+            <button key={key} onClick={() => setTab(key as "dashboard" | "assets")}
               className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold tracking-wider uppercase border-b-2 transition-all ${tab === key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
               <Icon size={14} /> {label}
             </button>
@@ -1825,7 +1831,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
                 <BarChart id="emp-util-bar" data={utilizationData} barGap={6}>
                   <XAxis dataKey="name" tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
-                  <Tooltip content={(p) => <ChartTip {...p} />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+                  <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
                   <Bar dataKey="utilization" fill="#f5a623" radius={[2, 2, 0, 0]} />
                   <Bar dataKey="target" fill="rgba(255,255,255,0.06)" radius={[2, 2, 0, 0]} />
                 </BarChart>
@@ -1839,7 +1845,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
                   <Pie data={STATUS_DIST} cx="50%" cy="50%" innerRadius={40} outerRadius={60} dataKey="value" paddingAngle={2}>
                     {STATUS_DIST.map((entry, i) => <Cell key={`emp-sd-${i}`} fill={entry.color} />)}
                   </Pie>
-                  <Tooltip content={(p) => <ChartTip {...p} />} />
+                  <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex flex-col gap-2 mt-2">
@@ -1860,7 +1866,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
                 <LineChart id="emp-util-line" data={MONTHLY_UTILIZATION}>
                   <XAxis dataKey="month" tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[50, 100]} tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
-                  <Tooltip content={(p) => <ChartTip {...p} />} />
+                  <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
                   <Line type="monotone" dataKey="utilization" stroke="#f5a623" strokeWidth={2} dot={{ fill: "#f5a623", r: 4, strokeWidth: 0 }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -1872,7 +1878,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
                 <BarChart id="emp-revenue-bar" data={MONTHLY_UTILIZATION}>
                   <XAxis dataKey="month" tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}K`} />
-                  <Tooltip content={(p) => <ChartTip {...p} />} />
+                  <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
                   <Bar dataKey="revenue" fill="#f5a623" radius={[2, 2, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -2062,8 +2068,6 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState("All");
-  const [searchLocation, setSearchLocation] = useState("");
-  const [rentalDuration, setRentalDuration] = useState("Daily");
 
   const handleLogin = (role: Role, name: string) => { setUser({ name, role }); setShowLogin(false); setView(role === "customer" ? "customer" : role === "admin" ? "admin" : "dashboard"); };
   const handleLogout = () => { setUser(null); setView("portal"); };

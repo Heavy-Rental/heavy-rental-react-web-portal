@@ -87,6 +87,13 @@ const mono = { fontFamily: "'DM Mono', monospace" } as const;
 const display = { fontFamily: "'Barlow Condensed', sans-serif" } as const;
 const sans = { fontFamily: "'DM Sans', sans-serif" } as const;
 
+// Cryptographically secure 4-digit id (avoids CodeQL insecure-randomness on refs/tokens)
+function secureFourDigit(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return 1000 + (buf[0] % 9000);
+}
+
 // ─── Quote Result Screen ───────────────────────────────────────────────────
 
 interface RecItem {
@@ -356,10 +363,8 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
   const [uploaded, setUploaded] = useState<File[]>([]);
   const [specsText, setSpecsText] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  const [quotation, setQuotation] = useState<QuoteLine[]>([]);
-  const [projectName, setProjectName] = useState("");
   const [rentalDays, setRentalDays] = useState(7);
-  const [quoteRef] = useState(`QUO-${Math.floor(Math.random() * 9000) + 1000}`);
+  const [quoteRef] = useState(() => `QUO-${secureFourDigit()}`);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -480,7 +485,6 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
             Math.floor(detectedDays / 7) * eq.weekly +
             (detectedDays % 7) * eq.daily;
           const weeklyAdvised = detectedDays >= 7 && weeklyCost < dailyTotal;
-          const finalCost = weeklyAdvised ? weeklyCost : dailyTotal;
           const savingVsDaily = weeklyAdvised ? dailyTotal - weeklyCost : 0;
 
           const costTip = weeklyAdvised
@@ -502,17 +506,8 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
           };
         });
 
-      setQuotation(lines.length > 0 ? lines : EQUIPMENT_LIST.slice(0, 3).map((eq, i) => ({
-        equipment: eq,
-        recommendedDays: detectedDays,
-        reason: "General-purpose recommendation based on common project needs",
-        matchedKeywords: [],
-        matchScore: 40,
-        priority: (i === 0 ? "Essential" : i === 1 ? "Recommended" : "Optional") as QuoteLine["priority"],
-        weeklyAdvised: false,
-        savingVsDaily: 0,
-        costTip: "Add more project details to get tailored cost-saving recommendations",
-      })));
+      // Quote lines computed for future dynamic quote UI; screen currently uses catalog recs.
+      void lines;
 
       setStep("quote");
     }, 2800);
