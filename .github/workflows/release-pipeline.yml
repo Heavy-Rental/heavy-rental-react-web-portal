@@ -424,10 +424,13 @@ jobs:
           npm audit --audit-level=high --json > "${REPORT_DIR}/npm-audit.json" 2>"${REPORT_DIR}/npm-audit-stderr.txt"
           AUDIT_EXIT=$?
           set -e
+          # <<'PY' is unexpanded — read paths from the environment, not shell ${{ }}
           python3 <<'PY'
           import json
+          import os
           from pathlib import Path
-          report_dir = Path("${GITHUB_WORKSPACE}/security-reports")
+          report_dir = Path(os.environ["GITHUB_WORKSPACE"]) / "security-reports"
+          report_dir.mkdir(parents=True, exist_ok=True)
           src = report_dir / "npm-audit.json"
           out = report_dir / "npm-audit.sarif"
           try:
