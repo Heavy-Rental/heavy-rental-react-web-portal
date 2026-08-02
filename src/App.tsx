@@ -1441,6 +1441,13 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
 // ─── DEPOSIT CHECKOUT ─────────────────────────────────────────────────────────
 
 
+// Cryptographically secure 4-digit id (avoids CodeQL insecure-randomness on refs/tokens)
+function secureFourDigit(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return 1000 + (buf[0] % 9000);
+}
+
 function CheckoutInputField({
   label, value, onChange, placeholder, maxLen, error,
 }: {
@@ -1495,7 +1502,7 @@ function DepositCheckout({
     if (!validate()) return;
     setStep("processing");
     setTimeout(() => {
-      const rid = `RNT-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+      const rid = `RNT-${String(secureFourDigit())}`;
       onPaid(rid);
     }, 2200);
   };
