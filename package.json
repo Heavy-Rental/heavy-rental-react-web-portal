@@ -7,7 +7,15 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "mock:server": "node mock/server.cjs"
+  },
+  "mock-server": {
+    "root": "/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock",
+    "base": "/api",
+    "host": "127.0.0.1",
+    "port": 4010,
+    "homePage": false
   },
   "dependencies": {
     "lucide-react": "^0.487.0",
@@ -17,6 +25,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@r35007/mock-server": "^19.1.0",
     "@tailwindcss/vite": "^4.1.12",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",

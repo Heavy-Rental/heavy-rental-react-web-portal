@@ -1,0 +1,7 @@
+{
+  "mock-server.settings.paths.root": "./mock",
+  "mock-server.settings.paths.db": "db.json",
+  "mock-server.settings.host": "127.0.0.1",
+  "mock-server.settings.port": 4010,
+  "mock-server.settings.base": "/api"
+}
