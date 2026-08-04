@@ -8,8 +8,8 @@ const mono    = { fontFamily: "'DM Mono', monospace" };
 const CERTIFICATIONS = [
   { code: "ISO 45001:2018",     name: "Occupational Health & Safety Management",  body: "Bureau Veritas",       year: "2023", },
   { code: "OSHA 1910/1926",     name: "General Industry & Construction Standards", body: "OSHA Compliance",     year: "2024", },
-  { code: "ANSI/ASME B30",      name: "Crane, Hoist & Hook Safety Standards",      body: "ASME International",  year: "2024", },
-  { code: "AS 2550 / AS 4991",  name: "Cranes & Elevating Work Platform Standards",body: "Standards Australia",  year: "2023", },
+  { code: "ANSI/ASME B30",      name: "Lifting Equipment & Hook Safety Guidance",      body: "ASME International",  year: "2024", },
+  { code: "AS 2550 / AS 4991",  name: "Elevating Work Platform Safety Standards",     body: "Standards Australia",  year: "2023", },
   { code: "NFPA 505",           name: "Fire Safety Standard for Powered Equipment", body: "NFPA",               year: "2024", },
   { code: "API RP 54",          name: "Occupational Safety for Oil & Gas Drilling", body: "API",                year: "2023", },
 ];
@@ -62,7 +62,7 @@ const PROTOCOLS = [
       "Exclusion zones established and marked before equipment start",
       "Ground bearing pressure assessed before any tracked/wheeled deployment",
       "Overhead power line clearances verified — minimum 4.5 m enforced",
-      "Lift plans mandatory for all crane operations over 75% rated capacity",
+      "Lift plans mandatory for all lifted loads and complex pick operations over 75% rated capacity",
       "Emergency stop and shutdown procedures posted on every machine",
     ],
   },
@@ -71,7 +71,7 @@ const PROTOCOLS = [
 const FAQS = [
   {
     q: "What certifications do your operators hold?",
-    a: "All Heavy Rental operators hold current NCCCO (National Commission for the Certification of Crane Operators) certification or equivalent national credentials. Excavator and bulldozer operators are OEM-certified through CAT, Komatsu, or Volvo training programmes. Certifications are renewed annually and records are available on request.",
+    a: "All Heavy Rental operators hold current certifications for elevated work platforms and excavator operation. Excavator operators are OEM-certified through CAT or Volvo training programmes. Certifications are renewed annually and records are available on request.",
   },
   {
     q: "How is equipment inspected before each rental?",
@@ -86,8 +86,8 @@ const FAQS = [
     a: "Contact our 24/7 equipment safety hotline immediately. Do not continue operating the unit. We will dispatch a field technician within 4 hours for urgent defects. If the unit cannot be made safe on site, we will arrange a like-for-like replacement at no additional charge. All defects are logged in our safety management system and investigated.",
   },
   {
-    q: "Do you provide lift plans for crane operations?",
-    a: "Yes. For all crane operations involving picks over 75% of the crane's rated capacity, Heavy Rental's certified lift planner will produce a site-specific lift plan including rigging configuration, ground loading calculations, exclusion zone dimensions, and weather limits. Lift plans for complex or tandem lifts are available on request for any capacity.",
+    q: "Do you provide lift plans for lifted operations?",
+    a: "Yes. For lifted operations or complex picks, Heavy Rental's certified lift planner will produce a site-specific lift plan including rigging configuration, ground loading calculations, exclusion zone dimensions, and weather limits. Lift plans are available on request.",
   },
   {
     q: "What insurance and liability coverage applies?",

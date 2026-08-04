@@ -22,12 +22,12 @@ As a contributor or AI coding agent working on this project, I need a single ref
 3. **Given** a pull request targeting the `develop` branch, **When** `portal-ci-caller.yml` triggers `integration-pipeline.yml`, **Then** Integration, Quality Control, Security Testing, CodeQL Analysis, and REST Endpoint Tests all run, and the GitHub Flow CI Gate only passes if every one of them succeeds.
 4. **Given** a push to any branch other than `master` or `develop`, **When** `portal-fast-feedback-caller.yml` triggers, **Then** only a lightweight Integration check runs (checkout, dependency install, install verification) — no lint, security scan, or tests.
 5. **Given** a GitHub release is published, or a pull request from `develop` into `master` is opened, **When** `portal-release-caller.yml` triggers `release-pipeline.yml`, **Then** the app is built, packaged into a zip archive, containerized via Docker/nginx, and — only for an actual published release, not a develop→master PR — pushed to GHCR.
-6. **Given** a contributor wants to exercise the REST API locally, **When** they run `npm run mock:server`, **Then** a local mock API starts on `127.0.0.1:4010`, matching `Spec-mock-api-server.md`.
+6. **Given** a contributor wants to exercise the REST API locally, **When** they start the mock server via the Thinker "Mock Server" VS Code extension, **Then** a local mock API starts on `127.0.0.1:4010`, matching `Spec-mock-api-server.md`. (There is deliberately no npm script for this — see FR-003 and the Change Log.)
 
 ### Edge Cases
 
 - What happens if a contributor's local Node.js version differs from the version CI uses? Nothing enforces alignment locally — there is no `.nvmrc` and no `engines` field in `package.json`; this is a known gap (see Requirements).
-- What happens if a future feature needs environment variables? None exist today for the app itself; only the mock server reads `process.env`. There is no `.env`/`.env.example` convention established yet.
+- What happens if a future feature needs environment variables? None exist today for the app itself, and the mock server no longer reads `process.env` either (it runs only via the VS Code extension, configured through `.vscode/settings.json`/`.mockserverrc.cjs`, not env vars). There is no `.env`/`.env.example` convention established yet.
 - What happens when `rest-endpoint-tests` runs before a test script exists? It takes a documented "not ready" placeholder path and passes green with an explanatory summary, rather than failing or silently skipping.
 
 ## Requirements *(mandatory)*
@@ -36,7 +36,7 @@ As a contributor or AI coding agent working on this project, I need a single ref
 
 - **FR-001**: The project MUST target Node.js 22 for install and build steps, as pinned by `NODE_VERSION: "22"` in every CI workflow.
 - **FR-002**: The project MUST use npm as its package manager, governed by the committed `package-lock.json` (lockfileVersion 3); CI installs via `npm ci`.
-- **FR-003**: The project MUST provide npm scripts for: starting the dev server (`dev`), producing a production build (`build`), linting (`lint`), previewing a production build (`preview`), and running the local mock API server (`mock:server`).
+- **FR-003**: The project MUST provide npm scripts for: starting the dev server (`dev`), producing a production build (`build`), linting (`lint`), and previewing a production build (`preview`). There is deliberately **no** npm script for the mock API server — it is started only via the Thinker VS Code extension's UI, since the underlying npm package was removed for a high-severity `npm audit` finding with no non-breaking fix (see `Spec-mock-api-server.md`'s Change Log).
 - **FR-004**: The production build MUST perform a TypeScript project build (`tsc -b`, using the composite `tsconfig.json` → `tsconfig.app.json` + `tsconfig.node.json` structure) before bundling with `vite build`.
 - **FR-005**: Linting MUST run via ESLint's flat config (`eslint.config.js`), applying JS-recommended, `typescript-eslint`-recommended, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` rule sets to all `**/*.{ts,tsx}` files, excluding `dist`.
 - **FR-006**: Styling MUST be provided by Tailwind CSS v4 through the `@tailwindcss/vite` plugin, with no separate PostCSS or `tailwind.config` file required.
@@ -44,7 +44,7 @@ As a contributor or AI coding agent working on this project, I need a single ref
 - **FR-008**: Security Testing MUST produce SARIF 2.1.0 reports (Semgrep SAST, `npm audit` SCA, Trivy filesystem scan), upload them to GitHub Code Scanning, and fail the pipeline on ERROR/CRITICAL-severity findings.
 - **FR-009**: Pushes to any branch other than `master` or `develop` MUST trigger only a lightweight, Integration-only fast-feedback pipeline.
 - **FR-010**: A published release, or a pull request from `develop` into `master`, MUST trigger a packaging pipeline that builds the app, verifies and zips the `dist/` output, and builds a Docker/nginx image; the image MUST be pushed to GHCR only when triggered by an actual published release.
-- **FR-011**: The local mock REST API server MUST be configurable via `MOCK_API_HOST` and `MOCK_API_PORT` environment variables, and CI MUST be able to start it, poll it for readiness, and stop it using the same environment contract (`MOCK_API_BASE_URL`, `MOCK_API_HEALTH_PATH`, `MOCK_API_READY_TIMEOUT_SECONDS`).
+- **FR-011**: ~~The local mock REST API server MUST be configurable via `MOCK_API_HOST` and `MOCK_API_PORT` environment variables~~ **Superseded 2026-08-04**: the mock server (VS Code extension only) does not read environment variables — its host/port are fixed by `.vscode/settings.json`/`.mockserverrc.cjs` at `127.0.0.1:4010`, matching CI's expected values by convention, not by env-var injection. CI's `MOCK_API_BASE_URL`/`MOCK_API_HEALTH_PATH`/`MOCK_API_READY_TIMEOUT_SECONDS` remain the readiness-polling contract those CI workflow env vars define, for whenever an npm-invokable mock-server script and a `test:api`-family script both exist (neither does today — see FR-012 and `Spec-mock-api-server.md`).
 - **FR-012**: No automated test runner is currently configured in the project (no `vitest`, `jest`, `playwright`, `cypress`, or equivalent, and no `test:api`/`test:endpoints`/`test:rest` script). This MUST be treated as a known, tracked gap rather than an oversight to silently work around.
 
 ### Key Entities / Components
@@ -52,7 +52,7 @@ As a contributor or AI coding agent working on this project, I need a single ref
 - **Runtime stack**: Node.js 22, npm, React 19.2, TypeScript ~6.0, Vite 8.2, Tailwind CSS v4.
 - **Build configuration**: `vite.config.ts` (React + Tailwind plugins, `@` → `./src` alias), TypeScript project references (`tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`), ESLint flat config (`eslint.config.js`).
 - **CI/CD pipeline set**: three caller → reusable workflow pairs — fast-feedback, integration/CI, and release — each reusable workflow restricted to its one designated caller via an `assert-caller` gate job.
-- **Mock API tooling**: `@r35007/mock-server`, `mock/db.json`, `mock/server.cjs` (see `Spec-mock-api-server.md`).
+- **Mock API tooling**: Thinker "Mock Server" VS Code extension, `mock/db.json`, `.mockserverrc.cjs` (see `Spec-mock-api-server.md`). Not an npm devDependency — see FR-003.
 - **Documentation set**: `README.md` (current, accurate), `specification/*.md` (SDD specs), plus template-origin files carried over from repo scaffolding (`BLANK_README.md`, `CHANGELOG.md`, `LICENSE.txt`).
 
 ## Dependencies & Assumptions
@@ -61,7 +61,7 @@ As a contributor or AI coding agent working on this project, I need a single ref
 - Assumes npm as the sole package manager; no yarn/pnpm lockfiles exist or are supported.
 - Assumes the actual git repository root is `heavy-rental-react-web-portal/` itself — the outer `/workspaces/heavy-rental-web-portal` wrapper directory is not a git repository.
 - Assumes GitHub Actions' `secrets.GITHUB_TOKEN` is available in CI for GHCR image pushes; no secrets are required for local development.
-- Assumes no application environment variables are needed yet; only the mock API server reads `process.env` today.
+- Assumes no application environment variables are needed; nothing in the project reads `process.env` today (the mock API server, previously the only consumer, no longer does — it runs solely through the VS Code extension).
 
 ## Out of Scope
 
@@ -90,3 +90,4 @@ As a contributor or AI coding agent working on this project, I need a single ref
 ## Change Log
 
 - 2026-08-04: Initial specification written, documenting the project's runtime, package manager, build/lint tooling, styling setup, and the three CI/CD pipelines (fast-feedback, integration/CI, release), including known gaps (no Node version pin, no test runner configured).
+- 2026-08-04: Removed the `mock:server` npm script and the `@r35007/mock-server` devDependency (high-severity `npm audit` finding, no non-breaking fix); the mock API server now runs only via the Thinker VS Code extension, with no environment-variable configuration. Updated FR-003 and FR-011 accordingly.

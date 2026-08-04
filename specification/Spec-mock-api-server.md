@@ -16,7 +16,7 @@ The portal has no live backend yet — the frontend runs entirely on local sampl
 - Q: Should the mock server match the CI pipeline's existing `rest-endpoint-tests` contract (host/port/health route), or use the extension's own defaults? → A: Match the CI contract — `127.0.0.1:4010` with a `/health` route.
 - Q: Should endpoints be bare resource paths or namespaced? → A: Namespace all resources under `/api`.
 - Q: Should the mock expose only the spec's core business entities, or also the admin dashboard's analytics sample data? → A: Both — core entities plus analytics.
-- Q: How should the Thinker VS Code extension know where to launch the mock server from? → A: The workspace is preconfigured so the extension uses the project-local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`, with the database file at `mock/db.json` and the server entrypoint at `mock/server.cjs`.
+- Q: How should the Thinker VS Code extension know where to launch the mock server from? → A: The workspace is preconfigured so the extension uses the project-local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`, with the database file at `mock/db.json`. (Originally also had a custom `mock/server.cjs` entrypoint for an npm-invokable script; that script was removed 2026-08-04 for a security finding — see Change Log — leaving the VS Code extension as the sole launch path.)
 
 ## User Scenarios & Testing _(mandatory)_
 
@@ -44,7 +44,7 @@ As a frontend developer or a CI test job working on the heavy machinery rental p
 
 ### Functional Requirements
 
-- **FR-001**: The mock server MUST expose a health-check endpoint that responds successfully independent of any other resource being loaded, so external tooling can detect readiness.
+- **FR-001**: ~~The mock server MUST expose a health-check endpoint that responds successfully independent of any other resource being loaded, so external tooling can detect readiness.~~ **Superseded 2026-08-04**: no dedicated health route exists now that the server is launched only via the Thinker VS Code extension (see Change Log). External tooling MUST instead detect readiness via any resource endpoint (e.g. `GET /api/equipment`).
 - **FR-002**: The mock server MUST expose read and write endpoints for an equipment resource restricted to exactly the 4 approved types: Boom Lift, Scissors Lift, Fork Lift, Excavator.
 - **FR-003**: The mock server MUST expose read and write endpoints for a depot resource restricted to exactly the 4 approved Singapore locations: Jurong Port, Pioneer, Tuas, Marina South.
 - **FR-004**: The mock server MUST expose read and write endpoints for a user resource.
@@ -55,7 +55,7 @@ As a frontend developer or a CI test job working on the heavy machinery rental p
 - **FR-009**: The mock server MUST expose read endpoints for the aggregate reporting data (monthly utilization and fleet status distribution) used by the admin dashboard.
 - **FR-010**: The mock server's host and port MUST be configurable via environment variables and workspace settings, defaulting to `127.0.0.1:4010` to match the CI pipeline's existing expectations. In this workspace, the Thinker extension is configured to use the local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock` and the database file at `mock/db.json`.
 - **FR-011**: Every resource endpoint MUST support standard REST operations: list, get-by-id, create, replace, partial-update, and delete.
-- **FR-012**: All resource endpoints MUST be reachable under a common `/api` path prefix, distinct from the unprefixed health-check endpoint.
+- **FR-012**: All resource endpoints MUST be reachable under a common `/api` path prefix.
 
 ### Key Entities
 
@@ -68,8 +68,8 @@ As a frontend developer or a CI test job working on the heavy machinery rental p
 
 ## Dependencies & Assumptions
 
-- Assumes the Thinker "Mock Server" VS Code extension (`@r35007/mock-server`) as the mocking tool, consistent with what the project has already adopted, rather than an OpenAPI/Prism-based mock.
-- Assumes the CI pipeline's `rest-endpoint-tests` job (`.github/workflows/integration-pipeline.yml`) as the consumer of this server's host/port/health contract.
+- Assumes the Thinker "Mock Server" VS Code extension as the mocking tool, run only through the extension's UI — the `@r35007/mock-server` npm package is deliberately **not** a project dependency (see Change Log: removed for a high-severity `npm audit` finding with no non-breaking fix). This also means there is no npm-invokable script to start the server headlessly.
+- Assumes the CI pipeline's `rest-endpoint-tests` job (`.github/workflows/integration-pipeline.yml`) as the eventual consumer of this server's host/port contract, once a `test:api`-family script and an npm-invokable mock-server script both exist; today that job has neither and stays in its documented placeholder/skip state regardless of this server's implementation.
 - Assumes no live backend exists yet — this server is a stand-in, not an integration with a real datastore.
 - Assumes the workspace-level VS Code settings for the Thinker extension are present so the "Mock it" action resolves to the project-local mock folder and `mock/db.json` instead of an external or default location.
 - Seed values for equipment and admin analytics are assumed to stay consistent with the frontend's existing canonical sample data, so the mock API and the UI's local fallback data don't visibly diverge.
@@ -86,22 +86,17 @@ As a frontend developer or a CI test job working on the heavy machinery rental p
 
 ### Start the server
 
-```bash
-cd heavy-rental-react-web-portal
-npm install        # first time only, or after pulling changes
-npm run mock:server
-```
-
-The server logs its listening address (`http://127.0.0.1:4010`) once ready. Leave it running in its own terminal; stop it with `Ctrl+C`. In this workspace, the Thinker "Mock it" action is preconfigured to use the local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`, so the extension and the npm script both resolve to the same project-local mock data.
+Start the mock server from the **Thinker "Mock Server" VS Code extension** — there is no npm script for this (see Dependencies & Assumptions and the Change Log below for why). With the extension installed, use its "Mock it" command; the workspace's `.vscode/settings.json` and `.mockserverrc.cjs` are preconfigured to point it at the project-local mock root (`/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`) and `mock/db.json`, so it starts on `http://127.0.0.1:4010` with the `/api` base out of the box. Stop it via the same extension UI.
 
 ### Quick sanity check (curl)
 
 Optional, before opening Postman:
 
 ```bash
-curl http://127.0.0.1:4010/health
 curl http://127.0.0.1:4010/api/equipment
 ```
+
+Note: the unprefixed `/health` route described elsewhere in this spec was custom middleware added by the now-removed npm-package wrapper script; the VS Code-extension-launched server does not serve it. Readiness checks (e.g. in CI) should fall back to a resource route like `/api/equipment` or the base URL instead.
 
 ### Testing with Postman (desktop)
 
@@ -110,7 +105,6 @@ curl http://127.0.0.1:4010/api/equipment
 
    | Method | URL                           | Notes                                                                                                                                                |
    | ------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | GET    | `{{baseUrl}}/health`          | Should return `{"status":"ok"}`                                                                                                                      |
    | GET    | `{{baseUrl}}/api/equipment`   | 4 items: Boom Lift, Scissors Lift, Fork Lift, Excavator                                                                                              |
    | GET    | `{{baseUrl}}/api/equipment/1` | Single item by id                                                                                                                                    |
    | GET    | `{{baseUrl}}/api/depots`      | 4 Singapore depots                                                                                                                                   |
@@ -145,3 +139,4 @@ curl http://127.0.0.1:4010/api/equipment
 - 2026-08-04: Initial specification written, documenting the mock REST API server implemented for the portal (equipment, depots, users, rental plans, bookings, and admin analytics endpoints), aligned to the business rules in `Spec-ui-heavy-machinery-portal.md` and to the CI pipeline's `rest-endpoint-tests` contract.
 - 2026-08-04: Added an appendix with local run instructions (`npm run mock:server`) and Postman desktop testing steps (environment variable setup, example request table).
 - 2026-08-04: Updated the implementation notes to reflect the workspace-based Thinker mock-server configuration, including the project-local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock` and the VS Code settings that point the extension at `mock/db.json`.
+- 2026-08-04: Removed the `@r35007/mock-server` npm devDependency and `mock/server.cjs`/`npm run mock:server` — `npm audit --audit-level=high` flagged a high-severity SSRF advisory (GHSA-2p57-rm9w-gvfp, via a transitive `ip` dependency present in every package version ≥9.1.0) with no non-breaking fix available. The mock server is now started **only** via the Thinker VS Code extension's UI, using the unchanged `.mockserverrc.cjs`/`.vscode/settings.json` configuration. As a consequence, the custom `/health` route (previously added via the npm package's programmatic API) no longer exists; FR-001 and the Postman appendix were updated accordingly, and readiness checks should use a resource route (e.g. `/api/equipment`) instead.
