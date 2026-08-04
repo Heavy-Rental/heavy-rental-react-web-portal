@@ -16,13 +16,31 @@ import { AdminDashboard, AssetFormModal } from "./app/AdminDashboard";
 import { SafetyPage } from "./app/SafetyPage";
 import { AboutPage } from "./app/AboutPage";
 import { ProjectsPage } from "./app/ProjectsPage";
+import type {
+  Equipment as EquipmentItem,
+  Depot,
+  RentalPlan as ApiRentalPlan,
+  Role,
+  View,
+  OnboardingMode,
+} from "./app/types";
+import {
+  equipmentApi,
+  depotApi,
+  userApi,
+  rentalPlanApi,
+  bookingApi,
+  monthlyUtilizationApi,
+  statusDistributionApi,
+  calcDeposit,
+  calcFullPaymentDueDate,
+} from "./app/api";
+import { useApiResource } from "./app/useApiResource";
+import { deriveAssetRecord, type AssetRecord } from "./app/assetRecord";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
-type Role = "customer" | "employee" | "admin";
-type View = "portal" | "customer" | "dashboard" | "admin" | "safety" | "about" | "projects";
 type DayStatus = "available" | "booked" | "maintenance";
-type OnboardingMode = "know" | "browse" | "specs" | null;
 
 interface CartItem {
   equipment: EquipmentItem;
@@ -60,80 +78,6 @@ interface RentalPlan {
 
 // ─── DATA ─────────────────────────────────────────────────────────────────────
 
-const EQUIPMENT_LIST = [
-  {
-    id: 1, name: "CAT 320 Hydraulic Excavator", category: "Excavator",
-    daily: 890, weekly: 4200, tons: 20, year: 2022, location: "Houston, TX",
-    rating: 4.9, reviews: 37, available: true,
-    img: "photo-1630288214173-a119cf823388",
-    tags: ["GPS Tracked", "Operator Available"],
-    utilization: 82, revenue: 58400, hoursThisMonth: 187,
-    desc: "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
-    maxLoad: 20, idealFor: ["excavation", "demolition", "earthmoving", "foundation", "trenching"],
-  },
-  {
-    id: 2, name: "Liebherr LTM 1100 Mobile Crane", category: "Crane",
-    daily: 2400, weekly: 11000, tons: 100, year: 2021, location: "Dallas, TX",
-    rating: 4.8, reviews: 19, available: true,
-    img: "photo-1653315917834-04a6d84e132e",
-    tags: ["Certified Operator", "OSHA Compliant"],
-    utilization: 71, revenue: 134400, hoursThisMonth: 162,
-    desc: "100-ton capacity mobile crane ideal for steel erection, bridge lifting, and heavy picks.",
-    maxLoad: 100, idealFor: ["lifting", "crane", "steel erection", "bridge", "heavy"],
-  },
-  {
-    id: 3, name: "Komatsu D65 Bulldozer", category: "Bulldozer",
-    daily: 750, weekly: 3500, tons: 17, year: 2023, location: "Austin, TX",
-    rating: 5.0, reviews: 11, available: true,
-    img: "photo-1575281923032-f40d94ef6160",
-    tags: ["GPS Tracked", "Fuel Included"],
-    utilization: 94, revenue: 42000, hoursThisMonth: 214,
-    desc: "High-efficiency bulldozer for land clearing, grading, pushing large volumes of earth and debris.",
-    maxLoad: 17, idealFor: ["grading", "land clearing", "pushing", "dozing", "site prep"],
-  },
-  {
-    id: 4, name: "Toyota 8FBE15 Electric Forklift", category: "Forklift",
-    daily: 320, weekly: 1400, tons: 1.5, year: 2023, location: "San Antonio, TX",
-    rating: 4.7, reviews: 44, available: false,
-    img: "photo-1664312616511-81fe2e745cb3",
-    tags: ["Zero Emissions", "Indoor Safe"],
-    utilization: 58, revenue: 17920, hoursThisMonth: 132,
-    desc: "Electric forklift for warehouse operations, indoor material handling, and pallet moving.",
-    maxLoad: 1.5, idealFor: ["warehouse", "indoor", "pallet", "forklift", "material handling"],
-  },
-  {
-    id: 5, name: "Volvo EC480E Excavator", category: "Excavator",
-    daily: 1100, weekly: 5200, tons: 48, year: 2022, location: "Houston, TX",
-    rating: 4.8, reviews: 22, available: true,
-    img: "photo-1759950345011-ee5a96640e00",
-    tags: ["GPS Tracked", "Large Capacity"],
-    utilization: 76, revenue: 61600, hoursThisMonth: 174,
-    desc: "Large excavator for major earthworks, quarrying, and deep excavation projects.",
-    maxLoad: 48, idealFor: ["deep excavation", "quarry", "large earthworks", "mining"],
-  },
-  {
-    id: 6, name: "JLG 1350SJP Telescopic Boom", category: "Boom Lift",
-    daily: 580, weekly: 2600, tons: 0.45, year: 2023, location: "Dallas, TX",
-    rating: 4.6, reviews: 31, available: true,
-    img: "photo-1780054984720-20ccf265317f",
-    tags: ["135ft Reach", "4WD"],
-    utilization: 68, revenue: 32480, hoursThisMonth: 155,
-    desc: "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
-    maxLoad: 0.45, idealFor: ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"],
-  },
-];
-
-type EquipmentItem = typeof EQUIPMENT_LIST[0];
-
-const CATEGORIES = [
-  { label: "Excavators", count: 48, img: "photo-1630288214173-a119cf823388" },
-  { label: "Cranes", count: 22, img: "photo-1653315917834-04a6d84e132e" },
-  { label: "Bulldozers", count: 17, img: "photo-1575281923032-f40d94ef6160" },
-  { label: "Forklifts", count: 35, img: "photo-1664312616511-81fe2e745cb3" },
-  { label: "Dump Trucks", count: 29, img: "photo-1780054984720-20ccf265317f" },
-  { label: "Compactors", count: 14, img: "photo-1759950345011-ee5a96640e00" },
-];
-
 const TESTIMONIALS = [
   { name: "Marcus Delgado", role: "Site Manager — Ironclad Construction", quote: "We needed a 100-ton crane on 48-hour notice. Heavy Rental delivered, certified operator included. Saved our project timeline.", rating: 5 },
   { name: "Jennifer Okafor", role: "Operations Director — Vertex Earthworks", quote: "We run 12+ excavators through Heavy Rental month over month. Billing is clean, equipment is well-maintained.", rating: 5 },
@@ -147,22 +91,6 @@ const STATS = [
   { value: "24/7", label: "Support Available" },
 ];
 
-const MONTHLY_UTILIZATION = [
-  { month: "Feb", utilization: 68, revenue: 189000 },
-  { month: "Mar", utilization: 74, revenue: 214000 },
-  { month: "Apr", utilization: 79, revenue: 231000 },
-  { month: "May", utilization: 85, revenue: 258000 },
-  { month: "Jun", utilization: 88, revenue: 271000 },
-  { month: "Jul", utilization: 76, revenue: 243000 },
-];
-
-const STATUS_DIST = [
-  { name: "Rented Out", value: 68, color: "#f5a623" },
-  { name: "Available", value: 22, color: "#4ade80" },
-  { name: "Maintenance", value: 7, color: "#f87171" },
-  { name: "In Transit", value: 3, color: "#60a5fa" },
-];
-
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
@@ -171,12 +99,12 @@ const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 type ChatStep = "greeting" | "task" | "load" | "location" | "result";
 interface ChatState { step: ChatStep; task: string; load: number | null; location: string; }
 
-function getBotResponse(state: ChatState, userInput: string): { reply: string; nextState: ChatState; suggestions?: string[]; recommended?: EquipmentItem[] } {
+function getBotResponse(state: ChatState, userInput: string, equipment: EquipmentItem[]): { reply: string; nextState: ChatState; suggestions?: string[]; recommended?: EquipmentItem[] } {
   if (state.step === "greeting") {
     return {
       reply: "Great! What kind of work are you planning? For example: excavation, lifting, grading, warehouse, or aerial work.",
       nextState: { ...state, step: "task" },
-      suggestions: ["Excavation / Trenching", "Lifting / Crane work", "Land grading / Clearing", "Warehouse / Indoor", "Aerial / Elevated work", "Demolition"],
+      suggestions: ["Excavation / Trenching", "Elevated / Boom work", "Indoor / Compact access", "Warehouse / Material handling", "Demolition"],
     };
   }
   if (state.step === "task") {
@@ -196,13 +124,13 @@ function getBotResponse(state: ChatState, userInput: string): { reply: string; n
     return {
       reply: "Almost there — which city or region is your jobsite in?",
       nextState: { ...state, step: "location", load: loadNum },
-      suggestions: ["Houston, TX", "Dallas, TX", "Austin, TX", "San Antonio, TX", "Other"],
+      suggestions: ["Jurong Port", "Pioneer", "Tuas", "Marina South", "Other"],
     };
   }
   if (state.step === "location") {
     const task = state.task.toLowerCase();
     const load = state.load;
-    const scored = EQUIPMENT_LIST.map(e => ({
+    const scored = equipment.map(e => ({
       ...e,
       score: e.idealFor.reduce((s, kw) => s + (task.includes(kw) ? 3 : 0), 0)
         + (load !== null && e.maxLoad >= load ? 2 : 0)
@@ -277,22 +205,25 @@ function ChartTip({
 
 // ─── LOGIN MODAL ──────────────────────────────────────────────────────────────
 
+// Demo accounts mapped to real mock/db.json seed users (Spec-mock-api-server.md)
+// so a real numeric userId can be resolved at login — see handleLogin in App().
 const ACCOUNTS: Record<string, { role: Role; name: string }> = {
-  "john@company.com":  { role: "customer", name: "John" },
-  "sarah@company.com": { role: "admin",    name: "Sarah" },
+  "alex.tan@example.sg":  { role: "customer", name: "Alex Tan" },
+  "ravi.kumar@example.sg": { role: "admin",    name: "Ravi Kumar" },
 };
 
-function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string) => void; onClose: () => void }) {
+function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string, email: string) => void; onClose: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const account = ACCOUNTS[email.toLowerCase().trim()];
+    const normalizedEmail = email.toLowerCase().trim();
+    const account = ACCOUNTS[normalizedEmail];
     if (!account) { setError("Invalid credentials. Please check your email."); return; }
     if (!password) { setError("Password is required."); return; }
-    onLogin(account.role, account.name);
+    onLogin(account.role, account.name, normalizedEmail);
   };
 
   return (
@@ -321,7 +252,7 @@ function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string) 
             Sign In
           </button>
           <p className="text-xs text-muted-foreground text-center" style={mono}>
-            Customer: john@company.com · Admin: sarah@company.com
+            Customer: alex.tan@example.sg · Admin: ravi.kumar@example.sg
           </p>
         </form>
       </div>
@@ -439,7 +370,7 @@ function MachineCalendar({ machine, onClose, onAddToCart }: { machine: Equipment
 
 // ─── CHATBOT ──────────────────────────────────────────────────────────────────
 
-function Chatbot({ onSelectEquipment }: { onSelectEquipment: (e: EquipmentItem) => void }) {
+function Chatbot({ onSelectEquipment, equipment }: { onSelectEquipment: (e: EquipmentItem) => void; equipment: EquipmentItem[] }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { from: "bot", text: "Hi! I'm your equipment assistant. I can help you find the right machine for your job. Ready to get started?" },
@@ -454,7 +385,7 @@ function Chatbot({ onSelectEquipment }: { onSelectEquipment: (e: EquipmentItem) 
 
   const send = (text: string) => {
     if (!text.trim()) return;
-    const { reply, nextState, suggestions: nextSugg, recommended: rec } = getBotResponse(chatState, text);
+    const { reply, nextState, suggestions: nextSugg, recommended: rec } = getBotResponse(chatState, text, equipment);
     setMessages(prev => [...prev, { from: "user", text }, { from: "bot", text: reply }]);
     setChatState(nextState);
     setSuggestions(nextSugg ?? []);
@@ -529,7 +460,60 @@ function Chatbot({ onSelectEquipment }: { onSelectEquipment: (e: EquipmentItem) 
 
 // ─── CUSTOMER PORTAL ──────────────────────────────────────────────────────────
 
-function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLogout: () => void; onHome: () => void }) {
+// Spec-ui-heavy-machinery-portal.md §4.3: all equipment in one booking must share a
+// single start/end date — the cart lets each item pick its own range, so checkout
+// collapses it to the widest covering range (earliest start / latest end).
+function cartDateRange(cart: CartItem[]): { startDate: string; endDate: string } {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const starts = cart.map(c => new Date(c.year, c.month, c.startDay).getTime());
+  const ends = cart.map(c => new Date(c.year, c.month, c.endDay).getTime());
+  return { startDate: iso(new Date(Math.min(...starts))), endDate: iso(new Date(Math.max(...ends))) };
+}
+
+function resolveCartDepotId(cart: CartItem[], depots: Depot[]): number {
+  const locations = new Set(cart.map(c => c.equipment.location));
+  if (locations.size !== 1) {
+    throw new Error("Equipment in your cart is spread across multiple depots — a booking can only be fulfilled from one depot.");
+  }
+  const depot = depots.find(d => d.name === cart[0].equipment.location);
+  if (!depot) throw new Error(`No depot matches location "${cart[0].equipment.location}".`);
+  return depot.id;
+}
+
+function buildRentalPlanViews(apiPlans: ApiRentalPlan[], equipment: EquipmentItem[], userId: number): RentalPlan[] {
+  return apiPlans
+    .filter(p => p.userId === userId)
+    .map(p => {
+      const items: RentalPlanItem[] = p.items.map(i => {
+        const eq = equipment.find(e => e.id === i.equipmentId);
+        const days = i.endDay - i.startDay + 1;
+        return {
+          equipmentName: eq?.name ?? `Equipment #${i.equipmentId}`,
+          category: eq?.category ?? "",
+          dailyRate: eq?.daily ?? 0,
+          days,
+          startDay: i.startDay,
+          endDay: i.endDay,
+          month: i.month,
+          year: i.year,
+        };
+      });
+      const totalCost = items.reduce((s, it) => s + it.dailyRate * it.days, 0);
+      const depositPaid = calcDeposit(totalCost);
+      return {
+        id: `RNT-${String(p.id).padStart(4, "0")}`,
+        paidAt: new Date(p.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        items,
+        totalCost,
+        depositPaid,
+        balanceDue: totalCost - depositPaid,
+        status: (p.status === "active" ? "Active" : "Completed") as RentalPlan["status"],
+      };
+    })
+    .sort((a, b) => b.id.localeCompare(a.id));
+}
+
+function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: string; userId: number | null; onLogout: () => void; onHome: () => void }) {
   const [onboardingMode, setOnboardingMode] = useState<OnboardingMode>(null);
   const [specsRecs, setSpecsRecs] = useState<EquipmentItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -548,35 +532,17 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
   const [confirmed, setConfirmed] = useState(false);
   const [reservationId, setReservationId] = useState("");
   const [selectedPlan, setSelectedPlan] = useState<RentalPlan | null>(null);
-  const [rentalPlans, setRentalPlans] = useState<RentalPlan[]>([
-    {
-      id: "RNT-0041",
-      paidAt: "Jun 3, 2025",
-      items: [{ equipmentName: "CAT 320 Hydraulic Excavator", category: "Excavator", dailyRate: 890, days: 7, startDay: 3, endDay: 9, month: 5, year: 2025 }],
-      totalCost: 6230,
-      depositPaid: 1869,
-      balanceDue: 4361,
-      status: "Completed",
-    },
-    {
-      id: "RNT-0038",
-      paidAt: "May 14, 2025",
-      items: [{ equipmentName: "Liebherr LTM 1100 Mobile Crane", category: "Crane", dailyRate: 2400, days: 3, startDay: 14, endDay: 16, month: 4, year: 2025 }],
-      totalCost: 7200,
-      depositPaid: 2160,
-      balanceDue: 5040,
-      status: "Completed",
-    },
-    {
-      id: "RNT-0029",
-      paidAt: "Mar 22, 2025",
-      items: [{ equipmentName: "Komatsu D65 Bulldozer", category: "Bulldozer", dailyRate: 750, days: 6, startDay: 22, endDay: 27, month: 2, year: 2025 }],
-      totalCost: 4500,
-      depositPaid: 1350,
-      balanceDue: 3150,
-      status: "Completed",
-    },
-  ]);
+
+  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
+  const depotsRes = useApiResource(() => depotApi.list());
+  const depots = depotsRes.data ?? [];
+  const rentalPlansRes = useApiResource(() => rentalPlanApi.list());
+  const rentalPlans = useMemo(
+    () => (rentalPlansRes.status === "success" && userId !== null ? buildRentalPlanViews(rentalPlansRes.data, equipment, userId) : []),
+    [rentalPlansRes.status, rentalPlansRes.data, equipment, userId],
+  );
+
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [specUploadOpen, setSpecUploadOpen] = useState(false);
 
@@ -603,8 +569,26 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
     );
   }
 
-  const filters = ["All", "Excavator", "Crane", "Bulldozer", "Forklift", "Boom Lift"];
-  const filtered = EQUIPMENT_LIST.filter(e => {
+  if (equipmentRes.status === "loading" || depotsRes.status === "loading") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center" style={sans}>
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (equipmentRes.status === "error" || depotsRes.status === "error") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6 text-center" style={sans}>
+        <div>
+          <p className="text-foreground font-semibold mb-2">Couldn't reach the equipment catalog.</p>
+          <p className="text-sm text-muted-foreground">{equipmentRes.error ?? depotsRes.error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const filters = ["All", ...Array.from(new Set(equipment.map(e => e.category)))];
+  const filtered = equipment.filter(e => {
     const matchCat = activeFilter === "All" || e.category === activeFilter;
     const q = searchQuery.toLowerCase().trim();
     const matchSearch = !q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q) || e.location.toLowerCase().includes(q) || e.tags.some(t => t.toLowerCase().includes(q));
@@ -760,7 +744,7 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
               <p className="font-bold text-foreground">{userName}</p>
               <p className="text-sm text-muted-foreground">customer@heavyrental.com</p>
               <p className="text-sm text-muted-foreground">Apex Construction LLC</p>
-              <p className="text-sm text-muted-foreground">4820 Main St, Houston, TX 77002</p>
+              <p className="text-sm text-muted-foreground">1 Jurong Port Rd, Singapore 619096</p>
             </div>
             <div className="bg-card border border-border p-5">
               <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-3" style={mono}>Plan Details</p>
@@ -831,7 +815,7 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
 
           {/* Footer note */}
           <div className="border-t border-border pt-6 flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">HEAVY RENTAL INC. · 4820 Main St, Houston TX 77002 · support@heavyrental.com</p>
+            <p className="text-xs text-muted-foreground">HEAVY RENTAL INC. · 1 Jurong Port Rd, Singapore 619096 · support@heavyrental.com</p>
             <button onClick={() => setSelectedPlan(null)}
               className="px-5 py-2 border border-border text-xs font-bold tracking-widest uppercase text-muted-foreground hover:text-foreground hover:border-primary/40 transition-all">
               Back to Profile
@@ -1396,35 +1380,42 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
           )}
         </div>
       </div>
-      <Chatbot onSelectEquipment={handleChatbotSelect} />
+      <Chatbot onSelectEquipment={handleChatbotSelect} equipment={equipment} />
       {checkoutOpen && (
         <DepositCheckout
           cart={cart}
           totalCost={totalCost}
           userName={userName}
           onClose={() => setCheckoutOpen(false)}
-          onPaid={(rid) => {
+          onPaid={async () => {
+            if (userId === null) throw new Error("You must be signed in with a linked account to book equipment.");
+            const { startDate, endDate } = cartDateRange(cart);
+            const depotId = resolveCartDepotId(cart, depots);
             const cost = cart.reduce((s, c) => s + (c.endDay - c.startDay + 1) * c.equipment.daily, 0);
-            const dep = Math.round(cost * 0.3);
-            const newPlan: RentalPlan = {
-              id: rid,
-              paidAt: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-              items: cart.map(c => ({
-                equipmentName: c.equipment.name,
-                category: c.equipment.category,
-                dailyRate: c.equipment.daily,
-                days: c.endDay - c.startDay + 1,
-                startDay: c.startDay,
-                endDay: c.endDay,
-                month: c.month,
-                year: c.year,
-              })),
-              totalCost: cost,
-              depositPaid: dep,
-              balanceDue: cost - dep,
-              status: "Active",
-            };
-            setRentalPlans(prev => [newPlan, ...prev]);
+            const deposit = calcDeposit(cost);
+            const plan = await rentalPlanApi.create({
+              userId,
+              status: "active",
+              depotId,
+              items: cart.map(c => ({ equipmentId: c.equipment.id, startDay: c.startDay, endDay: c.endDay, month: c.month, year: c.year })),
+              createdAt: new Date().toISOString(),
+            });
+            const booking = await bookingApi.create({
+              rentalPlanId: plan.id,
+              depotId,
+              equipmentIds: cart.map(c => c.equipment.id),
+              startDate,
+              endDate,
+              deliveryDate: startDate,
+              returnDate: endDate,
+              totalAmount: cost,
+              depositAmount: deposit,
+              depositPaid: true,
+              fullPaymentDueDate: calcFullPaymentDueDate(startDate),
+              status: "deposit-paid",
+            });
+            const rid = `RNT-${String(booking.id).padStart(4, "0")}`;
+            rentalPlansRes.reload();
             setReservationId(rid);
             setCheckoutOpen(false);
             setConfirmed(true);
@@ -1439,14 +1430,6 @@ function CustomerPortal({ userName, onLogout, onHome }: { userName: string; onLo
 // ─── EMPLOYEE DASHBOARD ───────────────────────────────────────────────────────
 
 // ─── DEPOSIT CHECKOUT ─────────────────────────────────────────────────────────
-
-
-// Cryptographically secure 4-digit id (avoids CodeQL insecure-randomness on refs/tokens)
-function secureFourDigit(): number {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return 1000 + (buf[0] % 9000);
-}
 
 function CheckoutInputField({
   label, value, onChange, placeholder, maxLen, error,
@@ -1475,13 +1458,14 @@ function DepositCheckout({
   totalCost: number;
   userName: string;
   onClose: () => void;
-  onPaid: (reservationId: string) => void;
+  onPaid: () => Promise<void>;
 }) {
   const deposit = Math.round(totalCost * 0.3);
   const [step, setStep] = useState<"summary" | "payment" | "processing">("summary");
   const [card, setCard] = useState({ number: "", name: userName, expiry: "", cvv: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [payMethod, setPayMethod] = useState<"card" | "bank">("card");
+  const [payError, setPayError] = useState<string | null>(null);
 
   const fmtCard = (v: string) => v.replace(/\D/g, "").slice(0, 16).replace(/(.{4})/g, "$1 ").trim();
   const fmtExpiry = (v: string) => { const d = v.replace(/\D/g, "").slice(0, 4); return d.length > 2 ? d.slice(0,2)+"/"+d.slice(2) : d; };
@@ -1501,9 +1485,14 @@ function DepositCheckout({
   const handlePay = () => {
     if (!validate()) return;
     setStep("processing");
-    setTimeout(() => {
-      const rid = `RNT-${String(secureFourDigit())}`;
-      onPaid(rid);
+    setPayError(null);
+    setTimeout(async () => {
+      try {
+        await onPaid();
+      } catch (err) {
+        setPayError(err instanceof Error ? err.message : String(err));
+        setStep("payment");
+      }
     }, 2200);
   };
 
@@ -1639,6 +1628,7 @@ function DepositCheckout({
               </div>
             )}
 
+            {payError && <p className="text-xs text-red-400">{payError}</p>}
             <div className="flex gap-3 pt-2 border-t border-border">
               <button onClick={() => setStep("summary")}
                 className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all">
@@ -1656,46 +1646,25 @@ function DepositCheckout({
   );
 }
 
-// ─── ASSET RECORD TYPES ───────────────────────────────────────────────────────
-
-interface AssetRecord {
-  id: number;
-  name: string;
-  category: string;
-  year: number;
-  location: string;
-  daily: number;
-  weekly: number;
-  tons: number;
-  available: boolean;
-  utilization: number;
-  hoursThisMonth: number;
-  revenue: number;
-  tags: string;
-  desc: string;
-  serialNo: string;
-  lastService: string;
-  nextService: string;
-  condition: "Excellent" | "Good" | "Fair" | "Needs Repair";
-  photo: string | null;
-}
-
-const CATEGORIES_LIST = ["Excavator", "Crane", "Bulldozer", "Forklift", "Boom Lift", "Dump Truck", "Compactor"];
 // ─── EMPLOYEE DASHBOARD ─────────────────────────────────────────────────────
 
 function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; onLogout: () => void; onHome: () => void }) {
   const [tab, setTab] = useState<"dashboard" | "assets">("dashboard");
-  const [assets, setAssets] = useState<AssetRecord[]>(
-    EQUIPMENT_LIST.map(e => ({
-      ...e,
-      tags: e.tags.join(", "),
-      serialNo: `SN-${e.category.slice(0, 3).toUpperCase()}-${e.year}-${String(e.id).padStart(4, "0")}`,
-      lastService: "2025-05-12",
-      nextService: "2025-08-12",
-      condition: (["Excellent", "Good", "Good", "Fair"][e.id % 4]) as AssetRecord["condition"],
-      photo: `https://images.unsplash.com/photo-${e.img}?w=400&q=80`,
-    }))
-  );
+  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipment = equipmentRes.data ?? [];
+  const monthlyUtilRes = useApiResource(() => monthlyUtilizationApi.list());
+  const monthlyUtilization = monthlyUtilRes.data ?? [];
+  const statusDistRes = useApiResource(() => statusDistributionApi.list());
+  const statusDist = statusDistRes.data ?? [];
+  const categories = Array.from(new Set(equipment.map(e => e.category)));
+
+  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [seededFrom, setSeededFrom] = useState<typeof equipmentRes.data>(null);
+  if (equipmentRes.status === "success" && equipmentRes.data !== seededFrom) {
+    setSeededFrom(equipmentRes.data);
+    setAssets(equipmentRes.data.map(deriveAssetRecord));
+  }
+
   const [formOpen, setFormOpen] = useState(false);
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -1842,14 +1811,14 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
               <h3 className="text-xl font-black text-foreground mb-4" style={display}>DISTRIBUTION</h3>
               <ResponsiveContainer width="100%" height={140}>
                 <PieChart id="emp-status-pie">
-                  <Pie data={STATUS_DIST} cx="50%" cy="50%" innerRadius={40} outerRadius={60} dataKey="value" paddingAngle={2}>
-                    {STATUS_DIST.map((entry, i) => <Cell key={`emp-sd-${i}`} fill={entry.color} />)}
+                  <Pie data={statusDist} cx="50%" cy="50%" innerRadius={40} outerRadius={60} dataKey="value" paddingAngle={2}>
+                    {statusDist.map((entry, i) => <Cell key={`emp-sd-${i}`} fill={entry.color} />)}
                   </Pie>
                   <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex flex-col gap-2 mt-2">
-                {STATUS_DIST.map(({ name, value, color }) => (
+                {statusDist.map(({ name, value, color }) => (
                   <div key={name} className="flex items-center justify-between">
                     <div className="flex items-center gap-2"><span className="w-2.5 h-2.5" style={{ background: color }} /><span className="text-xs text-muted-foreground">{name}</span></div>
                     <span className="text-xs font-semibold text-foreground" style={mono}>{value}%</span>
@@ -1863,7 +1832,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
               <p className="text-xs text-muted-foreground mb-1" style={mono}>6-MONTH TREND</p>
               <h3 className="text-xl font-black text-foreground mb-4" style={display}>UTILIZATION</h3>
               <ResponsiveContainer width="100%" height={160}>
-                <LineChart id="emp-util-line" data={MONTHLY_UTILIZATION}>
+                <LineChart id="emp-util-line" data={monthlyUtilization}>
                   <XAxis dataKey="month" tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[50, 100]} tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
                   <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
@@ -1875,7 +1844,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
               <p className="text-xs text-muted-foreground mb-1" style={mono}>6-MONTH TREND</p>
               <h3 className="text-xl font-black text-foreground mb-4" style={display}>REVENUE</h3>
               <ResponsiveContainer width="100%" height={160}>
-                <BarChart id="emp-revenue-bar" data={MONTHLY_UTILIZATION}>
+                <BarChart id="emp-revenue-bar" data={monthlyUtilization}>
                   <XAxis dataKey="month" tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}K`} />
                   <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
@@ -1961,7 +1930,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
             <select value={filterCat} onChange={e => setFilterCat(e.target.value)}
               className="bg-card border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 transition-colors">
               <option value="All">All Categories</option>
-              {CATEGORIES_LIST.map(c => <option key={c}>{c}</option>)}
+              {categories.map(c => <option key={c}>{c}</option>)}
             </select>
             <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
               className="bg-card border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 transition-colors">
@@ -2064,23 +2033,39 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
 
 export default function App() {
   const [view, setView] = useState<View>("portal");
-  const [user, setUser] = useState<{ name: string; role: Role } | null>(null);
+  const [user, setUser] = useState<{ name: string; role: Role; id: number | null } | null>(null);
   const [showLogin, setShowLogin] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState("All");
+  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipment = equipmentRes.data ?? [];
 
-  const handleLogin = (role: Role, name: string) => { setUser({ name, role }); setShowLogin(false); setView(role === "customer" ? "customer" : role === "admin" ? "admin" : "dashboard"); };
+  const handleLogin = async (role: Role, name: string, email: string) => {
+    setShowLogin(false);
+    setView(role === "customer" ? "customer" : role === "admin" ? "admin" : "dashboard");
+    try {
+      const users = await userApi.list();
+      const match = users.find(u => u.email.toLowerCase() === email);
+      setUser({ name, role, id: match?.id ?? null });
+    } catch {
+      setUser({ name, role, id: null });
+    }
+  };
   const handleLogout = () => { setUser(null); setView("portal"); };
 
-  if (view === "customer" && user) return <CustomerPortal userName={user.name} onLogout={handleLogout} onHome={handleLogout} />;
+  if (view === "customer" && user) return <CustomerPortal userName={user.name} userId={user.id} onLogout={handleLogout} onHome={handleLogout} />;
   if (view === "dashboard" && user) return <EmployeeDashboard userName={user.name} onLogout={handleLogout} onHome={handleLogout} />;
   if (view === "admin" && user) return <AdminDashboard userName={user.name} onLogout={handleLogout} onHome={handleLogout} />;
   if (view === "safety")   return <SafetyPage   onHome={() => setView("portal")} />;
   if (view === "about")    return <AboutPage    onHome={() => setView("portal")} />;
   if (view === "projects") return <ProjectsPage onHome={() => setView("portal")} />;
 
-  const filters = ["All", "Excavator", "Crane", "Bulldozer", "Forklift"];
-  const filtered = activeFilter === "All" ? EQUIPMENT_LIST : EQUIPMENT_LIST.filter(e => e.category === activeFilter);
+  const categoryTiles = Array.from(new Set(equipment.map(e => e.category))).map(cat => {
+    const first = equipment.find(e => e.category === cat)!;
+    return { label: cat, count: equipment.filter(e => e.category === cat).length, img: first.img };
+  });
+  const filters = ["All", ...Array.from(new Set(equipment.map(e => e.category)))];
+  const filtered = activeFilter === "All" ? equipment : equipment.filter(e => e.category === activeFilter);
 
   return (
     <div className="min-h-screen bg-background text-foreground" style={sans}>
@@ -2163,7 +2148,7 @@ export default function App() {
             </button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {CATEGORIES.map(cat => (
+            {categoryTiles.map(cat => (
               <div key={cat.label} onClick={() => { setActiveFilter(cat.label === "All" ? "All" : cat.label); document.getElementById("equipment-section")?.scrollIntoView({ behavior: "smooth" }); }}
                 className="group relative overflow-hidden cursor-pointer border border-border hover:border-primary/50 transition-all duration-300 bg-card">
                 <div className="aspect-[4/3] bg-muted overflow-hidden">

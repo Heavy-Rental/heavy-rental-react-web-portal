@@ -1,86 +1,15 @@
 import { useState, useRef } from "react";
 import { Search, ArrowRight, Wrench, CheckCircle, ChevronLeft, ChevronRight, Sparkles, Minus, Plus } from "lucide-react";
+import type { Equipment as EquipmentItem, OnboardingMode } from "./types";
+import { equipmentApi } from "./api";
+import { useApiResource } from "./useApiResource";
 
-// Types
-type OnboardingMode = "know" | "browse" | "specs" | null;
-type EquipmentItem = {
-  id: number; name: string; category: string;
-  daily: number; weekly: number; tons: number; year: number; location: string;
-  rating: number; reviews: number; available: boolean; img: string;
-  tags: string[]; utilization: number; revenue: number; hoursThisMonth: number;
-  desc: string; maxLoad: number; idealFor: string[];
-};
 interface QuoteLine {
   equipment: EquipmentItem; recommendedDays: number; reason: string;
   matchedKeywords: string[]; matchScore: number; costTip: string;
   priority: "Essential" | "Recommended" | "Optional";
   weeklyAdvised: boolean; savingVsDaily: number;
 }
-
-// Data
-const EQUIPMENT_LIST: EquipmentItem[] = [
-  {
-    id: 1, name: "CAT 320 Hydraulic Excavator", category: "Excavator",
-    daily: 890, weekly: 4200, tons: 20, year: 2022, location: "Houston, TX",
-    rating: 4.9, reviews: 37, available: true,
-    img: "photo-1630288214173-a119cf823388",
-    tags: ["GPS Tracked", "Operator Available"],
-    utilization: 82, revenue: 58400, hoursThisMonth: 187,
-    desc: "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
-    maxLoad: 20, idealFor: ["excavation", "demolition", "earthmoving", "foundation", "trenching"],
-  },
-  {
-    id: 2, name: "Liebherr LTM 1100 Mobile Crane", category: "Crane",
-    daily: 2400, weekly: 11000, tons: 100, year: 2021, location: "Dallas, TX",
-    rating: 4.8, reviews: 19, available: true,
-    img: "photo-1653315917834-04a6d84e132e",
-    tags: ["Certified Operator", "OSHA Compliant"],
-    utilization: 71, revenue: 134400, hoursThisMonth: 162,
-    desc: "100-ton capacity mobile crane ideal for steel erection, bridge lifting, and heavy picks.",
-    maxLoad: 100, idealFor: ["lifting", "crane", "steel erection", "bridge", "heavy"],
-  },
-  {
-    id: 3, name: "Komatsu D65 Bulldozer", category: "Bulldozer",
-    daily: 750, weekly: 3500, tons: 17, year: 2023, location: "Austin, TX",
-    rating: 5.0, reviews: 11, available: true,
-    img: "photo-1575281923032-f40d94ef6160",
-    tags: ["GPS Tracked", "Fuel Included"],
-    utilization: 94, revenue: 42000, hoursThisMonth: 214,
-    desc: "High-efficiency bulldozer for land clearing, grading, pushing large volumes of earth and debris.",
-    maxLoad: 17, idealFor: ["grading", "land clearing", "pushing", "dozing", "site prep"],
-  },
-  {
-    id: 4, name: "Toyota 8FBE15 Electric Forklift", category: "Forklift",
-    daily: 320, weekly: 1400, tons: 1.5, year: 2023, location: "San Antonio, TX",
-    rating: 4.7, reviews: 44, available: false,
-    img: "photo-1664312616511-81fe2e745cb3",
-    tags: ["Zero Emissions", "Indoor Safe"],
-    utilization: 58, revenue: 17920, hoursThisMonth: 132,
-    desc: "Electric forklift for warehouse operations, indoor material handling, and pallet moving.",
-    maxLoad: 1.5, idealFor: ["warehouse", "indoor", "pallet", "forklift", "material handling"],
-  },
-  {
-    id: 5, name: "Volvo EC480E Excavator", category: "Excavator",
-    daily: 1100, weekly: 5200, tons: 48, year: 2022, location: "Houston, TX",
-    rating: 4.8, reviews: 22, available: true,
-    img: "photo-1759950345011-ee5a96640e00",
-    tags: ["GPS Tracked", "Large Capacity"],
-    utilization: 76, revenue: 61600, hoursThisMonth: 174,
-    desc: "Large excavator for major earthworks, quarrying, and deep excavation projects.",
-    maxLoad: 48, idealFor: ["deep excavation", "quarry", "large earthworks", "mining"],
-  },
-  {
-    id: 6, name: "JLG 1350SJP Telescopic Boom", category: "Boom Lift",
-    daily: 580, weekly: 2600, tons: 0.45, year: 2023, location: "Dallas, TX",
-    rating: 4.6, reviews: 31, available: true,
-    img: "photo-1780054984720-20ccf265317f",
-    tags: ["135ft Reach", "4WD"],
-    utilization: 68, revenue: 32480, hoursThisMonth: 155,
-    desc: "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
-    maxLoad: 0.45, idealFor: ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"],
-  },
-];
-
 
 // Styles
 const mono = { fontFamily: "'DM Mono', monospace" } as const;
@@ -246,9 +175,10 @@ function QuoteResultScreen({
         <div className="bg-card border border-border px-5 py-4 flex gap-3 mb-6">
           <Sparkles size={16} className="text-primary shrink-0 mt-0.5" />
           <p className="text-sm text-muted-foreground leading-relaxed">
-            This bundle was chosen to cover all phases of your {days}-day project: primary lifting via the mobile crane,
-            elevated facade access via the telescopic boom, and site preparation via the hydraulic excavator.
-            Together they address your load, reach, and access constraints without requiring crane assembly on a narrow road.
+            This bundle was chosen to cover all phases of your {days}-day project: elevated facade access via the
+            telescopic boom, site preparation via the hydraulic excavator, and compact indoor access via the scissors
+            lift. Together they address your reach, ground-prep, and confined-space constraints without requiring
+            crane mobilisation.
           </p>
         </div>
 
@@ -366,6 +296,8 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
   const [rentalDays, setRentalDays] = useState(7);
   const [quoteRef] = useState(() => `QUO-${secureFourDigit()}`);
   const fileRef = useRef<HTMLInputElement>(null);
+  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipment = equipmentRes.data ?? [];
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) setUploaded(Array.from(e.target.files));
@@ -395,42 +327,32 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
       }
       setRentalDays(detectedDays);
 
-      // ── Categorised intent signals ────────────────────────────────────────
-      const SIGNALS: { label: string; keywords: string[]; eqNames: string[]; reason: string }[] = [
+      // ── Categorised intent signals — keyed to the 4 approved equipment
+      // categories (Spec-ui-heavy-machinery-portal.md §2.1), not specific models,
+      // so this stays correct if the catalog's exact machines ever change. ───
+      const SIGNALS: { label: string; keywords: string[]; categories: string[]; reason: string }[] = [
         {
           label: "excavation",
-          keywords: ["excavat", "dig", "trench", "foundation", "earthwork", "cut", "soil removal"],
-          eqNames: ["CAT 320 Hydraulic Excavator", "Volvo EC480E Excavator"],
-          reason: "Excavation and earthmoving identified in your project scope",
-        },
-        {
-          label: "bulk earthmoving",
-          keywords: ["bulk", "large scale", "bulk excavat", "large excavat", "mass excavat"],
-          eqNames: ["Volvo EC480E Excavator"],
-          reason: "Large-scale or bulk earthmoving requirement detected",
-        },
-        {
-          label: "grading & clearing",
-          keywords: ["grade", "grading", "level", "clear", "bulldoz", "land clear", "rough level", "site prep"],
-          eqNames: ["Komatsu D65 Bulldozer"],
-          reason: "Site grading or clearing work in scope",
-        },
-        {
-          label: "heavy lifting",
-          keywords: ["lift", "crane", "hoist", "steel", "beam", "precast", "rigging", "overhead", "structural"],
-          eqNames: ["Liebherr LTM 1100 Mobile Crane"],
-          reason: "Structural lifting or heavy crane work specified",
+          keywords: ["excavat", "dig", "trench", "foundation", "earthwork", "cut", "soil removal", "demolition", "earthmoving"],
+          categories: ["Excavator"],
+          reason: "Excavation, trenching, or earthmoving identified in your project scope",
         },
         {
           label: "elevated access",
-          keywords: ["height", "elevated", "facade", "roof", "mep", "ceiling", "aerial", "boom", "man lift", "access platform"],
-          eqNames: ["JLG 1350SJP Telescopic Boom"],
+          keywords: ["height", "elevated", "facade", "roof", "mep", "ceiling", "aerial", "boom", "man lift", "access platform", "painting", "electrical"],
+          categories: ["Boom Lift"],
           reason: "Elevated access or working-at-height requirement found",
+        },
+        {
+          label: "indoor / compact access",
+          keywords: ["indoor access", "compact", "fit-out", "fit out", "scissor", "confined", "low ceiling"],
+          categories: ["Scissors Lift"],
+          reason: "Compact indoor access work in scope",
         },
         {
           label: "material handling",
           keywords: ["forklift", "pallet", "load", "unload", "warehouse", "indoor", "material handl", "storage"],
-          eqNames: ["Toyota 8FBE15 Electric Forklift"],
+          categories: ["Fork Lift"],
           reason: "Material handling or logistics requirement identified",
         },
       ];
@@ -443,14 +365,14 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
         primaryReason: string;
       }
 
-      const scored: ScoredItem[] = EQUIPMENT_LIST.map(eq => {
+      const scored: ScoredItem[] = equipment.map(eq => {
         let score = eq.available ? 2 : 0;
         const matchedKeywords: string[] = [];
         let primaryReason = "Matched to your project requirements";
 
         for (const sig of SIGNALS) {
           const hitKws = sig.keywords.filter(kw => allText.includes(kw));
-          if (hitKws.length > 0 && sig.eqNames.includes(eq.name)) {
+          if (hitKws.length > 0 && sig.categories.includes(eq.category)) {
             score += hitKws.length * 5;
             hitKws.forEach(kw => { if (!matchedKeywords.includes(kw)) matchedKeywords.push(kw); });
             primaryReason = sig.reason;
@@ -546,24 +468,28 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
   // ── Quotation result screen ───────────────────────────────────────────────
   if (step === "quote") {
     const DAYS = 21;
-    // Three real catalog items matched to a crane/elevated-access project
+    // Real catalog items matched to an elevated-access + site-prep project,
+    // looked up by category (not array index) so this stays correct if the
+    // catalog's specific machines ever change — only the 4 approved
+    // categories are guaranteed to exist.
+    const findByCategory = (category: string) => equipment.find(e => e.category === category);
     const REC_ITEMS: { eq: EquipmentItem; reason: string; lineTotal: number }[] = [
-      {
-        eq: EQUIPMENT_LIST[1], // Liebherr LTM 1100 Mobile Crane — $2,400/day × 21
-        reason: "Handles 8T load with safety margin; road-legal, no assembly needed for narrow-access site.",
-        lineTotal: EQUIPMENT_LIST[1].daily * DAYS,
+      findByCategory("Boom Lift") && {
+        eq: findByCategory("Boom Lift")!,
+        reason: "135ft reach covers the elevation requirement; 4WD suits uneven site terrain.",
+        lineTotal: findByCategory("Boom Lift")!.daily * DAYS,
       },
-      {
-        eq: EQUIPMENT_LIST[5], // JLG 1350SJP Telescopic Boom — $580/day × 21
-        reason: "135ft reach covers 18m elevation requirement; 4WD suits uneven site terrain.",
-        lineTotal: EQUIPMENT_LIST[5].daily * DAYS,
+      findByCategory("Excavator") && {
+        eq: findByCategory("Excavator")!,
+        reason: "Foundation prep and site clearing needed before elevated work begins.",
+        lineTotal: findByCategory("Excavator")!.daily * DAYS,
       },
-      {
-        eq: EQUIPMENT_LIST[0], // CAT 320 Hydraulic Excavator — $890/day × 21
-        reason: "Foundation prep and site clearing needed before crane mobilisation.",
-        lineTotal: EQUIPMENT_LIST[0].daily * DAYS,
+      findByCategory("Scissors Lift") && {
+        eq: findByCategory("Scissors Lift")!,
+        reason: "Compact indoor access for facade and finishing work in tighter areas.",
+        lineTotal: findByCategory("Scissors Lift")!.daily * DAYS,
       },
-    ];
+    ].filter((r): r is { eq: EquipmentItem; reason: string; lineTotal: number } => Boolean(r));
     const ESTIMATED_TOTAL = REC_ITEMS.reduce((s, r) => s + r.lineTotal, 0);
 
     return (
@@ -586,7 +512,7 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
 
   // ── Upload / paste specs screen ───────────────────────────────────────────
   if (step === "upload") {
-    const canSubmit = uploaded.length > 0 || specsText.trim().length >= 20;
+    const canSubmit = (uploaded.length > 0 || specsText.trim().length >= 20) && equipmentRes.status === "success";
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6" style={sans}>
         <div className="w-full max-w-xl">
@@ -645,7 +571,7 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
 
           {/* Text area */}
           <textarea value={specsText} onChange={e => setSpecsText(e.target.value)} rows={6}
-            placeholder={"Describe your project requirements here…\n\ne.g. Commercial foundation project requiring deep excavation to 8m. Load bearing capacity 35–45 tons. Site located in Houston, TX. Duration approx. 3 weeks. Requires grading and bulldozing prior to excavation."}
+            placeholder={"Describe your project requirements here…\n\ne.g. Commercial foundation project requiring excavation and elevated facade access. Site located at Jurong Port. Duration approx. 3 weeks. Requires indoor fit-out access prior to handover."}
             className="w-full bg-secondary/50 border border-border px-4 py-3 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors resize-none mb-1" />
           <p className="text-xs text-muted-foreground mb-5">{specsText.trim().length < 20 && specsText.length > 0 ? `${20 - specsText.trim().length} more characters needed` : `${specsText.trim().length} characters`}</p>
 

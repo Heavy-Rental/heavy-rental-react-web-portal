@@ -8,6 +8,25 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
+import type {
+  Equipment,
+  Depot,
+  User as ApiUser,
+  RentalPlan as ApiRentalPlan,
+  Booking as ApiBooking,
+  BookingStatus,
+  Role,
+} from "./types";
+import {
+  equipmentApi,
+  depotApi,
+  userApi,
+  rentalPlanApi,
+  bookingApi,
+  monthlyUtilizationApi,
+} from "./api";
+import { useApiResource } from "./useApiResource";
+import { deriveAssetRecord, type AssetRecord } from "./assetRecord";
 
 // ── Font style constants ──
 const sans    = { fontFamily: "'DM Sans', sans-serif" };
@@ -15,105 +34,74 @@ const display = { fontFamily: "'Barlow Condensed', sans-serif" };
 const mono    = { fontFamily: "'DM Mono', monospace" };
 
 // ── Types needed by AdminDashboard ──
-type Role = "customer" | "employee" | "admin";
 type AdminTab = "overview" | "assets" | "fleet" | "users" | "bookings" | "pricing";
 type DeploymentStatus = "Available" | "Booked" | "In-Transit" | "Maintenance";
 type LifecycleStatus = "Reserved" | "Preparing" | "Dispatched" | "Active" | "Return Initiated" | "Returned" | "Inspecting" | "Cleared" | "Maintenance";
 
-const EQUIPMENT_LIST = [
-  {
-    id: 1, name: "CAT 320 Hydraulic Excavator", category: "Excavator",
-    daily: 890, weekly: 4200, tons: 20, year: 2022, location: "Houston, TX",
-    rating: 4.9, reviews: 37, available: true,
-    img: "photo-1630288214173-a119cf823388",
-    tags: ["GPS Tracked", "Operator Available"],
-    utilization: 82, revenue: 58400, hoursThisMonth: 187,
-    desc: "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
-    maxLoad: 20, idealFor: ["excavation", "demolition", "earthmoving", "foundation", "trenching"],
-  },
-  {
-    id: 2, name: "Liebherr LTM 1100 Mobile Crane", category: "Crane",
-    daily: 2400, weekly: 11000, tons: 100, year: 2021, location: "Dallas, TX",
-    rating: 4.8, reviews: 19, available: true,
-    img: "photo-1653315917834-04a6d84e132e",
-    tags: ["Certified Operator", "OSHA Compliant"],
-    utilization: 71, revenue: 134400, hoursThisMonth: 162,
-    desc: "100-ton capacity mobile crane ideal for steel erection, bridge lifting, and heavy picks.",
-    maxLoad: 100, idealFor: ["lifting", "crane", "steel erection", "bridge", "heavy"],
-  },
-  {
-    id: 3, name: "Komatsu D65 Bulldozer", category: "Bulldozer",
-    daily: 750, weekly: 3500, tons: 17, year: 2023, location: "Austin, TX",
-    rating: 5.0, reviews: 11, available: true,
-    img: "photo-1575281923032-f40d94ef6160",
-    tags: ["GPS Tracked", "Fuel Included"],
-    utilization: 94, revenue: 42000, hoursThisMonth: 214,
-    desc: "High-efficiency bulldozer for land clearing, grading, pushing large volumes of earth and debris.",
-    maxLoad: 17, idealFor: ["grading", "land clearing", "pushing", "dozing", "site prep"],
-  },
-  {
-    id: 4, name: "Toyota 8FBE15 Electric Forklift", category: "Forklift",
-    daily: 320, weekly: 1400, tons: 1.5, year: 2023, location: "San Antonio, TX",
-    rating: 4.7, reviews: 44, available: false,
-    img: "photo-1664312616511-81fe2e745cb3",
-    tags: ["Zero Emissions", "Indoor Safe"],
-    utilization: 58, revenue: 17920, hoursThisMonth: 132,
-    desc: "Electric forklift for warehouse operations, indoor material handling, and pallet moving.",
-    maxLoad: 1.5, idealFor: ["warehouse", "indoor", "pallet", "forklift", "material handling"],
-  },
-  {
-    id: 5, name: "Volvo EC480E Excavator", category: "Excavator",
-    daily: 1100, weekly: 5200, tons: 48, year: 2022, location: "Houston, TX",
-    rating: 4.8, reviews: 22, available: true,
-    img: "photo-1759950345011-ee5a96640e00",
-    tags: ["GPS Tracked", "Large Capacity"],
-    utilization: 76, revenue: 61600, hoursThisMonth: 174,
-    desc: "Large excavator for major earthworks, quarrying, and deep excavation projects.",
-    maxLoad: 48, idealFor: ["deep excavation", "quarry", "large earthworks", "mining"],
-  },
-  {
-    id: 6, name: "JLG 1350SJP Telescopic Boom", category: "Boom Lift",
-    daily: 580, weekly: 2600, tons: 0.45, year: 2023, location: "Dallas, TX",
-    rating: 4.6, reviews: 31, available: true,
-    img: "photo-1780054984720-20ccf265317f",
-    tags: ["135ft Reach", "4WD"],
-    utilization: 68, revenue: 32480, hoursThisMonth: 155,
-    desc: "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
-    maxLoad: 0.45, idealFor: ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"],
-  },
-];
+// Unified booking-status vocabulary (Spec-mock-api-server.md seed data / mock/db.json).
+const BOOKING_STATUSES: BookingStatus[] = ["pending-deposit", "deposit-paid", "completed", "cancelled"];
+function formatBookingStatus(s: BookingStatus): string {
+  return s.split("-").map(w => w[0].toUpperCase() + w.slice(1)).join(" ");
+}
 
-const CATEGORIES_LIST = ["Excavator", "Crane", "Bulldozer", "Forklift", "Boom Lift"];
-
-const MONTHLY_UTILIZATION = [
-  { month: "Feb", utilization: 68, revenue: 189000 },
-  { month: "Mar", utilization: 74, revenue: 214000 },
-  { month: "Apr", utilization: 79, revenue: 231000 },
-  { month: "May", utilization: 85, revenue: 258000 },
-  { month: "Jun", utilization: 88, revenue: 271000 },
-  { month: "Jul", utilization: 76, revenue: 243000 },
-];
-
-interface AssetRecord {
+// User/booking view-models joined from the normalized API resources, for display.
+interface UserRow {
   id: number;
   name: string;
-  category: string;
-  year: number;
-  location: string;
-  daily: number;
-  weekly: number;
-  tons: number;
-  available: boolean;
-  utilization: number;
-  hoursThisMonth: number;
-  revenue: number;
-  tags: string;
-  desc: string;
-  serialNo: string;
-  lastService: string;
-  nextService: string;
-  condition: "Excellent" | "Good" | "Fair" | "Needs Repair";
-  photo: string | null;
+  email: string;
+  role: Role;
+  rentals: number;
+  spent: number;
+  status: "Active" | "Inactive";
+}
+
+interface BookingRow {
+  id: string;
+  apiId: number;
+  customer: string;
+  equipment: string;
+  depot: string;
+  dates: string;
+  days: number;
+  total: number;
+  deposit: number;
+  status: BookingStatus;
+}
+
+function buildUserRows(apiUsers: ApiUser[], rentalPlans: ApiRentalPlan[], bookings: ApiBooking[]): UserRow[] {
+  return apiUsers.map(u => {
+    const planIds = new Set(rentalPlans.filter(p => p.userId === u.id).map(p => p.id));
+    const userBookings = bookings.filter(b => planIds.has(b.rentalPlanId));
+    const hasActivePlan = rentalPlans.some(p => p.userId === u.id && p.status === "active");
+    return {
+      id: u.id, name: u.name, email: u.email, role: u.role,
+      rentals: userBookings.length,
+      spent: userBookings.reduce((s, b) => s + b.totalAmount, 0),
+      status: hasActivePlan ? "Active" : "Inactive",
+    };
+  });
+}
+
+function buildBookingRows(apiBookings: ApiBooking[], rentalPlans: ApiRentalPlan[], apiUsers: ApiUser[], equipment: Equipment[], depots: Depot[]): BookingRow[] {
+  const fmt = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return apiBookings.map(b => {
+    const plan = rentalPlans.find(p => p.id === b.rentalPlanId);
+    const user = plan ? apiUsers.find(u => u.id === plan.userId) : undefined;
+    const start = new Date(`${b.startDate}T00:00:00`);
+    const end = new Date(`${b.endDate}T00:00:00`);
+    return {
+      id: `RNT-${String(b.id).padStart(4, "0")}`,
+      apiId: b.id,
+      customer: user?.name ?? "Unknown",
+      equipment: b.equipmentIds.map(id => equipment.find(e => e.id === id)?.name ?? `Equipment #${id}`).join(", "),
+      depot: depots.find(d => d.id === b.depotId)?.name ?? `Depot #${b.depotId}`,
+      dates: `${fmt(b.startDate)} – ${fmt(b.endDate)}`,
+      days: Math.round((end.getTime() - start.getTime()) / 86400000) + 1,
+      total: b.totalAmount,
+      deposit: b.depositAmount,
+      status: b.status,
+    };
+  });
 }
 
 interface FleetAsset {
@@ -154,10 +142,14 @@ interface RentalLifecycle {
 }
 
 const CONDITIONS = ["Excellent", "Good", "Fair", "Needs Repair"] as const;
-const LOCATIONS_LIST = ["Houston, TX", "Dallas, TX", "Austin, TX", "San Antonio, TX", "Fort Worth, TX"];
+// The 4 approved equipment categories and Singapore depots (Spec-ui-heavy-machinery-portal.md
+// §§4.1, 4.6) — fixed by business rule, used here (not the fetched equipment list) since
+// AssetFormModal is a standalone component shared with App.tsx's EmployeeDashboard.
+const CATEGORIES_LIST = ["Boom Lift", "Scissors Lift", "Fork Lift", "Excavator"];
+const LOCATIONS_LIST = ["Jurong Port", "Pioneer", "Tuas", "Marina South"];
 
 const EMPTY_ASSET: Omit<AssetRecord, "id"> = {
-  name: "", category: "Excavator", year: 2024, location: "Houston, TX",
+  name: "", category: "Excavator", year: 2024, location: "Jurong Port",
   daily: 0, weekly: 0, tons: 0, available: true, utilization: 0,
   hoursThisMonth: 0, revenue: 0, tags: "", desc: "",
   serialNo: "", lastService: "", nextService: "",
@@ -427,32 +419,31 @@ const DEPLOYMENT_META: Record<DeploymentStatus, { color: string; bg: string; bor
   "Maintenance": { color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30",    dot: "bg-red-400",    desc: "Out of service — repair or scheduled service" },
 };
 
-const buildFleetAssets = (): FleetAsset[] => EQUIPMENT_LIST.map((e, i) => {
-  const statuses: DeploymentStatus[] = ["Available", "Booked", "In-Transit", "Available", "Booked", "Maintenance"];
-  const bookings = ["", "RNT-4821", "RNT-3904", "", "RNT-3710", ""];
-  const customers = ["", "Sarah Mitchell", "Derek Okafor", "", "Priya Nair", ""];
-  const sites = ["Houston Depot", "4820 Main St, Houston", "In-transit to Dallas", "Austin Depot", "Reserved — San Antonio", "Service Center, Houston"];
+const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] => equipment.map((e, i) => {
+  const statuses: DeploymentStatus[] = ["Available", "Booked", "In-Transit", "Maintenance"];
+  const bookings = ["", "RNT-0001", "RNT-0002", ""];
+  const customers = ["", "Alex Tan", "Mei Lin Goh", ""];
+  const sites = ["Jurong Port Depot", "En route to customer site", "Reserved — Marina South", "Service Center, Tuas"];
   const notes = [
     "Fully serviced. Ready for next rental.",
-    "Booked Jul 14–21. Delivery scheduled morning of Jul 14.",
-    "En route to Derek Okafor site. ETA 10:30.",
-    "Minor track wear noted. Monitoring.",
-    "Deposit received. Awaiting dispatch Jul 25.",
-    "Annual service due. Hydraulic seal replacement in progress.",
+    "Booked — delivery scheduled shortly.",
+    "En route to customer site.",
+    "Annual service due.",
   ];
+  const idx = i % statuses.length;
   return {
     id: e.id, name: e.name, category: e.category, year: e.year,
     serialNo: `SN-${e.category.slice(0,3).toUpperCase()}-${e.year}-${String(e.id).padStart(4,"0")}`,
     location: e.location,
     photo: `https://images.unsplash.com/photo-${e.img}?w=400&q=80`,
-    deploymentStatus: statuses[i],
-    assignedBooking: bookings[i],
-    assignedCustomer: customers[i],
-    currentSite: sites[i],
-    lastUpdated: "2025-07-27 08:30",
+    deploymentStatus: statuses[idx],
+    assignedBooking: bookings[idx],
+    assignedCustomer: customers[idx],
+    currentSite: sites[idx],
+    lastUpdated: "2026-08-01 08:30",
     updatedBy: "Carlos Vega",
-    notes: notes[i],
-    condition: (["Excellent","Good","Excellent","Fair","Good","Needs Repair"][i]) as AssetRecord["condition"],
+    notes: notes[idx],
+    condition: (["Excellent","Good","Fair","Needs Repair"][idx]) as AssetRecord["condition"],
   };
 });
 
@@ -482,17 +473,17 @@ const INITIAL_LIFECYCLES: RentalLifecycle[] = [
   },
   {
     bookingId: "RNT-3904", customer: "Derek Okafor",
-    equipment: "Liebherr LTM 1100 Mobile Crane", serialNo: "SN-CRA-2021-0002",
+    equipment: "JLG 1350SJP Telescopic Boom", serialNo: "SN-BOO-2023-0002",
     currentStatus: "Dispatched",
     events: [
       { id: "e5", timestamp: "2025-07-17 10:00", status: "Reserved",   officer: "System",      notes: "Deposit of $2,160 received.", condition: "" },
       { id: "e6", timestamp: "2025-07-17 15:00", status: "Preparing",  officer: "Carlos Vega", notes: "Boom sections inspected. Outrigger pads checked. Pre-delivery checklist complete.", condition: "Good" },
-      { id: "e7", timestamp: "2025-07-18 06:30", status: "Dispatched", officer: "James Tran",  notes: "Crane convoy departed. Police escort arranged.", odometer: "8,210 km" },
+      { id: "e7", timestamp: "2025-07-18 06:30", status: "Dispatched", officer: "James Tran",  notes: "Boom lift departed on flatbed. Route cleared.", odometer: "8,210 km" },
     ],
   },
   {
     bookingId: "RNT-3602", customer: "Sarah Mitchell",
-    equipment: "Komatsu D65 Bulldozer", serialNo: "SN-BUL-2023-0003",
+    equipment: "Genie GS-1932 Scissors Lift", serialNo: "SN-SCI-2024-0003",
     currentStatus: "Cleared",
     events: [
       { id: "e8",  timestamp: "2025-06-04 09:00", status: "Reserved",           officer: "System",        notes: "Deposit of $900 received.", condition: "" },
@@ -507,7 +498,7 @@ const INITIAL_LIFECYCLES: RentalLifecycle[] = [
   },
   {
     bookingId: "RNT-3710", customer: "Priya Nair",
-    equipment: "Toyota 8FBE15 Electric Forklift", serialNo: "SN-FOR-2023-0004",
+    equipment: "Toyota 8FBE15 Electric Fork Lift", serialNo: "SN-FOR-2023-0004",
     currentStatus: "Reserved",
     events: [
       { id: "e16", timestamp: "2025-07-20 11:00", status: "Reserved", officer: "System", notes: "Deposit of $576 received. Awaiting preparation.", condition: "" },
@@ -515,21 +506,6 @@ const INITIAL_LIFECYCLES: RentalLifecycle[] = [
   },
 ];
 
-const MOCK_USERS = [
-  { id: 1, name: "Sarah Mitchell", email: "s.mitchell@email.com", role: "customer" as Role, joined: "Jan 12, 2024", rentals: 5, spent: 18430, status: "Active" },
-  { id: 2, name: "Derek Okafor", email: "d.okafor@apexconstruct.com", role: "customer" as Role, joined: "Mar 3, 2024", rentals: 3, spent: 9200, status: "Active" },
-  { id: 3, name: "James Tran", email: "j.tran@heavyrental.com", role: "employee" as Role, joined: "Sep 1, 2023", rentals: 0, spent: 0, status: "Active" },
-  { id: 4, name: "Priya Nair", email: "p.nair@email.com", role: "customer" as Role, joined: "Jun 20, 2024", rentals: 1, spent: 4200, status: "Inactive" },
-  { id: 5, name: "Carlos Vega", email: "c.vega@heavyrental.com", role: "employee" as Role, joined: "Nov 15, 2023", rentals: 0, spent: 0, status: "Active" },
-];
-
-const MOCK_BOOKINGS = [
-  { id: "RNT-4821", customer: "Sarah Mitchell", equipment: "CAT 320 Hydraulic Excavator", dates: "Jul 14–21, 2025", days: 7, total: 6230, deposit: 1869, status: "Confirmed" },
-  { id: "RNT-3904", customer: "Derek Okafor", equipment: "Liebherr LTM 1100 Mobile Crane", dates: "Jul 18–20, 2025", days: 3, total: 7200, deposit: 2160, status: "Confirmed" },
-  { id: "RNT-3710", customer: "Priya Nair", equipment: "Toyota 8FBE15 Electric Forklift", dates: "Jul 25–31, 2025", days: 6, total: 1920, deposit: 576, status: "Pending" },
-  { id: "RNT-3602", customer: "Sarah Mitchell", equipment: "Komatsu D65 Bulldozer", dates: "Jun 5–9, 2025", days: 4, total: 3000, deposit: 900, status: "Completed" },
-  { id: "RNT-3498", customer: "Derek Okafor", equipment: "Volvo EC480E Excavator", dates: "May 28–30, 2025", days: 3, total: 3300, deposit: 990, status: "Completed" },
-];
 
 interface PricingRule {
   id: number;
@@ -644,59 +620,25 @@ function FleetUpdateModal({
 
 function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLogout: () => void; onHome: () => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
-  const [assets, setAssets] = useState<AssetRecord[]>(
-    EQUIPMENT_LIST.map(e => ({
-      ...e, tags: e.tags.join(", "),
-      serialNo: `SN-${e.category.slice(0,3).toUpperCase()}-${e.year}-${String(e.id).padStart(4,"0")}`,
-      lastService: "2025-05-12", nextService: "2025-08-12",
-      condition: (["Excellent","Good","Good","Fair"][e.id % 4]) as AssetRecord["condition"],
-      photo: `https://images.unsplash.com/photo-${e.img}?w=400&q=80`,
-    }))
-  );
-  const [users, setUsers] = useState(MOCK_USERS);
-  const [bookings, setBookings] = useState(MOCK_BOOKINGS);
-  const [assetPage, setAssetPage] = useState(1);
-  const [bookingPage, setBookingPage] = useState(1);
-  const PAGE_SIZE = 5;
 
-  // Asset CRUD state
-  const [assetForm, setAssetForm] = useState(false);
-  const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
-  const [deleteAssetId, setDeleteAssetId] = useState<number | null>(null);
-  const [assetSearch, setAssetSearch] = useState("");
-  const [assetCatFilter, setAssetCatFilter] = useState("All");
+  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipment = equipmentRes.data ?? [];
+  const depotsRes = useApiResource(() => depotApi.list());
+  const usersRes = useApiResource(() => userApi.list());
+  const bookingsRes = useApiResource(() => bookingApi.list());
+  const rentalPlansRes = useApiResource(() => rentalPlanApi.list());
+  const monthlyUtilRes = useApiResource(() => monthlyUtilizationApi.list());
+  const monthlyUtilization = monthlyUtilRes.data ?? [];
+  const categories = Array.from(new Set(equipment.map(e => e.category)));
 
-  // User management state
-  const [userSearch, setUserSearch] = useState("");
-  const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
-  const [editingUser, setEditingUser] = useState<typeof MOCK_USERS[0] | null>(null);
-  const [showAddUser, setShowAddUser] = useState(false);
-  const [newUser, setNewUser] = useState({ name: "", email: "" });
-
-  // Booking state
-  const [bookingSearch, setBookingSearch] = useState("");
-  const [bookingStatusFilter, setBookingStatusFilter] = useState("All");
-
-  // Fleet board state
-  const [fleet, setFleet] = useState<FleetAsset[]>(buildFleetAssets);
-  const [fleetSelected, setFleetSelected] = useState<FleetAsset | null>(null);
-  const [fleetUpdateOpen, setFleetUpdateOpen] = useState(false);
-  const [fleetSearch, setFleetSearch] = useState("");
-  const [fleetView, setFleetView] = useState<"kanban" | "table">("kanban");
-
-  const handleFleetUpdate = (id: number, patch: Partial<FleetAsset>) => {
-    setFleet(prev => prev.map(a => a.id === id ? { ...a, ...patch, lastUpdated: new Date().toLocaleString("en-US", { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false }).replace(",",""), updatedBy: userName } : a));
-    setFleetUpdateOpen(false);
-    setFleetSelected(null);
-    showToast("Asset status updated.");
-  };
-
-  // Lifecycle data (read-only overview feed)
-  const [lifecycles] = useState<RentalLifecycle[]>(INITIAL_LIFECYCLES);
-
-  // Pricing state (hoisted to top level — Rules of Hooks)
-  const [pricingRules, setPricingRules] = useState<PricingRule[]>(
-    assets.map(a => {
+  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
+  const [assetsSeededFrom, setAssetsSeededFrom] = useState<typeof equipmentRes.data>(null);
+  if (equipmentRes.status === "success" && equipmentRes.data !== assetsSeededFrom) {
+    setAssetsSeededFrom(equipmentRes.data);
+    const derived = equipmentRes.data.map(deriveAssetRecord);
+    setAssets(derived);
+    setPricingRules(derived.map(a => {
       const util = a.utilization;
       const demandSignal: PricingRule["demandSignal"] = util >= 80 ? "High" : util >= 55 ? "Medium" : "Low";
       const demandMultiplier = util >= 80 ? 1.18 : util >= 55 ? 1.05 : 0.92;
@@ -717,8 +659,63 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
         utilization: util,
         locked: false,
       };
-    })
-  );
+    }));
+  }
+
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [bookings, setBookings] = useState<BookingRow[]>([]);
+  const [userBookingsSeeded, setUserBookingsSeeded] = useState(false);
+  if (!userBookingsSeeded && usersRes.status === "success" && bookingsRes.status === "success" && rentalPlansRes.status === "success" && equipmentRes.status === "success" && depotsRes.status === "success") {
+    setUserBookingsSeeded(true);
+    setUsers(buildUserRows(usersRes.data, rentalPlansRes.data, bookingsRes.data));
+    setBookings(buildBookingRows(bookingsRes.data, rentalPlansRes.data, usersRes.data, equipmentRes.data, depotsRes.data));
+  }
+
+  const [assetPage, setAssetPage] = useState(1);
+  const [bookingPage, setBookingPage] = useState(1);
+  const PAGE_SIZE = 5;
+
+  // Asset CRUD state
+  const [assetForm, setAssetForm] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
+  const [deleteAssetId, setDeleteAssetId] = useState<number | null>(null);
+  const [assetSearch, setAssetSearch] = useState("");
+  const [assetCatFilter, setAssetCatFilter] = useState("All");
+
+  // User management state
+  const [userSearch, setUserSearch] = useState("");
+  const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
+  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUser, setNewUser] = useState({ name: "", email: "" });
+
+  // Booking state
+  const [bookingSearch, setBookingSearch] = useState("");
+  const [bookingStatusFilter, setBookingStatusFilter] = useState("All");
+
+  // Fleet board state
+  const [fleet, setFleet] = useState<FleetAsset[]>([]);
+  const [fleetSeededFrom, setFleetSeededFrom] = useState<typeof equipmentRes.data>(null);
+  if (equipmentRes.status === "success" && equipmentRes.data !== fleetSeededFrom) {
+    setFleetSeededFrom(equipmentRes.data);
+    setFleet(buildFleetAssets(equipmentRes.data));
+  }
+  const [fleetSelected, setFleetSelected] = useState<FleetAsset | null>(null);
+  const [fleetUpdateOpen, setFleetUpdateOpen] = useState(false);
+  const [fleetSearch, setFleetSearch] = useState("");
+  const [fleetView, setFleetView] = useState<"kanban" | "table">("kanban");
+
+  const handleFleetUpdate = (id: number, patch: Partial<FleetAsset>) => {
+    // No API resource backs deployment/lifecycle tracking fields — stays fully client-local.
+    setFleet(prev => prev.map(a => a.id === id ? { ...a, ...patch, lastUpdated: new Date().toLocaleString("en-US", { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false }).replace(",",""), updatedBy: userName } : a));
+    setFleetUpdateOpen(false);
+    setFleetSelected(null);
+    showToast("Asset status updated.");
+  };
+
+  // Lifecycle data (read-only overview feed)
+  const [lifecycles] = useState<RentalLifecycle[]>(INITIAL_LIFECYCLES);
+
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editFloor, setEditFloor] = useState({ daily: 0, weekly: 0 });
   const [editCeil, setEditCeil] = useState({ daily: 0, weekly: 0 });
@@ -728,10 +725,62 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
   const [toast, setToast] = useState<{ msg: string; type?: "success" | "error" } | null>(null);
   const showToast = (msg: string, type: "success" | "error" = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
-  const handleAssetSave = (a: AssetRecord) => { setAssets(prev => prev.some(x => x.id === a.id) ? prev.map(x => x.id === a.id ? a : x) : [...prev, a]); setAssetForm(false); setEditingAsset(null); showToast(editingAsset ? "Asset updated." : "New asset added."); };
-  const handleAssetDelete = (id: number) => { setAssets(prev => prev.filter(x => x.id !== id)); setDeleteAssetId(null); showToast("Asset deleted.", "error"); };
-  const handleUserDelete = (id: number) => { setUsers(prev => prev.filter(x => x.id !== id)); setDeleteUserId(null); showToast("User removed.", "error"); };
-  const handleBookingStatus = (id: string, status: string) => { setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b)); showToast(`Booking ${id} marked as ${status}.`); };
+  const handleAssetSave = async (a: AssetRecord) => {
+    const isNew = !assets.some(x => x.id === a.id);
+    try {
+      if (isNew) {
+        const created = await equipmentApi.create({
+          name: a.name, category: a.category, daily: a.daily, weekly: a.weekly, tons: a.tons,
+          year: a.year, location: a.location, rating: 0, reviews: 0, available: a.available,
+          img: "photo-1630288214173-a119cf823388", tags: a.tags.split(",").map(t => t.trim()).filter(Boolean),
+          utilization: a.utilization, revenue: a.revenue, hoursThisMonth: a.hoursThisMonth,
+          desc: a.desc, maxLoad: a.tons, idealFor: [],
+        });
+        setAssets(prev => [...prev, deriveAssetRecord(created)]);
+      } else {
+        await equipmentApi.update(a.id, {
+          name: a.name, category: a.category, daily: a.daily, weekly: a.weekly, tons: a.tons,
+          year: a.year, location: a.location, available: a.available,
+          utilization: a.utilization, revenue: a.revenue, hoursThisMonth: a.hoursThisMonth, desc: a.desc,
+        });
+        setAssets(prev => prev.map(x => x.id === a.id ? a : x));
+      }
+      setAssetForm(false);
+      setEditingAsset(null);
+      showToast(isNew ? "New asset added." : "Asset updated.");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to save asset.", "error");
+    }
+  };
+  const handleAssetDelete = async (id: number) => {
+    try {
+      await equipmentApi.remove(id);
+      setAssets(prev => prev.filter(x => x.id !== id));
+      setDeleteAssetId(null);
+      showToast("Asset deleted.", "error");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to delete asset.", "error");
+    }
+  };
+  const handleUserDelete = async (id: number) => {
+    try {
+      await userApi.remove(id);
+      setUsers(prev => prev.filter(x => x.id !== id));
+      setDeleteUserId(null);
+      showToast("User removed.", "error");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to remove user.", "error");
+    }
+  };
+  const handleBookingStatus = async (apiId: number, status: BookingStatus) => {
+    try {
+      await bookingApi.update(apiId, { status });
+      setBookings(prev => prev.map(b => b.apiId === apiId ? { ...b, status } : b));
+      showToast(`Booking marked as ${formatBookingStatus(status)}.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to update booking status.", "error");
+    }
+  };
 
   const filteredAssets = assets.filter(a => {
     const q = assetSearch.toLowerCase();
@@ -755,7 +804,30 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
   const pagedBookings = filteredBookings.slice((bookingPage - 1) * PAGE_SIZE, bookingPage * PAGE_SIZE);
 
   const conditionColor = (c: AssetRecord["condition"]) => ({ Excellent: "text-green-400 bg-green-500/10 border-green-500/30", Good: "text-blue-400 bg-blue-500/10 border-blue-500/30", Fair: "text-amber-400 bg-amber-500/10 border-amber-500/30", "Needs Repair": "text-red-400 bg-red-500/10 border-red-500/30" }[c]);
-  const bookingStatusColor = (s: string) => ({ Confirmed: "text-green-400 bg-green-500/10 border-green-500/30", Pending: "text-amber-400 bg-amber-500/10 border-amber-500/30", Completed: "text-blue-400 bg-blue-500/10 border-blue-500/30", Cancelled: "text-red-400 bg-red-500/10 border-red-500/30" }[s] ?? "text-muted-foreground border-border");
+  const bookingStatusColor = (s: BookingStatus) => ({
+    "pending-deposit": "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    "deposit-paid": "text-green-400 bg-green-500/10 border-green-500/30",
+    completed: "text-blue-400 bg-blue-500/10 border-blue-500/30",
+    cancelled: "text-red-400 bg-red-500/10 border-red-500/30",
+  })[s];
+
+  if (equipmentRes.status === "loading" || depotsRes.status === "loading" || usersRes.status === "loading" || bookingsRes.status === "loading" || rentalPlansRes.status === "loading" || monthlyUtilRes.status === "loading") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center" style={sans}>
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (equipmentRes.status === "error" || depotsRes.status === "error" || usersRes.status === "error" || bookingsRes.status === "error" || rentalPlansRes.status === "error" || monthlyUtilRes.status === "error") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6 text-center" style={sans}>
+        <div>
+          <p className="text-foreground font-semibold mb-2">Couldn't reach the mock API.</p>
+          <p className="text-sm text-muted-foreground">{equipmentRes.error ?? depotsRes.error ?? usersRes.error ?? bookingsRes.error ?? rentalPlansRes.error ?? monthlyUtilRes.error}</p>
+        </div>
+      </div>
+    );
+  }
 
   const TABS: { key: AdminTab; label: string; icon: React.ElementType }[] = [
     { key: "overview",  label: "Overview",      icon: BarChart2 },
@@ -829,18 +901,18 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                   <option value="admin">Admin</option>
                 </select>
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1.5 block">Status</label>
-                <div className="flex gap-2">
-                  {["Active","Inactive"].map(s => (
-                    <button key={s} type="button" onClick={() => setEditingUser(u => u ? { ...u, status: s } : u)}
-                      className={`flex-1 py-2 text-xs font-bold tracking-wider uppercase border transition-all ${editingUser.status === s ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>{s}</button>
-                  ))}
-                </div>
-              </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setEditingUser(null)} className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-wider uppercase hover:text-foreground transition-all">Cancel</button>
-                <button onClick={() => { setUsers(prev => prev.map(u => u.id === editingUser.id ? editingUser : u)); setEditingUser(null); showToast("User updated."); }}
+                <button onClick={async () => {
+                    try {
+                      await userApi.update(editingUser.id, { name: editingUser.name, email: editingUser.email, role: editingUser.role });
+                      setUsers(prev => prev.map(u => u.id === editingUser.id ? editingUser : u));
+                      setEditingUser(null);
+                      showToast("User updated.");
+                    } catch (err) {
+                      showToast(err instanceof Error ? err.message : "Failed to update user.", "error");
+                    }
+                  }}
                   className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-wider uppercase hover:brightness-110 transition-all">Save Changes</button>
               </div>
             </div>
@@ -874,14 +946,16 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                   className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-wider uppercase hover:text-foreground transition-all">Cancel</button>
                 <button
                   disabled={!newUser.name.trim() || !newUser.email.trim()}
-                  onClick={() => {
-                    const today = new Date();
-                    const joined = today.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-                    const nextId = Math.max(...users.map(u => u.id)) + 1;
-                    setUsers(prev => [...prev, { id: nextId, name: newUser.name.trim(), email: newUser.email.trim(), role: "customer" as Role, joined, rentals: 0, spent: 0, status: "Active" }]);
-                    setShowAddUser(false);
-                    setNewUser({ name: "", email: "" });
-                    showToast("Customer added.");
+                  onClick={async () => {
+                    try {
+                      const created = await userApi.create({ name: newUser.name.trim(), email: newUser.email.trim(), role: "customer" });
+                      setUsers(prev => [...prev, { id: created.id, name: created.name, email: created.email, role: created.role, rentals: 0, spent: 0, status: "Inactive" }]);
+                      setShowAddUser(false);
+                      setNewUser({ name: "", email: "" });
+                      showToast("Customer added.");
+                    } catch (err) {
+                      showToast(err instanceof Error ? err.message : "Failed to add customer.", "error");
+                    }
                   }}
                   className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-wider uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                   Add Customer
@@ -927,10 +1001,10 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
           const inTransitCount = fleet.filter(a => a.deploymentStatus === "In-Transit").length;
           const maintenanceCount = fleet.filter(a => a.deploymentStatus === "Maintenance").length;
           const utilizationRate = Math.round((activeRentals / totalAssets) * 100);
-          const monthRevenue = MONTHLY_UTILIZATION[MONTHLY_UTILIZATION.length - 1].revenue;
-          const prevMonthRevenue = MONTHLY_UTILIZATION[MONTHLY_UTILIZATION.length - 2].revenue;
+          const monthRevenue = monthlyUtilization[monthlyUtilization.length - 1].revenue;
+          const prevMonthRevenue = monthlyUtilization[monthlyUtilization.length - 2].revenue;
           const revChange = Math.round(((monthRevenue - prevMonthRevenue) / prevMonthRevenue) * 100);
-          const pendingBookings = bookings.filter(b => b.status === "Pending").length;
+          const pendingBookings = bookings.filter(b => b.status === "pending-deposit").length;
           const needsRepair = fleet.filter(a => a.condition === "Needs Repair").length;
           const pendingActions = pendingBookings + needsRepair;
 
@@ -947,10 +1021,10 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
             status: a.deploymentStatus,
           }));
 
-          const bookingBreakdown = (["Confirmed","Pending","Completed","Cancelled"] as const).map(s => ({
-            name: s,
+          const bookingBreakdown = BOOKING_STATUSES.map(s => ({
+            name: formatBookingStatus(s),
             value: bookings.filter(b => b.status === s).length,
-            color: { Confirmed:"#4ade80", Pending:"#f5a623", Completed:"#60a5fa", Cancelled:"#f87171" }[s],
+            color: { "pending-deposit":"#f5a623", "deposit-paid":"#4ade80", completed:"#60a5fa", cancelled:"#f87171" }[s],
           }));
 
           const totalDeposits = bookings.reduce((s, b) => s + b.deposit, 0);
@@ -958,7 +1032,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
 
           const ALERTS: { level: "critical" | "warning" | "info"; msg: string; action: AdminTab }[] = [
             ...fleet.filter(a => a.condition === "Needs Repair").map(a => ({ level: "critical" as const, msg: `${a.name} requires immediate maintenance.`, action: "fleet" as AdminTab })),
-            ...bookings.filter(b => b.status === "Pending").map(b => ({ level: "warning" as const, msg: `Booking ${b.id} (${b.customer}) awaiting approval.`, action: "bookings" as AdminTab })),
+            ...bookings.filter(b => b.status === "pending-deposit").map(b => ({ level: "warning" as const, msg: `Booking ${b.id} (${b.customer}) awaiting deposit.`, action: "bookings" as AdminTab })),
             ...fleet.filter(a => a.deploymentStatus === "In-Transit").map(a => ({ level: "info" as const, msg: `${a.name} currently in transit — track in Fleet Board.`, action: "fleet" as AdminTab })),
           ];
 
@@ -1050,7 +1124,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                     <span className="text-xs text-muted-foreground">vs previous month</span>
                   </div>
                   <ResponsiveContainer width="100%" height={160}>
-                    <BarChart data={MONTHLY_UTILIZATION}>
+                    <BarChart data={monthlyUtilization}>
                       <XAxis key="adm-rev-xaxis" dataKey="month" tick={{ fill:"#8a8478", fontSize:10 }} axisLine={false} tickLine={false} />
                       <YAxis key="adm-rev-yaxis" tick={{ fill:"#8a8478", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}K`} />
                       <Tooltip key="adm-rev-tip" content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
@@ -1221,7 +1295,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
               <select value={assetCatFilter} onChange={e => setAssetCatFilter(e.target.value)}
                 className="bg-card border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors">
                 <option value="All">All Categories</option>
-                {CATEGORIES_LIST.map(c => <option key={c}>{c}</option>)}
+                {categories.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
 
@@ -1507,12 +1581,12 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-              {(["Confirmed","Pending","Completed","Cancelled"] as const).map(status => {
+              {BOOKING_STATUSES.map(status => {
                 const count = bookings.filter(b=>b.status===status).length;
-                const colors = { Confirmed:"text-green-400", Pending:"text-amber-400", Completed:"text-blue-400", Cancelled:"text-red-400" };
+                const colors: Record<BookingStatus, string> = { "pending-deposit":"text-amber-400", "deposit-paid":"text-green-400", completed:"text-blue-400", cancelled:"text-red-400" };
                 return (
                   <div key={status} className="bg-card border border-border px-4 py-3 flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground" style={mono}>{status}</span>
+                    <span className="text-xs text-muted-foreground" style={mono}>{formatBookingStatus(status)}</span>
                     <span className={`text-2xl font-black ${colors[status]}`} style={display}>{count}</span>
                   </div>
                 );
@@ -1530,7 +1604,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
               <select value={bookingStatusFilter} onChange={e => { setBookingStatusFilter(e.target.value); setBookingPage(1); }}
                 className="bg-card border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors">
                 <option value="All">All Statuses</option>
-                {["Confirmed","Pending","Completed","Cancelled"].map(s=><option key={s}>{s}</option>)}
+                {BOOKING_STATUSES.map(s=><option key={s} value={s}>{formatBookingStatus(s)}</option>)}
               </select>
             </div>
 
@@ -1539,7 +1613,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      {["Booking ID","Customer","Equipment","Dates","Deposit","Total","Status","Actions"].map(h=>(
+                      {["Booking ID","Customer","Equipment","Depot","Dates","Deposit","Total","Status","Actions"].map(h=>(
                         <th key={h} className="px-4 py-3 text-left text-xs text-muted-foreground font-semibold tracking-wider uppercase whitespace-nowrap" style={mono}>{h}</th>
                       ))}
                     </tr>
@@ -1550,14 +1624,15 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                         <td className="px-4 py-3 font-semibold text-primary text-xs" style={mono}>{b.id}</td>
                         <td className="px-4 py-3 text-foreground font-medium">{b.customer}</td>
                         <td className="px-4 py-3 text-muted-foreground max-w-48 truncate">{b.equipment}</td>
+                        <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">{b.depot}</td>
                         <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">{b.dates}</td>
                         <td className="px-4 py-3 font-semibold text-green-400" style={mono}>${b.deposit.toLocaleString()}</td>
                         <td className="px-4 py-3 font-semibold text-foreground" style={mono}>${b.total.toLocaleString()}</td>
-                        <td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs font-semibold border ${bookingStatusColor(b.status)}`}>{b.status}</span></td>
+                        <td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs font-semibold border ${bookingStatusColor(b.status)}`}>{formatBookingStatus(b.status)}</span></td>
                         <td className="px-4 py-3">
-                          <select value={b.status} onChange={e=>handleBookingStatus(b.id,e.target.value)}
+                          <select value={b.status} onChange={e=>handleBookingStatus(b.apiId,e.target.value as BookingStatus)}
                             className="bg-secondary/50 border border-border px-2 py-1 text-xs text-foreground outline-none focus:border-red-400/60 transition-colors">
-                            {["Confirmed","Pending","Completed","Cancelled"].map(s=><option key={s}>{s}</option>)}
+                            {BOOKING_STATUSES.map(s=><option key={s} value={s}>{formatBookingStatus(s)}</option>)}
                           </select>
                         </td>
                       </tr>
@@ -1629,7 +1704,7 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      {["User","Email","Role","Joined","Rentals","Total Spent","Status","Actions"].map(h=>(
+                      {["User","Email","Role","Rentals","Total Spent","Status","Actions"].map(h=>(
                         <th key={h} className="px-4 py-3 text-left text-xs text-muted-foreground font-semibold tracking-wider uppercase whitespace-nowrap" style={mono}>{h}</th>
                       ))}
                     </tr>
@@ -1647,7 +1722,6 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 text-xs font-semibold border ${u.role==="customer"?"bg-primary/10 text-primary border-primary/30":u.role==="employee"?"bg-blue-500/10 text-blue-400 border-blue-500/30":"bg-red-500/10 text-red-400 border-red-500/30"}`}>{u.role}</span>
                         </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">{u.joined}</td>
                         <td className="px-4 py-3 text-sm font-semibold text-foreground text-center" style={mono}>{u.rentals}</td>
                         <td className="px-4 py-3 text-sm font-semibold text-foreground" style={mono}>{u.spent>0?`$${u.spent.toLocaleString()}`:"—"}</td>
                         <td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs font-semibold border ${u.status==="Active"?"bg-green-500/10 text-green-400 border-green-500/30":"bg-secondary text-muted-foreground border-border"}`}>{u.status}</span></td>
@@ -1686,25 +1760,32 @@ function AdminDashboard({ userName, onLogout, onHome }: { userName: string; onLo
             setEditingId(null);
           };
 
-          const applyRecommendation = (id: number) => {
-            setPricingRules(rs => rs.map(r => r.id !== id ? r : { ...r, currentDaily: r.mlRecommendedDaily, currentWeekly: r.mlRecommendedWeekly }));
-            setAppliedIds(ids => [...ids, id]);
-            setAssets(prev => prev.map(a => {
-              const rule = pricingRules.find(r => r.id === id);
-              if (!rule || a.id !== id) return a;
-              return { ...a, daily: rule.mlRecommendedDaily, weekly: rule.mlRecommendedWeekly };
-            }));
+          const applyRecommendation = async (id: number) => {
+            const rule = pricingRules.find(r => r.id === id);
+            if (!rule) return;
+            try {
+              await equipmentApi.update(id, { daily: rule.mlRecommendedDaily, weekly: rule.mlRecommendedWeekly });
+              setPricingRules(rs => rs.map(r => r.id !== id ? r : { ...r, currentDaily: r.mlRecommendedDaily, currentWeekly: r.mlRecommendedWeekly }));
+              setAppliedIds(ids => [...ids, id]);
+              setAssets(prev => prev.map(a => a.id !== id ? a : { ...a, daily: rule.mlRecommendedDaily, weekly: rule.mlRecommendedWeekly }));
+            } catch (err) {
+              showToast(err instanceof Error ? err.message : "Failed to apply pricing.", "error");
+            }
           };
 
-          const applyAll = () => {
+          const applyAll = async () => {
             const unlocked = pricingRules.filter(r => !r.locked);
-            setPricingRules(rs => rs.map(r => r.locked ? r : { ...r, currentDaily: r.mlRecommendedDaily, currentWeekly: r.mlRecommendedWeekly }));
-            setAppliedIds(ids => [...ids, ...unlocked.map(r => r.id)]);
-            setAssets(prev => prev.map(a => {
-              const rule = pricingRules.find(r => r.id === a.id && !r.locked);
-              if (!rule) return a;
-              return { ...a, daily: rule.mlRecommendedDaily, weekly: rule.mlRecommendedWeekly };
-            }));
+            try {
+              await Promise.all(unlocked.map(r => equipmentApi.update(r.id, { daily: r.mlRecommendedDaily, weekly: r.mlRecommendedWeekly })));
+              setPricingRules(rs => rs.map(r => r.locked ? r : { ...r, currentDaily: r.mlRecommendedDaily, currentWeekly: r.mlRecommendedWeekly }));
+              setAppliedIds(ids => [...ids, ...unlocked.map(r => r.id)]);
+              setAssets(prev => prev.map(a => {
+                const rule = unlocked.find(r => r.id === a.id);
+                return rule ? { ...a, daily: rule.mlRecommendedDaily, weekly: rule.mlRecommendedWeekly } : a;
+              }));
+            } catch (err) {
+              showToast(err instanceof Error ? err.message : "Failed to apply pricing.", "error");
+            }
           };
 
           const rerunML = () => {

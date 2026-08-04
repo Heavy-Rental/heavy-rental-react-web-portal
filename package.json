@@ -9,6 +9,13 @@
     "lint": "eslint .",
     "preview": "vite preview"
   },
+  "mock-server": {
+    "root": "/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock",
+    "base": "/api",
+    "host": "127.0.0.1",
+    "port": 4010,
+    "homePage": false
+  },
   "dependencies": {
     "lucide-react": "^0.487.0",
     "react": "^19.2.8",
