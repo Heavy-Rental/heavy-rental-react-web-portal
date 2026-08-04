@@ -23,6 +23,7 @@ import type {
   Role,
   View,
   OnboardingMode,
+  StoredSession,
 } from "./app/types";
 import {
   equipmentApi,
@@ -34,9 +35,11 @@ import {
   statusDistributionApi,
   calcDeposit,
   calcFullPaymentDueDate,
+  setAuthToken,
 } from "./app/api";
 import { useApiResource } from "./app/useApiResource";
 import { deriveAssetRecord, type AssetRecord } from "./app/assetRecord";
+import { issueSession, loadSession, saveSession, clearSession, isExpired } from "./app/auth";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -207,9 +210,11 @@ function ChartTip({
 
 // Demo accounts mapped to real mock/db.json seed users (Spec-mock-api-server.md)
 // so a real numeric userId can be resolved at login — see handleLogin in App().
-const ACCOUNTS: Record<string, { role: Role; name: string }> = {
-  "alex.tan@example.sg":  { role: "customer", name: "Alex Tan" },
-  "ravi.kumar@example.sg": { role: "admin",    name: "Ravi Kumar" },
+// The password is a fixed demo value compared client-side only (Spec-frontend-authentication.md
+// FR-010) — not real security, since it ships visible in the client bundle.
+const ACCOUNTS: Record<string, { role: Role; name: string; password: string }> = {
+  "alex.tan@example.sg":  { role: "customer", name: "Alex Tan",   password: "customer123" },
+  "ravi.kumar@example.sg": { role: "admin",    name: "Ravi Kumar", password: "admin123" },
 };
 
 function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string, email: string) => void; onClose: () => void }) {
@@ -221,8 +226,7 @@ function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string, 
     e.preventDefault();
     const normalizedEmail = email.toLowerCase().trim();
     const account = ACCOUNTS[normalizedEmail];
-    if (!account) { setError("Invalid credentials. Please check your email."); return; }
-    if (!password) { setError("Password is required."); return; }
+    if (!account || password !== account.password) { setError("Invalid email or password."); return; }
     onLogin(account.role, account.name, normalizedEmail);
   };
 
@@ -252,7 +256,7 @@ function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string, 
             Sign In
           </button>
           <p className="text-xs text-muted-foreground text-center" style={mono}>
-            Customer: alex.tan@example.sg · Admin: ravi.kumar@example.sg
+            Customer: alex.tan@example.sg / customer123 · Admin: ravi.kumar@example.sg / admin123
           </p>
         </form>
       </div>
@@ -2031,27 +2035,83 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
   );
 }
 
+// Reads any persisted session once at mount time: restores it (and primes the
+// api client's auth token) if still valid, or reports the expired-notice text
+// if it lapsed while the tab was closed. Runs as a useState lazy initializer
+// rather than an effect since it's a synchronous derivation from sessionStorage,
+// not a subscription to an external system.
+function restoreSession(): { user: StoredSession | null; notice: string | null } {
+  const stored = loadSession();
+  if (!stored) return { user: null, notice: null };
+  if (isExpired(stored)) {
+    clearSession();
+    return { user: null, notice: "Your session has expired. Please log in again." };
+  }
+  setAuthToken(stored.token);
+  return { user: stored, notice: null };
+}
+
 export default function App() {
   const [view, setView] = useState<View>("portal");
-  const [user, setUser] = useState<{ name: string; role: Role; id: number | null } | null>(null);
+  const [initialSession] = useState(restoreSession);
+  const [user, setUser] = useState<StoredSession | null>(initialSession.user);
   const [showLogin, setShowLogin] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState("All");
+  const [sessionNotice, setSessionNotice] = useState<string | null>(initialSession.notice);
+  const expiryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const equipmentRes = useApiResource(() => equipmentApi.list());
   const equipment = equipmentRes.data ?? [];
+
+  const scheduleExpiry = (session: StoredSession) => {
+    if (expiryTimer.current) clearTimeout(expiryTimer.current);
+    expiryTimer.current = setTimeout(() => {
+      clearSession();
+      setAuthToken(null);
+      setUser(null);
+      setView("portal");
+      setSessionNotice("Your session has expired. Please log in again.");
+    }, Math.max(0, session.expiresAt - Date.now()));
+  };
+
+  // Auto-dismiss the notice a few seconds after it appears, whether it came
+  // from the initial-mount restore or from the proactive timer above.
+  useEffect(() => {
+    if (!sessionNotice) return;
+    const t = setTimeout(() => setSessionNotice(null), 3000);
+    return () => clearTimeout(t);
+  }, [sessionNotice]);
+
+  // Restart the proactive expiry timer for a restored session's remaining TTL.
+  useEffect(() => {
+    if (initialSession.user) scheduleExpiry(initialSession.user);
+    return () => { if (expiryTimer.current) clearTimeout(expiryTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLogin = async (role: Role, name: string, email: string) => {
     setShowLogin(false);
     setView(role === "customer" ? "customer" : role === "admin" ? "admin" : "dashboard");
+    let id: number | null = null;
     try {
       const users = await userApi.list();
-      const match = users.find(u => u.email.toLowerCase() === email);
-      setUser({ name, role, id: match?.id ?? null });
+      id = users.find(u => u.email.toLowerCase() === email)?.id ?? null;
     } catch {
-      setUser({ name, role, id: null });
+      // no linked account for this email — proceed with id: null (existing behavior)
     }
+    const session = issueSession({ id, name, role });
+    saveSession(session);
+    setAuthToken(session.token);
+    setUser(session);
+    scheduleExpiry(session);
   };
-  const handleLogout = () => { setUser(null); setView("portal"); };
+  const handleLogout = () => {
+    if (expiryTimer.current) clearTimeout(expiryTimer.current);
+    clearSession();
+    setAuthToken(null);
+    setUser(null);
+    setView("portal");
+  };
 
   if (view === "customer" && user) return <CustomerPortal userName={user.name} userId={user.id} onLogout={handleLogout} onHome={handleLogout} />;
   if (view === "dashboard" && user) return <EmployeeDashboard userName={user.name} onLogout={handleLogout} onHome={handleLogout} />;
@@ -2070,6 +2130,12 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-foreground" style={sans}>
       {showLogin && <LoginModal onLogin={handleLogin} onClose={() => setShowLogin(false)} />}
+      {sessionNotice && (
+        <div className="fixed top-4 right-4 z-50 bg-card border border-primary/40 px-4 py-3 text-sm text-foreground flex items-center gap-2 shadow-xl">
+          <AlertTriangle size={15} className="text-primary shrink-0" />
+          {sessionNotice}
+        </div>
+      )}
 
       <nav className="fixed top-0 left-0 right-0 z-40 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">

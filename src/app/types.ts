@@ -4,6 +4,17 @@ export type Role = "customer" | "employee" | "admin";
 export type View = "portal" | "customer" | "dashboard" | "admin" | "safety" | "about" | "projects";
 export type OnboardingMode = "know" | "browse" | "specs" | null;
 
+// Client-simulated bearer-token session (Spec-frontend-authentication.md) —
+// token/issuedAt/expiresAt are generated and enforced entirely client-side.
+export interface StoredSession {
+  token: string;
+  id: number | null;
+  name: string;
+  role: Role;
+  issuedAt: number;
+  expiresAt: number;
+}
+
 // ─── API RESOURCE TYPES (mirror mock/db.json field-for-field) ─────────────────
 
 export interface Equipment {
