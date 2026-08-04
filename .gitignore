@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Thinker Mock Server snapshots
+mock/snapshots/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
