@@ -84,9 +84,18 @@ As a frontend developer or a CI test job working on the heavy machinery rental p
 
 ## Appendix: Running Locally & Testing with Postman
 
+### One-time extension setup
+
+If the Thinker "Mock Server" extension isn't yet resolving to the project-local mock folder (e.g. a fresh clone, or a new dev container), configure it with these steps:
+
+1. In `package.json`, add a `dbPath` entry pointing at the mock database, e.g. under the `mock-server` config block: `"dbPath": "/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock/db.json"`.
+2. Find the `mock` folder under the VS Code Explorer.
+3. Right-click the `mock` folder and select **MockServer → Set as Server Root Folder**.
+4. Copy `settings.json` from `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/.vscode` to `/workspaces/heavy-rental-web-portal/.vscode` so the workspace-root settings match the project-local ones the extension expects.
+
 ### Start the server
 
-Start the mock server from the **Thinker "Mock Server" VS Code extension** — there is no npm script for this (see Dependencies & Assumptions and the Change Log below for why). With the extension installed, use its "Mock it" command; the workspace's `.vscode/settings.json` and `.mockserverrc.cjs` are preconfigured to point it at the project-local mock root (`/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`) and `mock/db.json`, so it starts on `http://127.0.0.1:4010` with the `/api` base out of the box. Stop it via the same extension UI.
+Start the mock server from the **Thinker "Mock Server" VS Code extension** — there is no npm script for this (see Dependencies & Assumptions and the Change Log below for why). With the extension installed and the one-time setup above complete, click **"Mock it"** in the bottom-right of the VS Code status bar; the workspace's `.vscode/settings.json` and `.mockserverrc.cjs` are preconfigured to point it at the project-local mock root (`/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`) and `mock/db.json`, so it starts on `http://127.0.0.1:4010` with the `/api` base out of the box. Stop it via the same extension UI.
 
 ### Quick sanity check (curl)
 
@@ -140,3 +149,4 @@ Note: the unprefixed `/health` route described elsewhere in this spec was custom
 - 2026-08-04: Added an appendix with local run instructions (`npm run mock:server`) and Postman desktop testing steps (environment variable setup, example request table).
 - 2026-08-04: Updated the implementation notes to reflect the workspace-based Thinker mock-server configuration, including the project-local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock` and the VS Code settings that point the extension at `mock/db.json`.
 - 2026-08-04: Removed the `@r35007/mock-server` npm devDependency and `mock/server.cjs`/`npm run mock:server` — `npm audit --audit-level=high` flagged a high-severity SSRF advisory (GHSA-2p57-rm9w-gvfp, via a transitive `ip` dependency present in every package version ≥9.1.0) with no non-breaking fix available. The mock server is now started **only** via the Thinker VS Code extension's UI, using the unchanged `.mockserverrc.cjs`/`.vscode/settings.json` configuration. As a consequence, the custom `/health` route (previously added via the npm package's programmatic API) no longer exists; FR-001 and the Postman appendix were updated accordingly, and readiness checks should use a resource route (e.g. `/api/equipment`) instead.
+- 2026-08-05: Added a "One-time extension setup" appendix subsection documenting the manual steps to point the Thinker Mock Server extension at this project (adding `dbPath` to `package.json`, setting the `mock` folder as the extension's server root via its right-click menu, copying `.vscode/settings.json` to the workspace root), and clarified that the server is started via the "Mock it" button in the VS Code status bar.

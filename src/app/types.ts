@@ -17,14 +17,19 @@ export interface StoredSession {
 
 // ─── API RESOURCE TYPES (mirror mock/db.json field-for-field) ─────────────────
 
+export type ConditionType = "EXCELLENT" | "GOOD" | "FAIR" | "NEEDS_REPAIR";
+
 export interface Equipment {
   id: number;
   name: string;
   category: string;
-  daily: number;
+  baseDailyRate: number;
+  minDailyRate: number;
+  maxDailyRate: number;
   weekly: number;
-  tons: number;
-  year: number;
+  capacity: number;
+  platformHeight: number | null;
+  purchaseYear: number;
   location: string;
   rating: number;
   reviews: number;
@@ -35,7 +40,6 @@ export interface Equipment {
   revenue: number;
   hoursThisMonth: number;
   desc: string;
-  maxLoad: number;
   idealFor: string[];
 }
 
@@ -54,10 +58,8 @@ export interface User {
 
 export interface RentalPlanItem {
   equipmentId: number;
-  startDay: number;
-  endDay: number;
-  month: number;
-  year: number;
+  startDate: string; // ISO YYYY-MM-DD
+  endDate: string;   // ISO YYYY-MM-DD
 }
 
 export type RentalPlanStatus = "active" | "completed";
@@ -71,7 +73,8 @@ export interface RentalPlan {
   createdAt: string;
 }
 
-export type BookingStatus = "pending-deposit" | "deposit-paid" | "completed" | "cancelled";
+export type BookingStatus = "PENDING" | "CONFIRMED" | "MOBILISED" | "COMPLETED" | "CANCELLED";
+export type PaidStatus = "UNPAID" | "DEPOSIT" | "FULL";
 
 export interface Booking {
   id: number;
@@ -84,9 +87,12 @@ export interface Booking {
   returnDate: string;
   totalAmount: number;
   depositAmount: number;
-  depositPaid: boolean;
   fullPaymentDueDate: string;
   status: BookingStatus;
+  paidStatus: PaidStatus;
+  siteAddress: string;
+  sitePostalCode: string;
+  deliveryNotes: string;
 }
 
 export interface MonthlyUtilization {

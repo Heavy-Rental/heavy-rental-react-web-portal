@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Search, ArrowRight, Wrench, CheckCircle, ChevronLeft, ChevronRight, Sparkles, Minus, Plus } from "lucide-react";
+import { Search, ArrowRight, Wrench, CheckCircle, ChevronLeft, ChevronRight, Sparkles, Gauge, Info } from "lucide-react";
 import type { Equipment as EquipmentItem, OnboardingMode } from "./types";
 import { equipmentApi } from "./api";
 import { useApiResource } from "./useApiResource";
@@ -24,15 +24,28 @@ function secureFourDigit(): number {
 }
 
 // ─── Quote Result Screen ───────────────────────────────────────────────────
+// Client-local — no AIRecommendation/RecommendationItem backend exists yet (only User
+// has a wired-up REST controller, SPEC-entity-repository.md §3.2) — but field names/scale
+// mirror those real entities so a future integration is a data-source swap, not a UI rewrite.
 
 interface RecItem {
   eq: EquipmentItem;
   reason: string;
   lineTotal: number;
+  rankOrder: number;   // RecommendationItem.rank_order (1-based)
+  matchScore: number;  // RecommendationItem.match_score — 0–1 decimal, e.g. 0.95 = 95% match
+}
+
+// RecommendationItem.match_score thresholds → badge color.
+function matchScoreColor(score: number): string {
+  const pct = score * 100;
+  if (pct >= 90) return "text-emerald-400 bg-emerald-500/10 border-emerald-500/30";
+  if (pct >= 75) return "text-amber-400 bg-amber-500/10 border-amber-500/30";
+  return "text-muted-foreground bg-secondary/40 border-border";
 }
 
 function QuoteResultScreen({
-  quoteRef, userName, recItems, days,
+  quoteRef, userName, recItems, days, confidenceScore,
   specSummary, onRefine, onAddAll,
 }: {
   quoteRef: string;
@@ -40,16 +53,18 @@ function QuoteResultScreen({
   recItems: RecItem[];
   estimatedTotal: number;
   days: number;
+  confidenceScore: number; // AIRecommendation.confidence_score — 0–1 decimal, e.g. 0.91 = 91%
   specSummary: string;
   onRefine: () => void;
   onAddAll: () => void;
 }) {
-  const [qtys, setQtys] = useState<number[]>(recItems.map(() => 1));
   const [checked, setChecked] = useState<boolean[]>(recItems.map(() => true));
   const [previewEq, setPreviewEq] = useState<EquipmentItem | null>(null);
 
+  // Quantities are fixed at 1 — AI-recommended bundles aren't user-adjustable on this step
+  // (Spec-frontend-ui-changes.md: disable quantity modifier on recommendation cards).
   const checkedTotal = recItems.reduce((sum, r, i) => {
-    return checked[i] ? sum + Math.round(r.lineTotal * qtys[i]) : sum;
+    return checked[i] ? sum + Math.round(r.lineTotal) : sum;
   }, 0);
 
   return (
@@ -78,6 +93,32 @@ function QuoteResultScreen({
             Instant Quotation · {quoteRef}
           </p>
           <h1 className="text-4xl font-black text-foreground leading-none" style={display}>YOUR RECOMMENDATIONS</h1>
+        </div>
+
+        {/* 1b — Overall AI confidence score (AIRecommendation.confidence_score) */}
+        <div
+          className="bg-card border border-primary/30 px-5 py-4 mb-6 flex items-center gap-4"
+          title="Confidence score calculated based on your prompt requirements and site constraints.">
+          <div className="relative w-14 h-14 shrink-0">
+            <svg viewBox="0 0 40 40" className="w-14 h-14 -rotate-90">
+              <circle cx="20" cy="20" r="16" fill="none" strokeWidth="4" className="stroke-secondary/60" />
+              <circle cx="20" cy="20" r="16" fill="none" strokeWidth="4" strokeLinecap="round"
+                strokeDasharray={2 * Math.PI * 16}
+                strokeDashoffset={2 * Math.PI * 16 * (1 - confidenceScore)}
+                className="stroke-primary transition-all duration-700" />
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-xs font-black text-foreground" style={display}>{Math.round(confidenceScore * 100)}%</span>
+            </div>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <Gauge size={14} className="text-primary shrink-0" />
+              <p className="text-sm font-black text-foreground" style={display}>{Math.round(confidenceScore * 100)}% AI Match Confidence</p>
+              <Info size={12} className="text-muted-foreground shrink-0" />
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">Calculated from your prompt requirements and site constraints.</p>
+          </div>
         </div>
 
         {/* 2 — Collapsed spec summary */}
@@ -120,12 +161,19 @@ function QuoteResultScreen({
                         <p className="text-sm font-black text-foreground leading-tight truncate" style={display}>{r.eq.name}</p>
                         <ChevronRight size={13} className="text-muted-foreground group-hover:text-primary shrink-0 transition-colors" />
                       </div>
-                      <p className="text-xs text-primary mt-0.5" style={mono}>{r.eq.category}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="text-xs text-primary" style={mono}>{r.eq.category}</span>
+                        <span className="text-[10px] text-muted-foreground" style={mono}>#{r.rankOrder}</span>
+                        {/* RecommendationItem.match_score badge — color mapped by threshold */}
+                        <span className={`px-1.5 py-0.5 text-[10px] font-bold border shrink-0 ${matchScoreColor(r.matchScore)}`}>
+                          {Math.round(r.matchScore * 100)}% Match
+                        </span>
+                      </div>
                       <p className="text-xs text-muted-foreground mt-0.5 leading-snug line-clamp-2">{r.reason}</p>
                     </div>
                   </button>
 
-                  {/* RIGHT: controls — qty + checkbox + price + add */}
+                  {/* RIGHT: controls — checkbox + read-only qty + price + add */}
                   <div className="flex flex-col items-end justify-between gap-2 px-4 py-4 shrink-0">
                     {/* Top row: checkbox */}
                     <label className="flex items-center gap-1.5 cursor-pointer">
@@ -138,24 +186,14 @@ function QuoteResultScreen({
                       <span className="text-xs text-muted-foreground">Include</span>
                     </label>
 
-                    {/* Qty stepper */}
-                    <div className="flex items-center gap-1 border border-border">
-                      <button
-                        onClick={() => setQtys(prev => prev.map((v, idx) => idx === i ? Math.max(1, v - 1) : v))}
-                        className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors">
-                        <Minus size={11} />
-                      </button>
-                      <span className="text-xs font-bold text-foreground w-6 text-center" style={mono}>×{qtys[i]}</span>
-                      <button
-                        onClick={() => setQtys(prev => prev.map((v, idx) => idx === i ? v + 1 : v))}
-                        className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors">
-                        <Plus size={11} />
-                      </button>
-                    </div>
+                    {/* Qty — read-only; AI-recommended quantities aren't user-adjustable here */}
+                    <span className="px-2.5 py-1 text-xs font-bold text-muted-foreground bg-secondary/40 border border-border" style={mono}>
+                      Qty: 1
+                    </span>
 
                     {/* Price */}
                     <p className="text-base font-black text-foreground" style={display}>
-                      ${Math.round(r.lineTotal * qtys[i]).toLocaleString()}
+                      S${Math.round(r.lineTotal).toLocaleString()}
                     </p>
 
                     {/* Individual add button — checks the item */}
@@ -185,7 +223,7 @@ function QuoteResultScreen({
         {/* 5 — Total bar */}
         <div className="flex items-center justify-between bg-card border border-border px-5 py-4 mb-6">
           <p className="text-sm text-muted-foreground">Estimated total <span className="text-xs">({days} days · {checked.filter(Boolean).length} items selected)</span></p>
-          <p className="text-2xl font-black text-foreground" style={display}>${checkedTotal.toLocaleString()}</p>
+          <p className="text-2xl font-black text-foreground" style={display}>S${checkedTotal.toLocaleString()}</p>
         </div>
 
         {/* 6 — Primary CTA */}
@@ -240,10 +278,10 @@ function QuoteResultScreen({
               {/* Key specs grid */}
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { label: "Daily Rate",   value: `$${previewEq.daily.toLocaleString()}/day` },
-                  { label: "Weekly Rate",  value: `$${previewEq.weekly.toLocaleString()}/week` },
-                  { label: "Capacity",     value: `${previewEq.tons}t` },
-                  { label: "Year",         value: previewEq.year.toString() },
+                  { label: "Base Daily Rate",   value: `S$${previewEq.baseDailyRate.toLocaleString()}/day` },
+                  { label: "Weekly Rate",  value: `S$${previewEq.weekly.toLocaleString()}/week` },
+                  { label: "Capacity",     value: `${previewEq.capacity}t` },
+                  { label: "Year",         value: previewEq.purchaseYear.toString() },
                   { label: "Location",     value: previewEq.location },
                   { label: "Availability", value: previewEq.available ? "Available now" : "On Request" },
                 ].map(({ label, value }) => (
@@ -391,7 +429,7 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
         const tonMatch = allText.match(/(\d+)\s*(t|ton|tonne)/);
         if (tonMatch) {
           const reqTons = parseInt(tonMatch[1]);
-          if (eq.tons >= reqTons * 0.8 && eq.tons <= reqTons * 2) score += 4;
+          if (eq.capacity >= reqTons * 0.8 && eq.capacity <= reqTons * 2) score += 4;
         }
 
         return { eq, score, matchedKeywords, primaryReason };
@@ -402,15 +440,15 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
         .filter(s => s.score > 2)
         .slice(0, Math.min(scored.filter(s => s.score > 2).length, 5))
         .map(({ eq, score, matchedKeywords, primaryReason }, i) => {
-          const dailyTotal = eq.daily * detectedDays;
+          const dailyTotal = eq.baseDailyRate * detectedDays;
           const weeklyCost =
             Math.floor(detectedDays / 7) * eq.weekly +
-            (detectedDays % 7) * eq.daily;
+            (detectedDays % 7) * eq.baseDailyRate;
           const weeklyAdvised = detectedDays >= 7 && weeklyCost < dailyTotal;
           const savingVsDaily = weeklyAdvised ? dailyTotal - weeklyCost : 0;
 
           const costTip = weeklyAdvised
-            ? `Weekly rate saves you $${savingVsDaily.toLocaleString()} vs billing daily`
+            ? `Weekly rate saves you S$${savingVsDaily.toLocaleString()} vs billing daily`
             : detectedDays < 7
             ? "Short-term rental — daily rate applies; extend to 7+ days for weekly savings"
             : `Book for ${detectedDays} days at daily rate — no weekly discount applies`;
@@ -473,24 +511,35 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
     // catalog's specific machines ever change — only the 4 approved
     // categories are guaranteed to exist.
     const findByCategory = (category: string) => equipment.find(e => e.category === category);
-    const REC_ITEMS: { eq: EquipmentItem; reason: string; lineTotal: number }[] = [
+    // matchScore mirrors RecommendationItem.match_score (0–1 decimal); rankOrder is assigned
+    // after filtering so it reflects final list position, not pre-filter category order.
+    const REC_ITEMS: RecItem[] = ([
       findByCategory("Boom Lift") && {
         eq: findByCategory("Boom Lift")!,
         reason: "135ft reach covers the elevation requirement; 4WD suits uneven site terrain.",
-        lineTotal: findByCategory("Boom Lift")!.daily * DAYS,
+        lineTotal: findByCategory("Boom Lift")!.baseDailyRate * DAYS,
+        matchScore: 0.95,
       },
       findByCategory("Excavator") && {
         eq: findByCategory("Excavator")!,
         reason: "Foundation prep and site clearing needed before elevated work begins.",
-        lineTotal: findByCategory("Excavator")!.daily * DAYS,
+        lineTotal: findByCategory("Excavator")!.baseDailyRate * DAYS,
+        matchScore: 0.90,
       },
       findByCategory("Scissors Lift") && {
         eq: findByCategory("Scissors Lift")!,
         reason: "Compact indoor access for facade and finishing work in tighter areas.",
-        lineTotal: findByCategory("Scissors Lift")!.daily * DAYS,
+        lineTotal: findByCategory("Scissors Lift")!.baseDailyRate * DAYS,
+        matchScore: 0.88,
       },
-    ].filter((r): r is { eq: EquipmentItem; reason: string; lineTotal: number } => Boolean(r));
+    ] as (Omit<RecItem, "rankOrder"> | false)[])
+      .filter((r): r is Omit<RecItem, "rankOrder"> => Boolean(r))
+      .map((r, i) => ({ ...r, rankOrder: i + 1 }));
     const ESTIMATED_TOTAL = REC_ITEMS.reduce((s, r) => s + r.lineTotal, 0);
+    // AIRecommendation.confidence_score — averaged across this bundle's per-item match scores.
+    const CONFIDENCE_SCORE = REC_ITEMS.length
+      ? REC_ITEMS.reduce((s, r) => s + r.matchScore, 0) / REC_ITEMS.length
+      : 0;
 
     return (
       <QuoteResultScreen
@@ -499,6 +548,7 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
         recItems={REC_ITEMS}
         estimatedTotal={ESTIMATED_TOTAL}
         days={DAYS}
+        confidenceScore={CONFIDENCE_SCORE}
         specSummary={
           uploaded.length > 0
             ? uploaded.map(f => f.name).join(", ")

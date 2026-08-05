@@ -4,10 +4,13 @@
       "id": 1,
       "name": "JLG 1350SJP Telescopic Boom",
       "category": "Boom Lift",
-      "daily": 580,
+      "baseDailyRate": 580,
+      "minDailyRate": 410,
+      "maxDailyRate": 750,
       "weekly": 2600,
-      "tons": 0.45,
-      "year": 2023,
+      "capacity": 1,
+      "platformHeight": 135,
+      "purchaseYear": 2023,
       "location": "Jurong Port",
       "rating": 4.6,
       "reviews": 31,
@@ -18,17 +21,19 @@
       "revenue": 32480,
       "hoursThisMonth": 155,
       "desc": "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
-      "maxLoad": 0.45,
       "idealFor": ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"]
     },
     {
       "id": 2,
       "name": "Genie GS-1932 Scissors Lift",
       "category": "Scissors Lift",
-      "daily": 420,
+      "baseDailyRate": 420,
+      "minDailyRate": 290,
+      "maxDailyRate": 550,
       "weekly": 1900,
-      "tons": 0.3,
-      "year": 2024,
+      "capacity": 1,
+      "platformHeight": 19,
+      "purchaseYear": 2024,
       "location": "Pioneer",
       "rating": 4.7,
       "reviews": 24,
@@ -39,17 +44,19 @@
       "revenue": 20160,
       "hoursThisMonth": 148,
       "desc": "Compact scissors lift suited for indoor and outdoor elevated access on construction and facility sites.",
-      "maxLoad": 0.3,
       "idealFor": ["access", "maintenance", "fit-out", "indoor", "elevated"]
     },
     {
       "id": 3,
       "name": "Toyota 8FBE15 Electric Fork Lift",
       "category": "Fork Lift",
-      "daily": 320,
+      "baseDailyRate": 320,
+      "minDailyRate": 220,
+      "maxDailyRate": 420,
       "weekly": 1400,
-      "tons": 1.5,
-      "year": 2023,
+      "capacity": 2,
+      "platformHeight": null,
+      "purchaseYear": 2023,
       "location": "Tuas",
       "rating": 4.7,
       "reviews": 44,
@@ -60,17 +67,19 @@
       "revenue": 17920,
       "hoursThisMonth": 132,
       "desc": "Electric fork lift for warehouse operations, indoor material handling, and pallet moving.",
-      "maxLoad": 1.5,
       "idealFor": ["warehouse", "indoor", "pallet", "forklift", "material handling"]
     },
     {
       "id": 4,
       "name": "CAT 320 Hydraulic Excavator",
       "category": "Excavator",
-      "daily": 890,
+      "baseDailyRate": 890,
+      "minDailyRate": 620,
+      "maxDailyRate": 1160,
       "weekly": 4200,
-      "tons": 20,
-      "year": 2022,
+      "capacity": 20,
+      "platformHeight": null,
+      "purchaseYear": 2022,
       "location": "Marina South",
       "rating": 4.9,
       "reviews": 37,
@@ -81,7 +90,6 @@
       "revenue": 58400,
       "hoursThisMonth": 187,
       "desc": "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
-      "maxLoad": 20,
       "idealFor": ["excavation", "demolition", "earthmoving", "foundation", "trenching"]
     }
   ],
@@ -103,8 +111,8 @@
       "status": "active",
       "depotId": 1,
       "items": [
-        { "equipmentId": 1, "startDay": 10, "endDay": 14, "month": 8, "year": 2026 },
-        { "equipmentId": 3, "startDay": 10, "endDay": 14, "month": 8, "year": 2026 }
+        { "equipmentId": 1, "startDate": "2026-08-10", "endDate": "2026-08-14" },
+        { "equipmentId": 3, "startDate": "2026-08-10", "endDate": "2026-08-14" }
       ],
       "createdAt": "2026-08-01T09:00:00+08:00"
     },
@@ -114,7 +122,7 @@
       "status": "completed",
       "depotId": 4,
       "items": [
-        { "equipmentId": 4, "startDay": 20, "endDay": 22, "month": 7, "year": 2026 }
+        { "equipmentId": 4, "startDate": "2026-07-20", "endDate": "2026-07-22" }
       ],
       "createdAt": "2026-07-15T10:30:00+08:00"
     }
@@ -131,9 +139,12 @@
       "returnDate": "2026-08-14",
       "totalAmount": 3600,
       "depositAmount": 1080,
-      "depositPaid": true,
       "fullPaymentDueDate": "2026-08-08",
-      "status": "deposit-paid"
+      "status": "CONFIRMED",
+      "paidStatus": "DEPOSIT",
+      "siteAddress": "20 Jurong Port Road",
+      "sitePostalCode": "S(619094)",
+      "deliveryNotes": ""
     },
     {
       "id": 2,
@@ -146,9 +157,12 @@
       "returnDate": "2026-07-22",
       "totalAmount": 1780,
       "depositAmount": 534,
-      "depositPaid": true,
       "fullPaymentDueDate": "2026-07-18",
-      "status": "completed"
+      "status": "COMPLETED",
+      "paidStatus": "FULL",
+      "siteAddress": "12 Commercial Avenue, Marina South",
+      "sitePostalCode": "S(018982)",
+      "deliveryNotes": ""
     }
   ],
   "monthly-utilization": [

@@ -110,7 +110,31 @@ The following rules are mandatory for this UI implementation:
 - Present plan status such that each user has at most one active rental plan.
 - Display Singapore-specific operational notes where relevant, including depot context for Jurong Port, Pioneer, Tuas, and Marina South.
 
-## 6. Implementation Checklist
+## 6. Pages / Views
+
+The app is a single-page shell (`src/App.tsx`) driven by a `View` state union — no router library. Pages by audience:
+
+**Public / unauthenticated**
+- **Landing / Catalog** (`App.tsx`, `view: "portal"`) — hero and live equipment catalog; default view for anyone without a session.
+- **Sign-in modal** (`LoginModal`, `App.tsx`) — email/password login that routes to the correct role-based view on success.
+- **Safety** (`src/app/SafetyPage.tsx`) — safety policies and certifications.
+- **About** (`src/app/AboutPage.tsx`) — company information.
+- **Projects** (`src/app/ProjectsPage.tsx`) — showcase of completed projects.
+
+**Customer**
+- **Customer onboarding** (`src/app/CustomerOnboarding.tsx`) — first-run flow shown right after customer login; lets the user choose to browse directly, get an AI recommendation from uploaded specs, or state they already know what they need.
+- **Customer portal / equipment catalog** (`CustomerPortal`, `App.tsx`, `view: "customer"`) — browse/filter equipment, pick the shared rental date range, add items to cart.
+- **Equipment detail** (modal within `CustomerPortal`) — single-item spec view with add-to-cart.
+- **Cart / rental plan** (modal within `CustomerPortal`) — review selected items, shared dates, and site address before checkout.
+- **Checkout / deposit flow** (`DepositCheckout`, `App.tsx`) — multi-step simulated payment (summary → payment → processing) computing the 30% deposit and full-payment deadline.
+- **Booking confirmation** (state within `CustomerPortal`) — shown automatically after successful payment; displays the reservation ID and order summary.
+- **Customer profile** (modal within `CustomerPortal`) — view/edit account profile.
+
+**Admin / employee**
+- **Admin dashboard** (`src/app/AdminDashboard.tsx`, `view: "admin"`) — fleet and reservation oversight for admin users.
+- **Employee dashboard** (`EmployeeDashboard`, `App.tsx`, `view: "dashboard"`) — operations view for employee-role users.
+
+## 7. Implementation Checklist
 
 - [x] Replace non-approved equipment categories with the 4 Singapore-approved types
 - [x] Update customer onboarding copy to reflect Singapore-only same-day rental flow
@@ -122,7 +146,7 @@ The following rules are mandatory for this UI implementation:
 - [x] Review supporting pages for Singapore-specific wording and consistency
 - [x] Add depot references for Jurong Port, Pioneer, Tuas, and Marina South where relevant
 
-## 7. Change Log
+## 8. Change Log
 
 - 2026-08-03: Initial specification drafted from the Singapore business rules provided by the user.
 - 2026-08-03: Added Singapore depot locations: Jurong Port, Pioneer, Tuas, and Marina South.
@@ -144,3 +168,4 @@ The following rules are mandatory for this UI implementation:
 - 2026-08-03: Sanitized narrative/UI strings to remove or neutralize non-approved equipment mentions (crane, bulldozer, dump truck) in `src/App.tsx`, `src/app/CustomerOnboarding.tsx`, `src/app/SafetyPage.tsx`, and `src/app/AboutPage.tsx`. Build verified after changes.
 - 2026-08-03: Updated admin sample bookings in `src/app/AdminDashboard.tsx` to compute deposit values via `calcDeposit(total)` and replaced legacy equipment mentions with approved fleet names where present. Build verified after changes.
 - 2026-08-03: Rebuilt project to validate changes; production build completed successfully (`vite build`).
+- 2026-08-05: Added Section 6, "Pages / Views," documenting each public, customer, and admin/employee page, its purpose, and how it's reached.
