@@ -32,12 +32,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// The mock server's POST handler wraps the created resource in a single-element array
+// instead of returning it bare (unlike its own GET/PATCH/PUT responses, which are all
+// bare objects) — unwrap defensively so callers can rely on create() returning T, not T[].
+function unwrapCreateResponse<T>(body: T | [T]): T {
+  return Array.isArray(body) ? body[0] : body;
+}
+
 function resource<T extends { id: number }>(path: string) {
   return {
     list: () => request<T[]>(path),
     get: (id: number) => request<T>(`${path}/${id}`),
     create: (body: Omit<T, "id">) =>
-      request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+      request<T | [T]>(path, { method: "POST", body: JSON.stringify(body) }).then(unwrapCreateResponse),
     replace: (id: number, body: Omit<T, "id">) =>
       request<T>(`${path}/${id}`, { method: "PUT", body: JSON.stringify(body) }),
     update: (id: number, body: Partial<Omit<T, "id">>) =>

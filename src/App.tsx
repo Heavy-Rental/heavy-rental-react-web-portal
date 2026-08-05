@@ -38,19 +38,16 @@ import {
   setAuthToken,
 } from "./app/api";
 import { useApiResource } from "./app/useApiResource";
-import { deriveAssetRecord, type AssetRecord } from "./app/assetRecord";
+import { deriveAssetRecord, formatCondition, type AssetRecord } from "./app/assetRecord";
 import { issueSession, loadSession, saveSession, clearSession, isExpired } from "./app/auth";
+import stripeLogo from "./assets/stripe.svg";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
-type DayStatus = "available" | "booked" | "maintenance";
-
 interface CartItem {
   equipment: EquipmentItem;
-  startDay: number;
-  endDay: number;
-  month: number;
-  year: number;
+  startDate: string; // ISO YYYY-MM-DD
+  endDate: string;   // ISO YYYY-MM-DD
 }
 
 interface ChatMessage {
@@ -58,15 +55,37 @@ interface ChatMessage {
   text: string;
 }
 
+// Client-local, shaped after the real Payment entity (SPEC-entity-repository.md) — never sent
+// anywhere. Gives the simulated checkout success/failure UI a consistent, ERD-shaped structure.
+interface SimulatedPayment {
+  amount: number;
+  paymentType: "DEPOSIT" | "BALANCE" | "FULL_PAYMENT";
+  status: "PENDING" | "SUCCESS" | "FAIL";
+  failureReason: string | null;
+  paidAt: string | null;
+  // Shaped like a real Stripe PaymentIntent id (Payment.stripe_payment_intent_id,
+  // SPEC-entity-repository.md) so the UI has somewhere real to put it once a live
+  // backend actually creates PaymentIntents — never sent anywhere today.
+  stripePaymentIntentId: string;
+}
+
+// Client-side-only stand-in for a real Stripe PaymentIntent id (pi_xxx). Once a real
+// backend integration exists, this is the exact value swapped for the id returned by
+// POST /api/v1/payments/create-intent.
+function generateFakePaymentIntentId(): string {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+  return `pi_${hex}`;
+}
+
 interface RentalPlanItem {
   equipmentName: string;
   category: string;
   dailyRate: number;
   days: number;
-  startDay: number;
-  endDay: number;
-  month: number;
-  year: number;
+  startDate: string; // ISO YYYY-MM-DD
+  endDate: string;   // ISO YYYY-MM-DD
 }
 
 interface RentalPlan {
@@ -96,6 +115,40 @@ const STATS = [
 
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+// ─── DATE HELPERS ─────────────────────────────────────────────────────────────
+// Cart/booking dates are stored as plain ISO "YYYY-MM-DD" strings (matching Booking.startDate/
+// endDate's own convention) rather than a day-of-month + single month/year triple — that older
+// shape couldn't represent a range crossing a month boundary (e.g. Aug 18 – Sep 18).
+
+function toISODate(year: number, month: number, day: number): string {
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+function parseISODate(iso: string): Date {
+  return new Date(`${iso}T00:00:00`);
+}
+function formatDateLong(iso: string): string {
+  const d = parseISODate(iso);
+  return `${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getDate()}, ${d.getFullYear()}`;
+}
+function formatDateShort(iso: string): string {
+  const d = parseISODate(iso);
+  return `${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getDate()}`;
+}
+function daysBetweenISO(startISO: string, endISO: string): number {
+  return Math.round((parseISODate(endISO).getTime() - parseISODate(startISO).getTime()) / 86400000) + 1;
+}
+// "Aug 18–22, 2026" when same month, "Aug 18 – Sep 18, 2026" across months, full dates on both ends across years.
+function formatDateRange(startISO: string, endISO: string): string {
+  const s = parseISODate(startISO), e = parseISODate(endISO);
+  if (s.getFullYear() === e.getFullYear() && s.getMonth() === e.getMonth()) {
+    return `${MONTH_NAMES[s.getMonth()].slice(0, 3)} ${s.getDate()}–${e.getDate()}, ${e.getFullYear()}`;
+  }
+  if (s.getFullYear() === e.getFullYear()) {
+    return `${formatDateShort(startISO)} – ${formatDateShort(endISO)}, ${e.getFullYear()}`;
+  }
+  return `${formatDateLong(startISO)} – ${formatDateLong(endISO)}`;
+}
 
 // ─── CHATBOT LOGIC ────────────────────────────────────────────────────────────
 
@@ -136,7 +189,7 @@ function getBotResponse(state: ChatState, userInput: string, equipment: Equipmen
     const scored = equipment.map(e => ({
       ...e,
       score: e.idealFor.reduce((s, kw) => s + (task.includes(kw) ? 3 : 0), 0)
-        + (load !== null && e.maxLoad >= load ? 2 : 0)
+        + (load !== null && e.capacity >= load ? 2 : 0)
         + (e.available ? 1 : 0),
     })).sort((a, b) => b.score - a.score);
     return {
@@ -150,26 +203,6 @@ function getBotResponse(state: ChatState, userInput: string, equipment: Equipmen
     nextState: { step: "greeting", task: "", load: null, location: "" },
     suggestions: ["Start over"],
   };
-}
-
-// ─── CALENDAR HELPERS ─────────────────────────────────────────────────────────
-
-function generateCalendarData(machineId: number, year: number, month: number): Record<number, DayStatus> {
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const result: Record<number, DayStatus> = {};
-  const seed = (machineId * 7 + month * 3 + year) % 29;
-  const bookedRanges: [number, number][] = [
-    [((3 + seed) % daysInMonth) + 1, ((8 + seed) % daysInMonth) + 1],
-    [((14 + seed) % daysInMonth) + 1, ((18 + seed) % daysInMonth) + 1],
-  ];
-  const maintenanceDays = [((10 + seed) % daysInMonth) + 1];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const inBooked = bookedRanges.some(([s, e]) => s <= e ? d >= s && d <= e : d >= s || d <= e);
-    if (maintenanceDays.includes(d)) result[d] = "maintenance";
-    else if (inBooked) result[d] = "booked";
-    else result[d] = "available";
-  }
-  return result;
 }
 
 // ─── SHARED STYLES ────────────────────────────────────────────────────────────
@@ -264,108 +297,199 @@ function LoginModal({ onLogin, onClose }: { onLogin: (role: Role, name: string, 
   );
 }
 
-// ─── CUSTOMER ONBOARDING ──────────────────────────────────────────────────────
+// ─── SHARED DATE-RANGE BAR ────────────────────────────────────────────────────
+// Hotel/flight-style: dates are chosen once here, every "Select" button across the
+// portal (catalog grid, equipment detail page) reuses the same shared selection so
+// every item in a booking shares one date range (Spec-ui-heavy-machinery-portal.md §4.3).
 
+function DateRangeBar({
+  sharedStartDate, sharedEndDate, sharedMonth, sharedYear,
+  setSharedStartDate, setSharedEndDate, setSharedMonth, setSharedYear,
+  dateBarOpen, setDateBarOpen, locked, highlight,
+}: {
+  sharedStartDate: string | null;
+  sharedEndDate: string | null;
+  sharedMonth: number;
+  sharedYear: number;
+  setSharedStartDate: (d: string | null) => void;
+  setSharedEndDate: (d: string | null) => void;
+  setSharedMonth: React.Dispatch<React.SetStateAction<number>>;
+  setSharedYear: React.Dispatch<React.SetStateAction<number>>;
+  dateBarOpen: boolean;
+  setDateBarOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  locked: boolean;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={`mb-8 bg-card border font-sans transition-shadow ${highlight ? "border-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.25)] animate-pulse" : "border-border"}`}>
+      {highlight && (
+        <p className="px-5 pt-3 text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+          <Calendar size={12} /> Pick your rental dates to finish adding these to your plan
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+        <button type="button" disabled={locked}
+          onClick={() => setDateBarOpen(o => !o)}
+          className="flex-1 min-w-64 flex items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-60 group">
+          <Calendar size={16} className="text-primary shrink-0" />
+          <div className="flex-1 grid grid-cols-2 gap-3">
+            <div className={`rounded-lg border px-4 py-2.5 transition-colors ${!sharedStartDate ? "border-amber-500/60 bg-amber-500/5" : "border-border group-hover:border-amber-500/40"}`}>
+              <p className="text-[11px] text-muted-foreground tracking-wide uppercase">Start Date</p>
+              <p className="font-semibold text-foreground text-sm mt-0.5">{sharedStartDate ? formatDateLong(sharedStartDate) : "Select date"}</p>
+            </div>
+            <div className={`rounded-lg border px-4 py-2.5 transition-colors ${sharedStartDate && !sharedEndDate ? "border-amber-500/60 bg-amber-500/5" : "border-border group-hover:border-amber-500/40"}`}>
+              <p className="text-[11px] text-muted-foreground tracking-wide uppercase">End Date</p>
+              <p className="font-semibold text-foreground text-sm mt-0.5">{sharedEndDate ? formatDateLong(sharedEndDate) : "Select date"}</p>
+            </div>
+          </div>
+        </button>
+        {locked ? (
+          <p className="text-xs text-muted-foreground max-w-xs">Dates are locked to your cart's current selection — remove all items to change them.</p>
+        ) : (sharedStartDate && sharedEndDate) && (
+          <button type="button" onClick={() => { setSharedStartDate(null); setSharedEndDate(null); }}
+            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">Clear dates</button>
+        )}
+      </div>
 
-function MachineCalendar({ machine, onClose, onAddToCart }: { machine: EquipmentItem; onClose: () => void; onAddToCart: (item: CartItem) => void }) {
-  const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth());
-  const [startDay, setStartDay] = useState<number | null>(null);
-  const [endDay, setEndDay] = useState<number | null>(null);
+      {dateBarOpen && !locked && (() => {
+        const prevMonth = () => { if (sharedMonth === 0) { setSharedMonth(11); setSharedYear(y => y - 1); } else setSharedMonth(m => m - 1); };
+        const nextMonth = () => { if (sharedMonth === 11) { setSharedMonth(0); setSharedYear(y => y + 1); } else setSharedMonth(m => m + 1); };
 
-  const calData = useMemo(() => generateCalendarData(machine.id, year, month), [machine.id, year, month]);
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
+        // Selection compares real ISO dates (not just day-of-month numbers scoped to one
+        // "active" month), so picking a start in one visible month and an end in the other —
+        // or navigating further before picking the end — genuinely spans a month boundary
+        // (e.g. Aug 18 – Sep 18) instead of being forced into a single month.
+        const handleDayClick = (month: number, year: number, d: number) => {
+          const clicked = toISODate(year, month, d);
+          if (!sharedStartDate || (sharedStartDate && sharedEndDate)) { setSharedStartDate(clicked); setSharedEndDate(null); }
+          else if (clicked < sharedStartDate) { setSharedStartDate(clicked); }
+          else { setSharedEndDate(clicked); }
+        };
 
-  const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y - 1); } else setMonth(m => m - 1); };
-  const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y + 1); } else setMonth(m => m + 1); };
+        const renderMonth = (month: number, year: number, nav: "prev" | "next" | null) => {
+          const firstDay = new Date(year, month, 1).getDay();
+          const daysInMonth = new Date(year, month + 1, 0).getDate();
+          const dayClass = (d: number) => {
+            const iso = toISODate(year, month, d);
+            const isStart = iso === sharedStartDate;
+            const isEnd = iso === sharedEndDate;
+            const inRange = !!(sharedStartDate && sharedEndDate && iso > sharedStartDate && iso < sharedEndDate);
+            if (isStart || isEnd) {
+              const singleDay = (isStart && isEnd) || (isStart && !sharedEndDate);
+              return `bg-amber-500 text-black font-semibold ${singleDay ? "rounded-md" : isStart ? "rounded-l-md rounded-r-none" : "rounded-r-md rounded-l-none"}`;
+            }
+            if (inRange) return "bg-amber-500/15 text-foreground rounded-none";
+            return "text-foreground hover:bg-amber-500/20 hover:text-amber-400 rounded-md";
+          };
+          return (
+            <div key={`${year}-${month}`} className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-3">
+                {nav === "prev" ? (
+                  <button onClick={prevMonth} className="p-1 border border-border hover:border-amber-500/50 hover:text-amber-400 text-muted-foreground transition-colors rounded-md"><ChevronLeft size={13} /></button>
+                ) : <span className="w-[26px]" />}
+                <span className="text-sm font-semibold text-foreground tracking-wide">{MONTH_NAMES[month]} {year}</span>
+                {nav === "next" ? (
+                  <button onClick={nextMonth} className="p-1 border border-border hover:border-amber-500/50 hover:text-amber-400 text-muted-foreground transition-colors rounded-md"><ChevronRight size={13} /></button>
+                ) : <span className="w-[26px]" />}
+              </div>
+              <div className="grid grid-cols-7 mb-1">
+                {DAY_LABELS.map(d => <div key={d} className="text-center text-[11px] text-muted-foreground tracking-wide py-1">{d[0]}</div>)}
+              </div>
+              <div className="grid grid-cols-7 gap-y-0.5">
+                {Array.from({ length: firstDay }).map((_, i) => <div key={`e${i}`} />)}
+                {Array.from({ length: daysInMonth }).map((_, i) => {
+                  const d = i + 1;
+                  return (
+                    <button key={d} onClick={() => handleDayClick(month, year, d)}
+                      className={`w-9 h-9 flex items-center justify-center text-sm font-medium transition-colors duration-100 mx-auto ${dayClass(d)}`}>
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        };
 
-  const handleDayClick = (d: number) => {
-    if (calData[d] === "booked" || calData[d] === "maintenance") return;
-    if (!startDay || (startDay && endDay)) { setStartDay(d); setEndDay(null); }
-    else { if (d < startDay) setStartDay(d); else setEndDay(d); }
-  };
+        const month2 = sharedMonth === 11 ? 0 : sharedMonth + 1;
+        const year2 = sharedMonth === 11 ? sharedYear + 1 : sharedYear;
 
-  const isInRange = (d: number) => !!(startDay && endDay && d >= startDay && d <= endDay);
-  const totalDays = startDay && endDay ? endDay - startDay + 1 : 0;
+        return (
+          <div className="border-t border-border p-5">
+            <div className="flex flex-col sm:flex-row gap-8">
+              {renderMonth(sharedMonth, sharedYear, "prev")}
+              {renderMonth(month2, year2, "next")}
+            </div>
+            <div className="flex justify-end pt-4 mt-4 border-t border-border">
+              <button type="button" disabled={!sharedStartDate || !sharedEndDate} onClick={() => setDateBarOpen(false)}
+                className="bg-amber-500 hover:bg-amber-600 text-black font-semibold px-6 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                Done
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
 
-  const dayClass = (d: number) => {
-    const s = calData[d];
-    if (s === "booked") return "bg-amber-500/15 text-amber-400/60 cursor-not-allowed";
-    if (s === "maintenance") return "bg-red-500/15 text-red-400/60 cursor-not-allowed";
-    if (d === startDay || d === endDay) return "bg-primary text-primary-foreground cursor-pointer";
-    if (isInRange(d)) return "bg-primary/20 text-primary cursor-pointer";
-    return "text-foreground hover:bg-primary/10 hover:text-primary cursor-pointer";
+// ─── SITE ADDRESS MODAL ─────────────────────────────────────────────────────────
+// Captured once per cart, right after the first successful "Select" (Spec-frontend-ui-changes.md
+// Screen 6) — maps to Booking.siteAddress/sitePostalCode/deliveryNotes.
+
+function SiteAddressModal({
+  address, postalCode, notes, onClose, onSave,
+}: {
+  address: string; postalCode: string; notes: string;
+  onClose: () => void;
+  onSave: (address: string, postalCode: string, notes: string) => void;
+}) {
+  const [form, setForm] = useState({ address, postalCode, notes });
+  const [error, setError] = useState<string | null>(null);
+  const postalRe = /^S\(\d{6}\)$/;
+
+  const handleSave = () => {
+    if (!form.address.trim()) { setError("Site address is required."); return; }
+    if (!postalRe.test(form.postalCode.trim())) { setError("Postal code must be in the format S(XXXXXX)."); return; }
+    setError(null);
+    onSave(form.address.trim(), form.postalCode.trim(), form.notes.trim());
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-      <div className="bg-card border border-border w-full max-w-xl max-h-[92vh] overflow-y-auto" style={sans}>
-        <div className="flex items-start justify-between p-5 border-b border-border">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm">
+      <div className="bg-card border border-border w-full sm:max-w-md" style={sans}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div>
-            <p className="text-xs text-primary font-semibold tracking-widest uppercase mb-0.5" style={mono}>{machine.category}</p>
-            <h2 className="text-xl font-black text-foreground" style={display}>{machine.name}</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">${machine.daily.toLocaleString()}/day · {machine.location}</p>
+            <p className="text-xs text-primary font-semibold tracking-widest uppercase mb-0.5" style={mono}>Delivery Details</p>
+            <h2 className="text-xl font-black text-foreground" style={display}>SITE ADDRESS</h2>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1"><X size={18} /></button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
         </div>
-
-        <div className="px-5 pt-4 pb-1 text-xs text-muted-foreground">
-          {!startDay ? "Click a day to set your start date." : !endDay ? "Now click an end date." : `Selected: ${MONTH_NAMES[month]} ${startDay}–${endDay}, ${year}`}
-        </div>
-
-        <div className="flex gap-4 px-5 py-2 flex-wrap">
-          {[{ cls: "bg-green-500/20", label: "Available" }, { cls: "bg-amber-500/20", label: "Booked" }, { cls: "bg-red-500/20", label: "Maintenance" }, { cls: "bg-primary", label: "Selected" }].map(({ cls, label }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <span className={`w-3 h-3 ${cls}`} />
-              <span className="text-xs text-muted-foreground">{label}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex items-center justify-between px-5 py-2">
-          <button onClick={prevMonth} className="p-1.5 border border-border hover:border-primary/50 hover:text-primary text-muted-foreground transition-colors"><ChevronLeft size={15} /></button>
-          <span className="font-black text-foreground" style={display}>{MONTH_NAMES[month]} {year}</span>
-          <button onClick={nextMonth} className="p-1.5 border border-border hover:border-primary/50 hover:text-primary text-muted-foreground transition-colors"><ChevronRight size={15} /></button>
-        </div>
-
-        <div className="grid grid-cols-7 px-5 gap-1 mb-1">
-          {DAY_LABELS.map(d => <div key={d} className="text-center text-xs text-muted-foreground py-1" style={mono}>{d}</div>)}
-        </div>
-        <div className="grid grid-cols-7 px-5 gap-1 pb-4">
-          {Array.from({ length: firstDay }).map((_, i) => <div key={`e${i}`} />)}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const d = i + 1;
-            return (
-              <button key={d} onClick={() => handleDayClick(d)}
-                className={`aspect-square flex items-center justify-center text-sm font-medium transition-all duration-100 ${dayClass(d)}`}>
-                {d}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="grid grid-cols-3 gap-px bg-border mx-5 mb-4">
-          {[
-            { label: "Start Date", value: startDay ? `${MONTH_NAMES[month].slice(0, 3)} ${startDay}` : "—", color: "text-foreground" },
-            { label: "End Date", value: endDay ? `${MONTH_NAMES[month].slice(0, 3)} ${endDay}` : "—", color: "text-foreground" },
-            { label: "Total Cost", value: totalDays ? `$${(totalDays * machine.daily).toLocaleString()}` : "—", color: "text-primary" },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="bg-secondary/40 px-3 py-3 text-center">
-              <p className={`text-lg font-black ${color}`} style={display}>{value}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="px-5 pb-5 flex gap-3">
-          <button onClick={onClose} className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all">Cancel</button>
-          <button onClick={() => { if (startDay && endDay) { onAddToCart({ equipment: machine, startDay, endDay, month, year }); onClose(); } }}
-            disabled={!startDay || !endDay}
-            className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-            Add to Cart
-          </button>
+        <div className="p-6 flex flex-col gap-4">
+          <p className="text-xs text-muted-foreground -mt-1">Where should this booking's equipment be delivered? One address covers the whole booking.</p>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">Address<span className="text-primary ml-0.5">*</span></label>
+            <input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+              placeholder="e.g. 20 Jurong Port Road"
+              className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">Postal Code<span className="text-primary ml-0.5">*</span></label>
+            <input value={form.postalCode} onChange={e => setForm(f => ({ ...f, postalCode: e.target.value }))}
+              placeholder="S(619094)"
+              className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors" style={mono} />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">Delivery Notes <span className="normal-case font-normal text-muted-foreground/60">(optional)</span></label>
+            <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3}
+              placeholder="Gate code, site contact, unloading instructions…"
+              className="w-full bg-secondary/50 border border-border px-3 py-2 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors resize-none" />
+          </div>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <div className="flex gap-3 pt-2 border-t border-border">
+            <button onClick={onClose} className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all">Skip for now</button>
+            <button onClick={handleSave} className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all">Save Address</button>
+          </div>
         </div>
       </div>
     </div>
@@ -428,7 +552,7 @@ function Chatbot({ onSelectEquipment, equipment }: { onSelectEquipment: (e: Equi
                 {recommended.map(eq => (
                   <div key={eq.id} className="border border-border bg-secondary/40 p-3">
                     <p className="text-xs font-black text-foreground mb-0.5" style={display}>{eq.name}</p>
-                    <p className="text-xs text-muted-foreground mb-2">${eq.daily.toLocaleString()}/day · {eq.category}</p>
+                    <p className="text-xs text-muted-foreground mb-2">S${eq.baseDailyRate.toLocaleString()}/day · {eq.category}</p>
                     <button onClick={() => { onSelectEquipment(eq); setOpen(false); }}
                       className="w-full py-1.5 bg-primary text-primary-foreground text-xs font-bold tracking-wider uppercase hover:brightness-110 transition-all">
                       Select This Machine
@@ -468,10 +592,11 @@ function Chatbot({ onSelectEquipment, equipment }: { onSelectEquipment: (e: Equi
 // single start/end date — the cart lets each item pick its own range, so checkout
 // collapses it to the widest covering range (earliest start / latest end).
 function cartDateRange(cart: CartItem[]): { startDate: string; endDate: string } {
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const starts = cart.map(c => new Date(c.year, c.month, c.startDay).getTime());
-  const ends = cart.map(c => new Date(c.year, c.month, c.endDay).getTime());
-  return { startDate: iso(new Date(Math.min(...starts))), endDate: iso(new Date(Math.max(...ends))) };
+  // ISO "YYYY-MM-DD" strings sort correctly with plain string comparison — no Date math needed.
+  return {
+    startDate: cart.reduce((min, c) => (c.startDate < min ? c.startDate : min), cart[0].startDate),
+    endDate: cart.reduce((max, c) => (c.endDate > max ? c.endDate : max), cart[0].endDate),
+  };
 }
 
 function resolveCartDepotId(cart: CartItem[], depots: Depot[]): number {
@@ -490,16 +615,13 @@ function buildRentalPlanViews(apiPlans: ApiRentalPlan[], equipment: EquipmentIte
     .map(p => {
       const items: RentalPlanItem[] = p.items.map(i => {
         const eq = equipment.find(e => e.id === i.equipmentId);
-        const days = i.endDay - i.startDay + 1;
         return {
           equipmentName: eq?.name ?? `Equipment #${i.equipmentId}`,
           category: eq?.category ?? "",
-          dailyRate: eq?.daily ?? 0,
-          days,
-          startDay: i.startDay,
-          endDay: i.endDay,
-          month: i.month,
-          year: i.year,
+          dailyRate: eq?.baseDailyRate ?? 0,
+          days: daysBetweenISO(i.startDate, i.endDate),
+          startDate: i.startDate,
+          endDate: i.endDate,
         };
       });
       const totalCost = items.reduce((s, it) => s + it.dailyRate * it.days, 0);
@@ -520,10 +642,12 @@ function buildRentalPlanViews(apiPlans: ApiRentalPlan[], equipment: EquipmentIte
 function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: string; userId: number | null; onLogout: () => void; onHome: () => void }) {
   const [onboardingMode, setOnboardingMode] = useState<OnboardingMode>(null);
   const [specsRecs, setSpecsRecs] = useState<EquipmentItem[]>([]);
+  // Equipment queued from "Add All to Rental Plan" waiting on the shared date bar — auto-added
+  // to the cart the moment both dates are picked (see the effect below); highlights the bar
+  // in the meantime so it's obvious what the user still needs to do.
+  const [pendingAutoAdd, setPendingAutoAdd] = useState<EquipmentItem[] | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [calendarMachine, setCalendarMachine] = useState<EquipmentItem | null>(null);
   const [activeFilter, setActiveFilter] = useState("All");
-  const [searchQuery, setSearchQuery] = useState("");
   const [detailItem, setDetailItem] = useState<EquipmentItem | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -535,7 +659,32 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [reservationId, setReservationId] = useState("");
+  // Snapshot of the cart at the moment payment succeeds — the confirmation screen must render
+  // from this, not live `cart`, since `cart` is cleared in the same state batch as `confirmed`
+  // (otherwise the confirmation screen would render against an already-empty cart).
+  const [confirmedOrder, setConfirmedOrder] = useState<{ items: CartItem[]; totalCost: number; depositPaid: number } | null>(null);
+  // Simulated Stripe PaymentIntent id — minted client-side per checkout attempt so both the
+  // DepositCheckout failure screen and the confirmation screen can reference the same id.
+  const [paymentIntentId, setPaymentIntentId] = useState("");
   const [selectedPlan, setSelectedPlan] = useState<RentalPlan | null>(null);
+
+  // Shared date-range bar (Spec-frontend-ui-changes.md Screen 6) — every cart item is
+  // selected against this one range, instead of each machine picking its own dates.
+  const today = new Date();
+  const [sharedMonth, setSharedMonth] = useState(today.getMonth());
+  const [sharedYear, setSharedYear] = useState(today.getFullYear());
+  const [sharedStartDate, setSharedStartDate] = useState<string | null>(null);
+  const [sharedEndDate, setSharedEndDate] = useState<string | null>(null);
+  const [dateBarOpen, setDateBarOpen] = useState(false);
+  const [cartDateError, setCartDateError] = useState<string | null>(null);
+
+  // Site address capture (Spec-frontend-ui-changes.md Screen 6) — collected once per cart,
+  // maps to Booking.siteAddress/sitePostalCode/deliveryNotes.
+  const [siteAddress, setSiteAddress] = useState("");
+  const [sitePostalCode, setSitePostalCode] = useState("");
+  const [deliveryNotes, setDeliveryNotes] = useState("");
+  const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
+  const [siteAddressPrompted, setSiteAddressPrompted] = useState(false);
 
   const equipmentRes = useApiResource(() => equipmentApi.list());
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
@@ -550,11 +699,44 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [specUploadOpen, setSpecUploadOpen] = useState(false);
 
+  // Auto-add AI-recommended equipment ("Add All to Rental Plan") to the cart the moment both
+  // shared dates are available. Wraps setSharedEndDate (the only setter that can complete a
+  // range) so the flush happens synchronously in the same click that finalizes the end date,
+  // rather than reactively in a useEffect (React discourages calling setState from effects to
+  // sync internal state — https://react.dev/learn/you-might-not-need-an-effect). Declared above
+  // every early return so it's always available; it only touches useState setters (never
+  // addToCart, defined further down), so it's safe to construct from any render path.
+  const handleSharedEndDateSelected = (d: string | null) => {
+    setSharedEndDate(d);
+    if (!d || !sharedStartDate || !pendingAutoAdd) return;
+    const startDate = sharedStartDate, endDate = d;
+    setCart(prev => {
+      const merged = [...prev];
+      for (const eq of pendingAutoAdd) {
+        const idx = merged.findIndex(c => c.equipment.id === eq.id);
+        const item: CartItem = { equipment: eq, startDate, endDate };
+        if (idx >= 0) merged[idx] = item; else merged.push(item);
+      }
+      return merged;
+    });
+    setCartOpen(true);
+    setCartDateError(null);
+    setPendingAutoAdd(null);
+    if (!siteAddressPrompted) {
+      setSiteAddressPrompted(true);
+      setSiteAddressModalOpen(true);
+    }
+  };
+
   if (!onboardingMode) {
     return (
       <CustomerOnboarding userName={userName} onDone={(mode, recs) => {
         setOnboardingMode(mode);
-        if (recs) setSpecsRecs(recs);
+        if (recs) {
+          setSpecsRecs(recs);
+          setPendingAutoAdd(recs);
+          setDateBarOpen(true);
+        }
       }} />
     );
   }
@@ -567,7 +749,11 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
         onDone={(mode, recs) => {
           setSpecUploadOpen(false);
           setOnboardingMode(mode);
-          if (recs) setSpecsRecs(recs);
+          if (recs) {
+            setSpecsRecs(recs);
+            setPendingAutoAdd(recs);
+            setDateBarOpen(true);
+          }
         }}
       />
     );
@@ -592,27 +778,37 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
   }
 
   const filters = ["All", ...Array.from(new Set(equipment.map(e => e.category)))];
-  const filtered = equipment.filter(e => {
-    const matchCat = activeFilter === "All" || e.category === activeFilter;
-    const q = searchQuery.toLowerCase().trim();
-    const matchSearch = !q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q) || e.location.toLowerCase().includes(q) || e.tags.some(t => t.toLowerCase().includes(q));
-    return matchCat && matchSearch;
-  });
-  const totalCost = cart.reduce((s, c) => s + (c.endDay - c.startDay + 1) * c.equipment.daily, 0);
+  const filtered = equipment.filter(e => activeFilter === "All" || e.category === activeFilter);
+  const totalCost = cart.reduce((s, c) => s + daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate, 0);
 
   const addToCart = (item: CartItem) => {
+    // Hard-enforce one shared date range per cart (Spec-ui-heavy-machinery-portal.md §4.3) —
+    // a belt-and-suspenders backstop behind the date-bar lock below, in case an item reaches
+    // here from a path that doesn't source dates from the shared bar (chatbot, spec matches).
+    const other = cart.find(c => c.equipment.id !== item.equipment.id);
+    if (other && (other.startDate !== item.startDate || other.endDate !== item.endDate)) {
+      setCartDateError("All equipment in one booking must share the same rental dates. Remove the existing item(s) first, or match their dates.");
+      return;
+    }
+    setCartDateError(null);
     setCart(prev => [...prev.filter(c => c.equipment.id !== item.equipment.id), item]);
     setCartOpen(true);
+    if (!siteAddressPrompted) {
+      setSiteAddressPrompted(true);
+      setSiteAddressModalOpen(true);
+    }
   };
 
   const handleChatbotSelect = (eq: EquipmentItem) => {
     setHighlightId(eq.id);
-    setCalendarMachine(eq);
+    if (sharedStartDate && sharedEndDate) {
+      addToCart({ equipment: eq, startDate: sharedStartDate, endDate: sharedEndDate });
+    }
     setTimeout(() => setHighlightId(null), 3000);
   };
 
-  if (confirmed) {
-    const depositPaid = Math.round(totalCost * 0.3) || Math.round(cart.reduce((s,c)=>(s+(c.endDay-c.startDay+1)*c.equipment.daily),0)*0.3);
+  if (confirmed && confirmedOrder) {
+    const { items: confirmedItems, totalCost: confirmedTotal, depositPaid } = confirmedOrder;
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6" style={sans}>
         <div className="max-w-lg w-full">
@@ -633,16 +829,16 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
               <p className="text-lg font-black text-primary" style={mono}>{reservationId}</p>
             </div>
             <div className="divide-y divide-border">
-              {cart.map(c => {
-                const days = c.endDay - c.startDay + 1;
-                const cost = days * c.equipment.daily;
+              {confirmedItems.map(c => {
+                const days = daysBetweenISO(c.startDate, c.endDate);
+                const cost = days * c.equipment.baseDailyRate;
                 return (
                   <div key={c.equipment.id} className="px-5 py-4 flex items-center justify-between gap-3">
                     <div>
                       <p className="font-semibold text-foreground text-sm">{c.equipment.name}</p>
-                      <p className="text-xs text-muted-foreground">{MONTH_NAMES[c.month].slice(0,3)} {c.startDay}–{c.endDay}, {c.year} · {days} day{days>1?"s":""}</p>
+                      <p className="text-xs text-muted-foreground">{formatDateRange(c.startDate, c.endDate)} · {days} day{days>1?"s":""}</p>
                     </div>
-                    <p className="text-sm font-bold text-foreground shrink-0" style={mono}>${cost.toLocaleString()}</p>
+                    <p className="text-sm font-bold text-foreground shrink-0" style={mono}>S${cost.toLocaleString()}</p>
                   </div>
                 );
               })}
@@ -650,16 +846,22 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
             <div className="px-5 py-3 border-t border-border bg-secondary/20 flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Total Rental Cost</span>
-                <span className="font-semibold text-foreground" style={mono}>${cart.reduce((s,c)=>(s+(c.endDay-c.startDay+1)*c.equipment.daily),0).toLocaleString()}</span>
+                <span className="font-semibold text-foreground" style={mono}>S${confirmedTotal.toLocaleString()}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-green-400 font-semibold">Deposit Paid (30%)</span>
-                <span className="font-black text-green-400" style={mono}>−${depositPaid.toLocaleString()}</span>
+                <span className="font-black text-green-400" style={mono}>−S${depositPaid.toLocaleString()}</span>
               </div>
               <div className="flex items-center justify-between text-sm pt-1.5 border-t border-border">
                 <span className="text-muted-foreground">Balance Due on Delivery</span>
-                <span className="font-black text-foreground text-lg" style={display}>${(cart.reduce((s,c)=>(s+(c.endDay-c.startDay+1)*c.equipment.daily),0) - depositPaid).toLocaleString()}</span>
+                <span className="font-black text-foreground text-lg" style={display}>S${(confirmedTotal - depositPaid).toLocaleString()}</span>
               </div>
+              {paymentIntentId && (
+                <div className="flex items-center justify-between text-xs pt-1.5 border-t border-border">
+                  <span className="text-muted-foreground">Payment Ref</span>
+                  <span className="text-muted-foreground" style={mono} title={paymentIntentId}>{paymentIntentId.slice(0, 8)}…{paymentIntentId.slice(-4)}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -680,7 +882,7 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
             </div>
           </div>
 
-          <button onClick={() => setConfirmed(false)}
+          <button onClick={() => { setConfirmed(false); setConfirmedOrder(null); }}
             className="w-full py-3 bg-primary text-primary-foreground font-bold text-sm tracking-widest uppercase hover:brightness-110 transition-all">
             Browse More Equipment
           </button>
@@ -692,7 +894,6 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
   // ── RENTAL PLAN DETAIL PAGE ──────────────────────────────────────────────────
   if (selectedPlan) {
     const plan = selectedPlan;
-    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const navBar = (
       <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="max-w-4xl mx-auto px-6 flex items-center justify-between h-14">
@@ -734,7 +935,7 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                 {plan.status}
               </span>
               <p className="text-xs text-muted-foreground">Invoice Total</p>
-              <p className="text-3xl font-black text-foreground" style={display}>${plan.totalCost.toLocaleString()}</p>
+              <p className="text-3xl font-black text-foreground" style={display}>S${plan.totalCost.toLocaleString()}</p>
             </div>
           </div>
 
@@ -782,12 +983,12 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                   <p className="font-semibold text-foreground">{item.equipmentName}</p>
                   <p className="text-xs text-primary mt-0.5" style={mono}>{item.category}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {MONTHS[item.month]} {item.startDay} – {MONTHS[item.month]} {item.endDay}, {item.year}
+                    {formatDateRange(item.startDate, item.endDate)}
                   </p>
                 </div>
                 <p className="col-span-2 text-sm text-foreground text-center font-medium">{item.days}</p>
-                <p className="col-span-3 text-sm text-foreground text-right">${item.dailyRate.toLocaleString()}<span className="text-xs text-muted-foreground">/day</span></p>
-                <p className="col-span-2 text-base font-black text-foreground text-right" style={display}>${(item.dailyRate * item.days).toLocaleString()}</p>
+                <p className="col-span-3 text-sm text-foreground text-right">S${item.dailyRate.toLocaleString()}<span className="text-xs text-muted-foreground">/day</span></p>
+                <p className="col-span-2 text-base font-black text-foreground text-right" style={display}>S${(item.dailyRate * item.days).toLocaleString()}</p>
               </div>
             ))}
           </div>
@@ -798,7 +999,7 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
               <div className="px-5 py-4 space-y-2.5">
                 <div className="flex justify-between text-sm text-muted-foreground">
                   <span>Subtotal</span>
-                  <span>${plan.totalCost.toLocaleString()}</span>
+                  <span>S${plan.totalCost.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-green-400">Deposit Paid (30%)</span>
@@ -806,7 +1007,7 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                 </div>
                 <div className="border-t border-border pt-3 flex justify-between">
                   <span className="text-sm font-bold text-foreground">Balance Due on Delivery</span>
-                  <span className="text-lg font-black text-foreground" style={display}>${plan.balanceDue.toLocaleString()}</span>
+                  <span className="text-lg font-black text-foreground" style={display}>S${plan.balanceDue.toLocaleString()}</span>
                 </div>
               </div>
               <div className="px-5 py-3 bg-muted/30 border-t border-border">
@@ -928,7 +1129,7 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                   {[
                     { label: "Total Plans", value: rentalPlans.length },
                     { label: "Days Rented", value: rentalPlans.reduce((s, r) => s + r.items.reduce((x, i) => x + i.days, 0), 0) },
-                    { label: "Total Spent", value: `$${rentalPlans.reduce((s, r) => s + r.depositPaid, 0).toLocaleString()}` },
+                    { label: "Total Spent", value: `S$${rentalPlans.reduce((s, r) => s + r.depositPaid, 0).toLocaleString()}` },
                   ].map(({ label, value }) => (
                     <div key={label} className="bg-secondary/40 border border-border px-3 py-3">
                       <p className="text-xs text-muted-foreground mb-1">{label}</p>
@@ -974,7 +1175,7 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                         <div className="flex items-center gap-3 shrink-0">
                           <div className="text-right">
                             <p className="text-xs text-muted-foreground">Total</p>
-                            <p className="text-lg font-black text-foreground" style={display}>${plan.totalCost.toLocaleString()}</p>
+                            <p className="text-lg font-black text-foreground" style={display}>S${plan.totalCost.toLocaleString()}</p>
                           </div>
                           <ChevronRight size={16} className="text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
                         </div>
@@ -1003,17 +1204,15 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
     const inCart = cart.some(c => c.equipment.id === detailItem.id);
     const SPEC_ROWS: [string, string][] = [
       ["Category", detailItem.category],
-      ["Year", String(detailItem.year)],
-      ["Max Capacity", `${detailItem.tons} tonnes`],
-      ["Max Load", String(detailItem.maxLoad)],
+      ["Purchase Year", String(detailItem.purchaseYear)],
+      ["Max Capacity", `${detailItem.capacity} tonnes`],
       ["Location", detailItem.location],
-      ["Daily Rate", `$${detailItem.daily.toLocaleString()}`],
-      ["Weekly Rate", `$${detailItem.weekly.toLocaleString()}`],
+      ["Base Daily Rate", `S$${detailItem.baseDailyRate.toLocaleString()}`],
+      ["Weekly Rate", `S$${detailItem.weekly.toLocaleString()}`],
       ["Availability", detailItem.available ? "Available Now" : "Currently On Rent"],
     ];
     return (
       <div className="min-h-screen bg-background text-foreground" style={sans}>
-        {calendarMachine && <MachineCalendar machine={calendarMachine} onClose={() => setCalendarMachine(null)} onAddToCart={(item) => { addToCart(item); setDetailItem(null); }} />}
         {/* Nav */}
         <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
           <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-14">
@@ -1048,6 +1247,13 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
             <ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" />
             Back to Equipment Catalog
           </button>
+
+          <DateRangeBar
+            sharedStartDate={sharedStartDate} sharedEndDate={sharedEndDate} sharedMonth={sharedMonth} sharedYear={sharedYear}
+            setSharedStartDate={setSharedStartDate} setSharedEndDate={handleSharedEndDateSelected} setSharedMonth={setSharedMonth} setSharedYear={setSharedYear}
+            dateBarOpen={dateBarOpen} setDateBarOpen={setDateBarOpen} locked={cart.length > 0}
+            highlight={!!pendingAutoAdd && (!sharedStartDate || !sharedEndDate)}
+          />
 
           <div className="grid lg:grid-cols-5 gap-8">
             {/* Left: image + gallery */}
@@ -1098,13 +1304,13 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                 <div className="flex gap-4">
                   <div>
                     <p className="text-xs text-muted-foreground mb-0.5">Daily rate</p>
-                    <p className="text-3xl font-black text-foreground" style={display}>${detailItem.daily.toLocaleString()}</p>
+                    <p className="text-3xl font-black text-foreground" style={display}>S${detailItem.baseDailyRate.toLocaleString()}</p>
                   </div>
                   <div className="w-px bg-border" />
                   <div>
                     <p className="text-xs text-muted-foreground mb-0.5">Weekly rate</p>
-                    <p className="text-3xl font-black text-foreground" style={display}>${detailItem.weekly.toLocaleString()}</p>
-                    <p className="text-xs text-green-400 mt-0.5">Save {Math.round((1 - detailItem.weekly / (detailItem.daily * 7)) * 100)}% vs daily</p>
+                    <p className="text-3xl font-black text-foreground" style={display}>S${detailItem.weekly.toLocaleString()}</p>
+                    <p className="text-xs text-green-400 mt-0.5">Save {Math.round((1 - detailItem.weekly / (detailItem.baseDailyRate * 7)) * 100)}% vs daily</p>
                   </div>
                 </div>
               </div>
@@ -1122,6 +1328,19 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                 </div>
               </div>
 
+              {/* Statutory compliance badge — client-synthesized, like condition/serialno, not persisted anywhere */}
+              {(detailItem.category === "Boom Lift" || detailItem.category === "Excavator") && (
+                detailItem.id % 2 === 0 ? (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-green-500/10 border border-green-500/30 text-xs font-semibold text-green-400">
+                    🟢 MOM Approved / LE Cert Valid
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 text-xs font-semibold text-amber-400">
+                    🟡 Inspection Due
+                  </div>
+                )
+              )}
+
               {/* Tags */}
               <div>
                 <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-2" style={mono}>Features & Tags</p>
@@ -1135,10 +1354,11 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
               {/* CTA */}
               <div className="flex flex-col gap-3 sticky top-20">
                 <button
-                  disabled={!detailItem.available}
-                  onClick={() => setCalendarMachine(detailItem)}
+                  disabled={!detailItem.available || !sharedStartDate || !sharedEndDate}
+                  onClick={() => { if (sharedStartDate && sharedEndDate) { addToCart({ equipment: detailItem, startDate: sharedStartDate, endDate: sharedEndDate }); setDetailItem(null); } }}
+                  title={!sharedStartDate || !sharedEndDate ? "Set your dates in the bar above first" : undefined}
                   className="w-full flex items-center justify-center gap-2 py-4 bg-primary text-primary-foreground text-sm font-black tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                  <Calendar size={16} /> Select Rental Dates
+                  Select
                 </button>
                 {!detailItem.available && (
                   <p className="text-xs text-center text-amber-400">This machine is currently on rent. Check back soon.</p>
@@ -1157,8 +1377,6 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
 
   return (
     <div className="min-h-screen bg-background text-foreground" style={sans}>
-      {calendarMachine && <MachineCalendar machine={calendarMachine} onClose={() => setCalendarMachine(null)} onAddToCart={addToCart} />}
-
       {/* Nav */}
       <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-14">
@@ -1201,10 +1419,32 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
           </h1>
           <p className="text-muted-foreground mt-2 text-sm">
             {onboardingMode === "specs"
-              ? "Matched from your uploaded specs. Select dates on any machine to add it to your cart."
-              : "Browse available machines, pick your dates, and submit your rental request."}
+              ? "Matched from your uploaded specs. Set your dates below, then select any machine to add it to your cart."
+              : "Pick your rental dates once below, then select any machine — every item in one booking shares the same dates."}
           </p>
         </div>
+
+        <DateRangeBar
+          sharedStartDate={sharedStartDate} sharedEndDate={sharedEndDate} sharedMonth={sharedMonth} sharedYear={sharedYear}
+          setSharedStartDate={setSharedStartDate} setSharedEndDate={handleSharedEndDateSelected} setSharedMonth={setSharedMonth} setSharedYear={setSharedYear}
+          dateBarOpen={dateBarOpen} setDateBarOpen={setDateBarOpen} locked={cart.length > 0}
+          highlight={!!pendingAutoAdd && (!sharedStartDate || !sharedEndDate)}
+        />
+
+        {cartDateError && (
+          <div className="mb-8 -mt-4 px-4 py-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center justify-between">
+            {cartDateError}
+            <button onClick={() => setCartDateError(null)} className="text-red-400 hover:text-red-300"><X size={14} /></button>
+          </div>
+        )}
+
+        {siteAddressModalOpen && (
+          <SiteAddressModal
+            address={siteAddress} postalCode={sitePostalCode} notes={deliveryNotes}
+            onClose={() => setSiteAddressModalOpen(false)}
+            onSave={(address, postalCode, notes) => { setSiteAddress(address); setSitePostalCode(postalCode); setDeliveryNotes(notes); setSiteAddressModalOpen(false); }}
+          />
+        )}
 
         {/* Specs recommendation banner */}
         {onboardingMode === "specs" && specsRecs.length > 0 && (
@@ -1227,10 +1467,12 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                     {i === 0 && <span className="text-xs bg-primary text-primary-foreground px-1.5 py-0.5 font-bold tracking-wider inline-block mb-1">BEST MATCH</span>}
                     <p className="text-xs text-primary font-semibold" style={mono}>{eq.category}</p>
                     <p className="text-sm font-black text-foreground leading-tight truncate" style={display}>{eq.name}</p>
-                    <p className="text-xs text-muted-foreground">${eq.daily.toLocaleString()}/day</p>
+                    <p className="text-xs text-muted-foreground">S${eq.baseDailyRate.toLocaleString()}/day</p>
                   </div>
-                  <button onClick={() => setCalendarMachine(eq)}
-                    className="shrink-0 px-3 py-1.5 bg-primary text-primary-foreground text-xs font-bold tracking-wider uppercase hover:brightness-110 transition-all">
+                  <button disabled={!sharedStartDate || !sharedEndDate}
+                    onClick={() => sharedStartDate && sharedEndDate && addToCart({ equipment: eq, startDate: sharedStartDate, endDate: sharedEndDate })}
+                    title={!sharedStartDate || !sharedEndDate ? "Set your dates in the bar above first" : undefined}
+                    className="shrink-0 px-3 py-1.5 bg-primary text-primary-foreground text-xs font-bold tracking-wider uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                     Select
                   </button>
                 </div>
@@ -1242,22 +1484,6 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
         <div className="flex gap-6 items-start">
           {/* Equipment grid */}
           <div className="flex-1 min-w-0">
-            {/* Search bar */}
-            <div className="flex items-center gap-2 bg-card border border-border px-4 py-2.5 mb-4 focus-within:border-primary/50 transition-colors">
-              <Search size={15} className="text-muted-foreground shrink-0" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search by name, category, location, or tag…"
-                className="flex-1 bg-transparent text-sm text-foreground placeholder-muted-foreground outline-none"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery("")} className="text-muted-foreground hover:text-foreground transition-colors">
-                  <X size={14} />
-                </button>
-              )}
-            </div>
             {/* Category filters */}
             <div className="flex gap-2 flex-wrap mb-6">
               {filters.map(f => (
@@ -1266,15 +1492,11 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
               ))}
             </div>
             {/* Result count */}
-            {(searchQuery || activeFilter !== "All") && (
+            {activeFilter !== "All" && (
               <p className="text-xs text-muted-foreground mb-4" style={mono}>
-                {filtered.length} result{filtered.length !== 1 ? "s" : ""}
-                {searchQuery && <> for "<span className="text-foreground">{searchQuery}</span>"</>}
-                {activeFilter !== "All" && <> in <span className="text-foreground">{activeFilter}</span></>}
-                {(searchQuery || activeFilter !== "All") && (
-                  <button onClick={() => { setSearchQuery(""); setActiveFilter("All"); }}
-                    className="ml-2 text-primary hover:text-primary/80 underline underline-offset-2">clear</button>
-                )}
+                {filtered.length} result{filtered.length !== 1 ? "s" : ""} in <span className="text-foreground">{activeFilter}</span>
+                <button onClick={() => setActiveFilter("All")}
+                  className="ml-2 text-primary hover:text-primary/80 underline underline-offset-2">clear</button>
               </p>
             )}
             {/* Empty state */}
@@ -1282,7 +1504,7 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
               <div className="py-20 text-center border border-dashed border-border">
                 <Search size={28} className="text-muted-foreground mx-auto mb-3 opacity-40" />
                 <p className="font-semibold text-foreground mb-1">No equipment found</p>
-                <p className="text-sm text-muted-foreground">Try a different keyword or category.</p>
+                <p className="text-sm text-muted-foreground">Try a different category.</p>
               </div>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -1313,19 +1535,21 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                       </button>
                       <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{item.desc}</p>
                       <div className="flex gap-2 mb-3 flex-wrap">
-                        {[`${item.tons}t`, `${item.year}`, item.location.split(",")[0]].map(t => (
+                        {[`${item.capacity}t`, `${item.purchaseYear}`, item.location.split(",")[0]].map(t => (
                           <span key={t} className="text-xs px-2 py-0.5 bg-secondary/60 text-muted-foreground" style={mono}>{t}</span>
                         ))}
                       </div>
                       <div className="mt-auto flex items-end justify-between gap-2">
                         <div>
                           <p className="text-xs text-muted-foreground">From / day</p>
-                          <p className="text-2xl font-black text-foreground" style={display}>${item.daily.toLocaleString()}</p>
+                          <p className="text-2xl font-black text-foreground" style={display}>S${item.baseDailyRate.toLocaleString()}</p>
                         </div>
                         <div className="flex flex-col gap-1.5 items-end">
-                          <button disabled={!item.available} onClick={() => setCalendarMachine(item)}
+                          <button disabled={!item.available || !sharedStartDate || !sharedEndDate}
+                            onClick={() => sharedStartDate && sharedEndDate && addToCart({ equipment: item, startDate: sharedStartDate, endDate: sharedEndDate })}
+                            title={!sharedStartDate || !sharedEndDate ? "Set your dates in the bar above first" : undefined}
                             className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                            <Calendar size={13} /> Select Dates
+                            Select
                           </button>
                           <button onClick={() => setDetailItem(item)}
                             className="text-xs text-muted-foreground hover:text-primary transition-colors underline underline-offset-2">
@@ -1362,17 +1586,26 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
                           <button onClick={() => setCart(prev => prev.filter(x => x.equipment.id !== c.equipment.id))}
                             className="text-muted-foreground hover:text-red-400 transition-colors shrink-0"><Trash2 size={13} /></button>
                         </div>
-                        <p className="text-xs text-muted-foreground mb-1">{MONTH_NAMES[c.month].slice(0, 3)} {c.startDay}–{c.endDay} · {c.endDay - c.startDay + 1} days</p>
-                        <p className="text-sm font-bold text-primary" style={mono}>${((c.endDay - c.startDay + 1) * c.equipment.daily).toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mb-1">{formatDateRange(c.startDate, c.endDate)} · {daysBetweenISO(c.startDate, c.endDate)} days</p>
+                        <p className="text-sm font-bold text-primary" style={mono}>S${(daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate).toLocaleString()}</p>
                       </div>
                     ))}
                   </div>
                   <div className="px-4 py-3 border-t border-border">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-muted-foreground">Delivery site</span>
+                      <button onClick={() => setSiteAddressModalOpen(true)} className="text-xs text-primary hover:text-primary/80 underline underline-offset-2">
+                        {siteAddress ? "Edit" : "Add"}
+                      </button>
+                    </div>
+                    <p className="text-xs text-foreground mb-3 leading-relaxed">
+                      {siteAddress ? `${siteAddress}, ${sitePostalCode}` : "No delivery address set yet."}
+                    </p>
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-sm text-muted-foreground">Total Estimate</span>
-                      <span className="text-xl font-black text-foreground" style={display}>${totalCost.toLocaleString()}</span>
+                      <span className="text-xl font-black text-foreground" style={display}>S${totalCost.toLocaleString()}</span>
                     </div>
-                    <button onClick={() => { setCartOpen(false); setCheckoutOpen(true); }}
+                    <button onClick={() => { setCartOpen(false); setCheckoutOpen(true); setPaymentIntentId(generateFakePaymentIntentId()); }}
                       className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all">
                       Proceed to Deposit
                     </button>
@@ -1390,18 +1623,19 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
           cart={cart}
           totalCost={totalCost}
           userName={userName}
+          paymentIntentId={paymentIntentId}
           onClose={() => setCheckoutOpen(false)}
           onPaid={async () => {
             if (userId === null) throw new Error("You must be signed in with a linked account to book equipment.");
             const { startDate, endDate } = cartDateRange(cart);
             const depotId = resolveCartDepotId(cart, depots);
-            const cost = cart.reduce((s, c) => s + (c.endDay - c.startDay + 1) * c.equipment.daily, 0);
+            const cost = cart.reduce((s, c) => s + daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate, 0);
             const deposit = calcDeposit(cost);
             const plan = await rentalPlanApi.create({
               userId,
               status: "active",
               depotId,
-              items: cart.map(c => ({ equipmentId: c.equipment.id, startDay: c.startDay, endDay: c.endDay, month: c.month, year: c.year })),
+              items: cart.map(c => ({ equipmentId: c.equipment.id, startDate: c.startDate, endDate: c.endDate })),
               createdAt: new Date().toISOString(),
             });
             const booking = await bookingApi.create({
@@ -1414,16 +1648,22 @@ function CustomerPortal({ userName, userId, onLogout, onHome }: { userName: stri
               returnDate: endDate,
               totalAmount: cost,
               depositAmount: deposit,
-              depositPaid: true,
               fullPaymentDueDate: calcFullPaymentDueDate(startDate),
-              status: "deposit-paid",
+              status: "CONFIRMED",
+              paidStatus: "DEPOSIT",
+              siteAddress,
+              sitePostalCode,
+              deliveryNotes,
             });
             const rid = `RNT-${String(booking.id).padStart(4, "0")}`;
             rentalPlansRes.reload();
             setReservationId(rid);
+            setConfirmedOrder({ items: cart, totalCost: cost, depositPaid: deposit });
             setCheckoutOpen(false);
             setConfirmed(true);
             setCart([]);
+            setSiteAddress(""); setSitePostalCode(""); setDeliveryNotes(""); setSiteAddressPrompted(false);
+            setSharedStartDate(null); setSharedEndDate(null);
           }}
         />
       )}
@@ -1456,20 +1696,22 @@ function CheckoutInputField({
 }
 
 function DepositCheckout({
-  cart, totalCost, userName, onClose, onPaid,
+  cart, totalCost, userName, paymentIntentId, onClose, onPaid,
 }: {
   cart: CartItem[];
   totalCost: number;
   userName: string;
+  paymentIntentId: string;
   onClose: () => void;
   onPaid: () => Promise<void>;
 }) {
   const deposit = Math.round(totalCost * 0.3);
-  const [step, setStep] = useState<"summary" | "payment" | "processing">("summary");
+  const [step, setStep] = useState<"summary" | "payment" | "processing" | "failed">("summary");
   const [card, setCard] = useState({ number: "", name: userName, expiry: "", cvv: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [payMethod, setPayMethod] = useState<"card" | "bank">("card");
+  const [payMethod, setPayMethod] = useState<"card" | "paynow">("card");
   const [payError, setPayError] = useState<string | null>(null);
+  const [payment, setPayment] = useState<SimulatedPayment | null>(null);
 
   const fmtCard = (v: string) => v.replace(/\D/g, "").slice(0, 16).replace(/(.{4})/g, "$1 ").trim();
   const fmtExpiry = (v: string) => { const d = v.replace(/\D/g, "").slice(0, 4); return d.length > 2 ? d.slice(0,2)+"/"+d.slice(2) : d; };
@@ -1490,12 +1732,29 @@ function DepositCheckout({
     if (!validate()) return;
     setStep("processing");
     setPayError(null);
+
+    // Simulated decline: a reserved test card number (mirrors Stripe's 4000...0002 test-decline
+    // convention) lets anyone exercise the Screen 5 failure state without a real processor.
+    const digits = card.number.replace(/\s/g, "");
+    if (payMethod === "card" && digits === "4000000000000002") {
+      setTimeout(() => {
+        setPayment({
+          amount: deposit, paymentType: "DEPOSIT", status: "FAIL",
+          failureReason: "card_declined", paidAt: null, stripePaymentIntentId: paymentIntentId,
+        });
+        setStep("failed");
+      }, 1800);
+      return;
+    }
+
     setTimeout(async () => {
       try {
         await onPaid();
+        setPayment({ amount: deposit, paymentType: "DEPOSIT", status: "SUCCESS", failureReason: null, paidAt: new Date().toISOString(), stripePaymentIntentId: paymentIntentId });
       } catch (err) {
+        setPayment({ amount: deposit, paymentType: "DEPOSIT", status: "FAIL", failureReason: "processing_error", paidAt: null, stripePaymentIntentId: paymentIntentId });
         setPayError(err instanceof Error ? err.message : String(err));
-        setStep("payment");
+        setStep("failed");
       }
     }, 2200);
   };
@@ -1535,36 +1794,45 @@ function DepositCheckout({
               </div>
               <div className="divide-y divide-border">
                 {cart.map(c => {
-                  const days = c.endDay - c.startDay + 1;
+                  const days = daysBetweenISO(c.startDate, c.endDate);
                   return (
                     <div key={c.equipment.id} className="px-4 py-3 flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-foreground">{c.equipment.name}</p>
-                        <p className="text-xs text-muted-foreground">{MONTH_NAMES[c.month].slice(0,3)} {c.startDay}–{c.endDay}, {c.year} · {days} day{days>1?"s":""}</p>
+                        <p className="text-xs text-muted-foreground">{formatDateRange(c.startDate, c.endDate)} · {days} day{days>1?"s":""}</p>
                       </div>
-                      <p className="text-sm font-bold text-foreground shrink-0" style={mono}>${(days * c.equipment.daily).toLocaleString()}</p>
+                      <p className="text-sm font-bold text-foreground shrink-0" style={mono}>S${(days * c.equipment.baseDailyRate).toLocaleString()}</p>
                     </div>
                   );
                 })}
               </div>
             </div>
 
-            {/* Cost breakdown */}
+            {/* Cost breakdown — GST is display-only, computed client-side, never sent to the API;
+                deposit stays 30% of the pre-GST subtotal (Spec-ui-heavy-machinery-portal.md §4.4) */}
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Total Rental Value</span>
-                <span className="font-semibold text-foreground" style={mono}>${totalCost.toLocaleString()}</span>
+                <span className="text-muted-foreground">Subtotal</span>
+                <span className="font-semibold text-foreground" style={mono}>S${totalCost.toLocaleString()}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">GST (9%)</span>
+                <span className="font-semibold text-foreground" style={mono}>S${Math.round(totalCost * 0.09).toLocaleString()}</span>
               </div>
               <div className="flex items-center justify-between text-sm pb-2 border-b border-border">
-                <span className="text-muted-foreground">Remaining balance (on delivery)</span>
-                <span className="font-semibold text-foreground" style={mono}>${(totalCost - deposit).toLocaleString()}</span>
+                <span className="text-foreground font-semibold">Total Payable</span>
+                <span className="font-semibold text-foreground" style={mono}>S${Math.round(totalCost * 1.09).toLocaleString()}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm pb-2 border-b border-border">
+                <span className="text-muted-foreground">Balance due upon mobilisation/completion</span>
+                <span className="font-semibold text-foreground" style={mono}>S${(Math.round(totalCost * 1.09) - deposit).toLocaleString()}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold text-foreground">Deposit Due Now</p>
-                  <p className="text-xs text-muted-foreground">30% of total — holds your reservation</p>
+                  <p className="text-xs text-muted-foreground">30% of subtotal (pre-GST) — holds your reservation</p>
                 </div>
-                <p className="text-3xl font-black text-primary" style={display}>${deposit.toLocaleString()}</p>
+                <p className="text-3xl font-black text-primary" style={display}>S${deposit.toLocaleString()}</p>
               </div>
             </div>
 
@@ -1586,14 +1854,14 @@ function DepositCheckout({
             {/* Deposit badge */}
             <div className="flex items-center justify-between bg-secondary/40 border border-border px-4 py-3">
               <p className="text-sm text-muted-foreground">Amount to pay now</p>
-              <p className="text-2xl font-black text-primary" style={display}>${deposit.toLocaleString()}</p>
+              <p className="text-2xl font-black text-primary" style={display}>S${deposit.toLocaleString()}</p>
             </div>
 
             {/* Payment method toggle */}
             <div>
               <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-2" style={mono}>Payment Method</p>
               <div className="flex gap-2">
-                {([["card", "Credit / Debit Card"], ["bank", "Bank Transfer"]] as const).map(([m, label]) => (
+                {([["card", "Credit / Debit Card"], ["paynow", "PayNow SG"]] as const).map(([m, label]) => (
                   <button key={m} type="button" onClick={() => setPayMethod(m)}
                     className={`flex-1 py-2.5 text-xs font-bold tracking-wider uppercase border transition-all ${payMethod === m ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
                     {label}
@@ -1614,21 +1882,27 @@ function DepositCheckout({
                   <CheckoutInputField label="CVV" value={card.cvv}
                     onChange={v => setCard(p => ({ ...p, cvv: v.replace(/\D/g,"").slice(0,4) }))} placeholder="•••" maxLen={4} error={errors.cvv} />
                 </div>
-                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                  Payments are encrypted and processed securely. We do not store card details.
+                <p className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1.5 gap-y-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  <span>Your payment is encrypted and securely processed by</span>
+                  <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                    <img src={stripeLogo} alt="Stripe" className="h-3.5 w-auto align-middle" />.
+                  </span>
+                  <span>Card details are never stored on our servers.</span>
                 </p>
               </div>
             ) : (
-              <div className="bg-secondary/30 border border-border p-4 flex flex-col gap-2">
-                <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-1" style={mono}>Bank Transfer Details</p>
-                {[["Bank", "First National Industrial Bank"], ["Account Name", "Heavy Rental LLC"], ["Account No.", "8821-004-7193"], ["Routing No.", "021000089"], ["Reference", `DEP-${userName.split(" ")[0].toUpperCase()}-${deposit}`]].map(([l, v]) => (
-                  <div key={l} className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">{l}</span>
-                    <span className="text-xs font-semibold text-foreground" style={mono}>{v}</span>
-                  </div>
-                ))}
-                <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-border">Transfer the deposit amount and click confirm. Your reservation will be activated once payment clears (1–2 business days).</p>
+              <div className="bg-secondary/30 border border-border p-4 flex flex-col items-center gap-3 text-center">
+                <p className="text-xs font-semibold text-muted-foreground tracking-widest uppercase" style={mono}>Scan with your banking app</p>
+                <div className="w-36 h-36 bg-white flex items-center justify-center border border-border">
+                  <svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="96" height="96" fill="white" /><rect x="6" y="6" width="24" height="24" fill="black" /><rect x="66" y="6" width="24" height="24" fill="black" />
+                    <rect x="6" y="66" width="24" height="24" fill="black" /><rect x="42" y="6" width="12" height="12" fill="black" /><rect x="42" y="42" width="12" height="12" fill="black" />
+                    <rect x="66" y="42" width="12" height="12" fill="black" /><rect x="42" y="78" width="12" height="12" fill="black" /><rect x="78" y="78" width="12" height="12" fill="black" />
+                  </svg>
+                </div>
+                <p className="text-xs text-muted-foreground">Corporate UEN: <span className="text-foreground font-semibold" style={mono}>201847362K</span></p>
+                <p className="text-xs text-muted-foreground pt-2 border-t border-border w-full">Confirm once you've completed the transfer in your banking app. Your reservation will be activated once payment clears.</p>
               </div>
             )}
 
@@ -1640,8 +1914,49 @@ function DepositCheckout({
               </button>
               <button onClick={handlePay}
                 className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all">
-                {payMethod === "card" ? `Pay $${deposit.toLocaleString()} Deposit` : "Confirm Transfer"}
+                {payMethod === "card" ? `Pay S$${deposit.toLocaleString()} Deposit` : "Confirm PayNow Payment"}
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2b — Payment Unsuccessful (Screen 5, simulated decline) */}
+        {step === "failed" && payment && (
+          <div className="p-6 flex flex-col gap-5">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 bg-red-500/10 border border-red-500/30 flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-foreground leading-tight" style={display}>Payment Unsuccessful</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {payment.failureReason === "card_declined"
+                    ? "Your card was declined. Please check your card details or try another payment method."
+                    : "We couldn't process your payment. Please try again or use another payment method."}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-secondary/30 border border-border p-4 flex flex-col gap-2">
+              <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Attempted Amount</span><span className="text-xs font-semibold text-foreground" style={mono}>S${payment.amount.toLocaleString()}</span></div>
+              <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Payment Type</span><span className="text-xs font-semibold text-foreground" style={mono}>{payment.paymentType}</span></div>
+              <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Failure Reason</span><span className="text-xs font-semibold text-red-400" style={mono}>{payment.failureReason}</span></div>
+              <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Stripe Ref</span><span className="text-xs font-semibold text-foreground" style={mono} title={payment.stripePaymentIntentId}>{payment.stripePaymentIntentId.slice(0, 8)}…{payment.stripePaymentIntentId.slice(-4)}</span></div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <button onClick={() => { setStep("payment"); setPayment(null); }}
+                className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all">
+                Retry Payment
+              </button>
+              <button onClick={() => { setPayMethod("paynow"); setStep("payment"); setPayment(null); }}
+                className="w-full py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all">
+                Use Alternative Payment Method
+              </button>
+              <a href="mailto:support@heavyrental.com?subject=Payment%20issue"
+                className="w-full py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all text-center">
+                Contact Support
+              </a>
             </div>
           </div>
         )}
@@ -1698,17 +2013,17 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
   };
 
   const filteredAssets = assets.filter(a => {
-    const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || a.serialNo.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || a.serialno.toLowerCase().includes(search.toLowerCase());
     const matchCat = filterCat === "All" || a.category === filterCat;
     const matchStatus = filterStatus === "All" || (filterStatus === "Available" ? a.available : !a.available);
     return matchSearch && matchCat && matchStatus;
   });
 
   const conditionColor = (c: AssetRecord["condition"]) => ({
-    Excellent: "text-green-400 bg-green-500/10 border-green-500/30",
-    Good: "text-blue-400 bg-blue-500/10 border-blue-500/30",
-    Fair: "text-amber-400 bg-amber-500/10 border-amber-500/30",
-    "Needs Repair": "text-red-400 bg-red-500/10 border-red-500/30",
+    EXCELLENT: "text-green-400 bg-green-500/10 border-green-500/30",
+    GOOD: "text-blue-400 bg-blue-500/10 border-blue-500/30",
+    FAIR: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    NEEDS_REPAIR: "text-red-400 bg-red-500/10 border-red-500/30",
   }[c]);
 
   return (
@@ -1782,7 +2097,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
             {[
               { icon: Activity, label: "Avg Utilization", value: `${avgUtilization}%`, sub: "+4% vs last month", accent: true },
-              { icon: DollarSign, label: "Total Revenue", value: `$${(totalRevenue / 1000).toFixed(0)}K`, sub: "This month" },
+              { icon: DollarSign, label: "Total Revenue", value: `S$${(totalRevenue / 1000).toFixed(0)}K`, sub: "This month" },
               { icon: Truck, label: "Operating Hours", value: totalHours.toLocaleString(), sub: "Across all machines" },
               { icon: AlertTriangle, label: "Maintenance Alerts", value: "2", sub: "Action required" },
             ].map(({ icon: Icon, label, value, sub, accent }) => (
@@ -1850,7 +2165,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
               <ResponsiveContainer width="100%" height={160}>
                 <BarChart id="emp-revenue-bar" data={monthlyUtilization}>
                   <XAxis dataKey="month" tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}K`} />
+                  <YAxis tick={{ fill: "#8a8478", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `S$${(v / 1000).toFixed(0)}K`} />
                   <Tooltip content={(p) => <ChartTip active={p.active} payload={p.payload as readonly ChartTipPayloadItem[] | undefined} label={typeof p.label === "string" || typeof p.label === "number" ? p.label : undefined} />} />
                   <Bar dataKey="revenue" fill="#f5a623" radius={[2, 2, 0, 0]} />
                 </BarChart>
@@ -1880,7 +2195,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
                 <tbody>
                   {assets.map((e, i) => (
                     <tr key={e.id} className={`border-b border-border last:border-0 hover:bg-secondary/20 transition-colors ${i % 2 === 0 ? "" : "bg-secondary/10"}`}>
-                      <td className="px-5 py-3"><p className="font-semibold text-foreground text-sm">{e.name}</p><p className="text-xs text-muted-foreground">{e.year}</p></td>
+                      <td className="px-5 py-3"><p className="font-semibold text-foreground text-sm">{e.name}</p><p className="text-xs text-muted-foreground">{e.purchaseYear}</p></td>
                       <td className="px-5 py-3 text-muted-foreground text-sm">{e.category}</td>
                       <td className="px-5 py-3 text-muted-foreground text-sm">{e.location}</td>
                       <td className="px-5 py-3">
@@ -1892,7 +2207,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
                         </div>
                       </td>
                       <td className="px-5 py-3 text-sm font-medium text-foreground" style={mono}>{e.hoursThisMonth}h</td>
-                      <td className="px-5 py-3 text-sm font-semibold text-foreground" style={mono}>${e.revenue.toLocaleString()}</td>
+                      <td className="px-5 py-3 text-sm font-semibold text-foreground" style={mono}>S${e.revenue.toLocaleString()}</td>
                       <td className="px-5 py-3">
                         <span className={`px-2 py-0.5 text-xs font-semibold border ${e.available ? "bg-green-500/10 text-green-400 border-green-500/30" : "bg-amber-500/10 text-amber-400 border-amber-500/30"}`}>
                           {e.available ? "Available" : "On Rent"}
@@ -1950,7 +2265,7 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
               { label: "Total Assets", value: assets.length, color: "text-foreground" },
               { label: "Available", value: assets.filter(a => a.available).length, color: "text-green-400" },
               { label: "On Rent", value: assets.filter(a => !a.available).length, color: "text-amber-400" },
-              { label: "Need Service", value: assets.filter(a => a.condition === "Needs Repair").length, color: "text-red-400" },
+              { label: "Need Service", value: assets.filter(a => a.condition === "NEEDS_REPAIR").length, color: "text-red-400" },
             ].map(({ label, value, color }) => (
               <div key={label} className="bg-card border border-border px-4 py-3 flex items-center justify-between">
                 <span className="text-xs text-muted-foreground" style={mono}>{label}</span>
@@ -1991,14 +2306,14 @@ function EmployeeDashboard({ userName, onLogout, onHome }: { userName: string; o
                         </td>
                         <td className="px-4 py-3">
                           <p className="font-semibold text-foreground">{a.name}</p>
-                          <p className="text-xs text-muted-foreground">{a.year} · {a.tons}t capacity</p>
+                          <p className="text-xs text-muted-foreground">{a.purchaseYear} · {a.capacity}t capacity</p>
                         </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground" style={mono}>{a.serialNo}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground" style={mono}>{a.serialno}</td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">{a.category}</td>
                         <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">{a.location}</td>
-                        <td className="px-4 py-3 font-semibold text-foreground" style={mono}>${a.daily.toLocaleString()}/day</td>
+                        <td className="px-4 py-3 font-semibold text-foreground" style={mono}>S${a.baseDailyRate.toLocaleString()}/day</td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 text-xs font-semibold border ${conditionColor(a.condition)}`}>{a.condition}</span>
+                          <span className={`px-2 py-0.5 text-xs font-semibold border ${conditionColor(a.condition)}`}>{formatCondition(a.condition)}</span>
                         </td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 text-xs font-semibold border ${a.available ? "bg-green-500/10 text-green-400 border-green-500/30" : "bg-amber-500/10 text-amber-400 border-amber-500/30"}`}>
@@ -2266,7 +2581,7 @@ export default function App() {
                   <div className="mt-auto flex items-end justify-between">
                     <div>
                       <p className="text-xs text-muted-foreground">From / day</p>
-                      <p className="text-2xl font-black text-foreground" style={display}>${item.daily.toLocaleString()}</p>
+                      <p className="text-2xl font-black text-foreground" style={display}>S${item.baseDailyRate.toLocaleString()}</p>
                     </div>
                     <button onClick={() => setShowLogin(true)}
                       className="px-5 py-2 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all">Book Now</button>
