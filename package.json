@@ -11,6 +11,7 @@
   },
   "mock-server": {
     "root": "/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock",
+    "dbPath": "/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock/db.json",
     "base": "/api",
     "host": "127.0.0.1",
     "port": 4010,
