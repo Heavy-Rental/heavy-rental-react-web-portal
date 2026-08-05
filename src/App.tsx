@@ -2051,9 +2051,13 @@ function restoreSession(): { user: StoredSession | null; notice: string | null }
   return { user: stored, notice: null };
 }
 
+function viewForRole(role: Role): View {
+  return role === "customer" ? "customer" : role === "admin" ? "admin" : "dashboard";
+}
+
 export default function App() {
-  const [view, setView] = useState<View>("portal");
   const [initialSession] = useState(restoreSession);
+  const [view, setView] = useState<View>(initialSession.user ? viewForRole(initialSession.user.role) : "portal");
   const [user, setUser] = useState<StoredSession | null>(initialSession.user);
   const [showLogin, setShowLogin] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -2091,7 +2095,7 @@ export default function App() {
 
   const handleLogin = async (role: Role, name: string, email: string) => {
     setShowLogin(false);
-    setView(role === "customer" ? "customer" : role === "admin" ? "admin" : "dashboard");
+    setView(viewForRole(role));
     let id: number | null = null;
     try {
       const users = await userApi.list();
