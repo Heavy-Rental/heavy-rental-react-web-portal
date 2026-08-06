@@ -33,7 +33,9 @@ Any non-empty password works in this mockup.
 
 ```bash
 npm install
-npm run dev      # local dev server
+npm run dev      # local dev server, proxied to the mock API (same as dev:mock)
+npm run dev:mock # local dev server, proxied to the mock API server (127.0.0.1:4010)
+npm run dev:api  # local dev server, proxied to a Spring Boot backend (localhost:8080)
 npm run build    # production build
 npm run preview  # preview production build
 ```
