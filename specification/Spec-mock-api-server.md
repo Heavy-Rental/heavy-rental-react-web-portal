@@ -97,6 +97,15 @@ If the Thinker "Mock Server" extension isn't yet resolving to the project-local 
 
 Start the mock server from the **Thinker "Mock Server" VS Code extension** — there is no npm script for this (see Dependencies & Assumptions and the Change Log below for why). With the extension installed and the one-time setup above complete, click **"Mock it"** in the bottom-right of the VS Code status bar; the workspace's `.vscode/settings.json` and `.mockserverrc.cjs` are preconfigured to point it at the project-local mock root (`/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`) and `mock/db.json`, so it starts on `http://127.0.0.1:4010` with the `/api` base out of the box. Stop it via the same extension UI.
 
+### Pointing the frontend at this mock server
+
+Once the mock server is running (previous section), the frontend's Vite dev proxy needs to be pointed at it. That proxy target is selected via `VITE_API_TARGET`, chosen per npm script (full mechanism documented in `Spec-project-environment.md` FR-003/FR-011 and `Spec-frontend-api-integration.md` FR-002):
+
+- `npm run dev` and `npm run dev:mock` → proxy `/api` to `http://127.0.0.1:4010`, i.e. **this** mock server — the default, unchanged from before this switch existed.
+- `npm run dev:api` → proxy `/api` to `http://localhost:8080`, a placeholder target for the future Spring Boot backend (not this mock server).
+
+This only changes where the frontend's dev-server proxy points — it does **not** add an npm script for the mock server itself. This server still starts exclusively via the Thinker VS Code extension's "Mock it" button (see "Start the server" above); `dev:mock` assumes you've already started it that way.
+
 ### Quick sanity check (curl)
 
 Optional, before opening Postman:
@@ -150,3 +159,4 @@ Note: the unprefixed `/health` route described elsewhere in this spec was custom
 - 2026-08-04: Updated the implementation notes to reflect the workspace-based Thinker mock-server configuration, including the project-local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock` and the VS Code settings that point the extension at `mock/db.json`.
 - 2026-08-04: Removed the `@r35007/mock-server` npm devDependency and `mock/server.cjs`/`npm run mock:server` — `npm audit --audit-level=high` flagged a high-severity SSRF advisory (GHSA-2p57-rm9w-gvfp, via a transitive `ip` dependency present in every package version ≥9.1.0) with no non-breaking fix available. The mock server is now started **only** via the Thinker VS Code extension's UI, using the unchanged `.mockserverrc.cjs`/`.vscode/settings.json` configuration. As a consequence, the custom `/health` route (previously added via the npm package's programmatic API) no longer exists; FR-001 and the Postman appendix were updated accordingly, and readiness checks should use a resource route (e.g. `/api/equipment`) instead.
 - 2026-08-05: Added a "One-time extension setup" appendix subsection documenting the manual steps to point the Thinker Mock Server extension at this project (adding `dbPath` to `package.json`, setting the `mock` folder as the extension's server root via its right-click menu, copying `.vscode/settings.json` to the workspace root), and clarified that the server is started via the "Mock it" button in the VS Code status bar.
+- 2026-08-06: Added a "Pointing the frontend at this mock server" appendix subsection documenting the new `npm run dev:mock` / `npm run dev:api` split — the frontend's Vite proxy target is now chosen via `VITE_API_TARGET` per npm script, with `dev`/`dev:mock` still defaulting to this mock server (`127.0.0.1:4010`, unchanged) and `dev:api` pointing at a placeholder Spring Boot target (`localhost:8080`). This server's own launch path is unaffected — still the Thinker VS Code extension only, no npm script. See `Spec-project-environment.md` and `Spec-frontend-api-integration.md` for the full FR changes.

@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
 import { Search, ArrowRight, Wrench, CheckCircle, ChevronLeft, ChevronRight, Sparkles, Gauge, Info } from "lucide-react";
-import type { Equipment as EquipmentItem, OnboardingMode } from "./types";
-import { equipmentApi } from "./api";
-import { useApiResource } from "./useApiResource";
+import type { Equipment as EquipmentItem, OnboardingMode } from "../../app/types";
+import { equipmentApi } from "../../app/api";
+import { useApiResource } from "../../app/useApiResource";
 
 interface QuoteLine {
   equipment: EquipmentItem; recommendedDays: number; reason: string;
