@@ -114,6 +114,17 @@ The following rules are mandatory for this UI implementation:
 
 The app is a single-page shell (`src/App.tsx`) driven by a `View` state union — no router library. Pages by audience:
 
+### Folder structure
+
+- `src/app/` — shared data layer: API types, the fetch client, auth/session, generic hooks (`useApiResource`)
+- `src/lib/` — shared style constants (`mono`/`display`/`sans`) and ISO date-formatting helpers
+- `src/components/` — shared presentational components used by more than one feature (e.g. `DateRangeBar`)
+- `src/features/browse/` — equipment discovery: `CustomerOnboarding`, `EquipmentGrid`, `Chatbot`
+- `src/features/cart/` — `CartContext`, the cart state shared between browse and checkout
+- `src/features/checkout/` — payment: `CartDrawer`, `DepositCheckout`, `ConfirmationScreen`, `RentalPlanDetail`
+- `src/features/admin/` — admin dashboard, split one folder per tab (`overview/`, `assets/`, `fleet/`, `bookings/`, `users/`, `pricing/`) around a shared `AdminDataContext`
+- `App.tsx` — thin composition shell: the `view` state switch, login, and top-level page wiring
+
 **Public / unauthenticated**
 - **Landing / Catalog** (`App.tsx`, `view: "portal"`) — hero and live equipment catalog; default view for anyone without a session.
 - **Sign-in modal** (`LoginModal`, `App.tsx`) — email/password login that routes to the correct role-based view on success.
@@ -122,16 +133,17 @@ The app is a single-page shell (`src/App.tsx`) driven by a `View` state union �
 - **Projects** (`src/app/ProjectsPage.tsx`) — showcase of completed projects.
 
 **Customer**
-- **Customer onboarding** (`src/app/CustomerOnboarding.tsx`) — first-run flow shown right after customer login; lets the user choose to browse directly, get an AI recommendation from uploaded specs, or state they already know what they need.
-- **Customer portal / equipment catalog** (`CustomerPortal`, `App.tsx`, `view: "customer"`) — browse/filter equipment, pick the shared rental date range, add items to cart.
+- **Customer onboarding** (`src/features/browse/CustomerOnboarding.tsx`) — first-run flow shown right after customer login; lets the user choose to browse directly, get an AI recommendation from uploaded specs, or state they already know what they need.
+- **Customer portal / equipment catalog** (`CustomerPortal` in `App.tsx`, rendering `src/features/browse/EquipmentGrid.tsx`, `view: "customer"`) — browse/filter equipment, pick the shared rental date range, add items to cart.
 - **Equipment detail** (modal within `CustomerPortal`) — single-item spec view with add-to-cart.
-- **Cart / rental plan** (modal within `CustomerPortal`) — review selected items, shared dates, and site address before checkout.
-- **Checkout / deposit flow** (`DepositCheckout`, `App.tsx`) — multi-step simulated payment (summary → payment → processing) computing the 30% deposit and full-payment deadline.
-- **Booking confirmation** (state within `CustomerPortal`) — shown automatically after successful payment; displays the reservation ID and order summary.
+- **Cart / rental plan** (`src/features/checkout/CartDrawer.tsx`) — review selected items, shared dates, and site address before checkout.
+- **Checkout / deposit flow** (`src/features/checkout/DepositCheckout.tsx`) — multi-step simulated payment (summary → payment → processing) computing the 30% deposit and full-payment deadline.
+- **Booking confirmation** (`src/features/checkout/ConfirmationScreen.tsx`) — shown automatically after successful payment; displays the reservation ID and order summary.
 - **Customer profile** (modal within `CustomerPortal`) — view/edit account profile.
+- **Rental plan detail / invoice** (`src/features/checkout/RentalPlanDetail.tsx`) — itemized invoice view reached from the customer profile.
 
 **Admin / employee**
-- **Admin dashboard** (`src/app/AdminDashboard.tsx`, `view: "admin"`) — fleet and reservation oversight for admin users.
+- **Admin dashboard** (`src/features/admin/AdminDashboard.tsx`, `view: "admin"`) — fleet and reservation oversight for admin users, composed from per-tab components in `src/features/admin/{overview,assets,fleet,bookings,users,pricing}/`.
 - **Employee dashboard** (`EmployeeDashboard`, `App.tsx`, `view: "dashboard"`) — operations view for employee-role users.
 
 ## 7. Implementation Checklist
@@ -169,3 +181,4 @@ The app is a single-page shell (`src/App.tsx`) driven by a `View` state union �
 - 2026-08-03: Updated admin sample bookings in `src/app/AdminDashboard.tsx` to compute deposit values via `calcDeposit(total)` and replaced legacy equipment mentions with approved fleet names where present. Build verified after changes.
 - 2026-08-03: Rebuilt project to validate changes; production build completed successfully (`vite build`).
 - 2026-08-05: Added Section 6, "Pages / Views," documenting each public, customer, and admin/employee page, its purpose, and how it's reached.
+- 2026-08-06: Added "Folder structure" to Section 6
