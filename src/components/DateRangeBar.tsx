@@ -120,7 +120,7 @@ export function DateRangeBar({
           // (e.g. Aug 18 – Sep 18) instead of being forced into a single month.
           const handleDayClick = (month: number, year: number, d: number) => {
             const clicked = toISODate(year, month, d);
-            if (!sharedStartDate || (sharedStartDate && sharedEndDate)) {
+            if (!sharedStartDate || sharedEndDate) {
               setSharedStartDate(clicked);
               setSharedEndDate(null);
             } else if (clicked < sharedStartDate) {
