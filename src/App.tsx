@@ -35,7 +35,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { CustomerOnboarding } from "./features/browse/CustomerOnboarding";
-import { AdminDashboard, AssetFormModal } from "./app/AdminDashboard";
+import { AdminDashboard } from "./features/admin/AdminDashboard";
+import { AssetFormModal } from "./features/admin/assets/AssetFormModal";
 import { SafetyPage } from "./app/SafetyPage";
 import { AboutPage } from "./app/AboutPage";
 import { ProjectsPage } from "./app/ProjectsPage";
