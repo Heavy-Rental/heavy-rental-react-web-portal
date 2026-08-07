@@ -119,17 +119,35 @@ export function DateRangeBar({
           // or navigating further before picking the end — genuinely spans a month boundary
           // (e.g. Aug 18 – Sep 18) instead of being forced into a single month.
           const handleDayClick = (month: number, year: number, d: number) => {
-            const clicked = toISODate(year, month, d);
-            if (!sharedStartDate || sharedEndDate) {
-              setSharedStartDate(clicked);
-              setSharedEndDate(null);
-            } else if (clicked < sharedStartDate) {
-              setSharedStartDate(clicked);
-            } else {
-              setSharedEndDate(clicked);
-            }
-          };
+  const clicked = toISODate(year, month, d);
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayISO = toISODate(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+
+  if (clicked < todayISO) return;
+
+  if (!sharedStartDate || sharedEndDate) {
+    setSharedStartDate(clicked);
+    setSharedEndDate(null);
+  } else if (clicked < sharedStartDate) {
+    setSharedStartDate(clicked);
+  } else {
+    setSharedEndDate(clicked);
+  }
+};
+
+        const today = new Date();
+today.setHours(0, 0, 0, 0);
+const todayISO = toISODate(
+  today.getFullYear(),
+  today.getMonth(),
+  today.getDate(),
+);
           const renderMonth = (
             month: number,
             year: number,
@@ -200,13 +218,16 @@ export function DateRangeBar({
                   {Array.from({ length: daysInMonth }).map((_, i) => {
                     const d = i + 1;
                     return (
-                      <button
-                        key={d}
-                        onClick={() => handleDayClick(month, year, d)}
-                        className={`w-9 h-9 flex items-center justify-center text-sm font-medium transition-colors duration-100 mx-auto ${dayClass(d)}`}
-                      >
-                        {d}
-                      </button>
+                     <button
+  key={d}
+  onClick={() => handleDayClick(month, year, d)}
+  disabled={toISODate(year, month, d) < todayISO}
+  className={`w-9 h-9 flex items-center justify-center text-sm font-medium transition-colors duration-100 mx-auto ${dayClass(d)} ${
+    toISODate(year, month, d) < todayISO ? "opacity-40 cursor-not-allowed" : ""
+  }`}
+>
+  {d}
+</button>
                     );
                   })}
                 </div>

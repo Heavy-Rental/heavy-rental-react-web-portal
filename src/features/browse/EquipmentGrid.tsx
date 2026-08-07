@@ -90,7 +90,8 @@ export function EquipmentGrid({
                 className="relative aspect-video bg-muted overflow-hidden text-left w-full"
               >
                 <img
-                  src={`https://images.unsplash.com/${item.img}?w=600&h=340&fit=crop&auto=format`}
+                 src={item.img.startsWith("data:") ? item.img : `https://images.unsplash.com/${item.img}?w=600&h=340&fit=crop&auto=format`}
+
                   alt={item.name}
                   className="w-full h-full object-cover opacity-80 group-hover:scale-105 transition-transform duration-500"
                 />
@@ -135,20 +136,22 @@ export function EquipmentGrid({
                   {item.desc}
                 </p>
                 <div className="flex gap-2 mb-3 flex-wrap">
-                  {[
-                    `${item.capacity}t`,
-                    `${item.purchaseYear}`,
-                    item.location.split(",")[0],
-                  ].map((t) => (
-                    <span
-                      key={t}
-                      className="text-xs px-2 py-0.5 bg-secondary/60 text-muted-foreground"
-                      style={mono}
-                    >
-                      {t}
-                    </span>
-                  ))}
-                </div>
+  {[
+    `${item.capacity}t`,
+    `${item.purchaseYear}`,
+    item.location?.split(",")[0],
+  ]
+    .filter(Boolean)
+    .map((t) => (
+      <span
+        key={t}
+        className="text-xs px-2 py-0.5 bg-secondary/60 text-muted-foreground"
+        style={mono}
+      >
+        {t}
+      </span>
+    ))}
+</div>
                 <div className="mt-auto flex items-end justify-between gap-2">
                   <div>
                     <p className="text-xs text-muted-foreground">

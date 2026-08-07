@@ -58,6 +58,7 @@ import {
   calcDeposit,
   calcFullPaymentDueDate,
   setAuthToken,
+  login,
 } from "./app/api";
 import { useApiResource } from "./app/useApiResource";
 import {
@@ -334,7 +335,10 @@ function CustomerPortal({
   const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
   const [siteAddressPrompted, setSiteAddressPrompted] = useState(false);
 
-  const equipmentRes = useApiResource(() => equipmentApi.list());
+const equipmentRes = useApiResource(
+  () => equipmentApi.list(sharedStartDate && sharedEndDate ? { startDate: sharedStartDate, endDate: sharedEndDate } : undefined),
+  [sharedStartDate, sharedEndDate],
+);
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
   const depotsRes = useApiResource(() => depotApi.list());
   const depots = depotsRes.data ?? [];
@@ -817,9 +821,10 @@ function CustomerPortal({
       ["Category", detailItem.category],
       ["Purchase Year", String(detailItem.purchaseYear)],
       ["Max Capacity", `${detailItem.capacity} tonnes`],
-      ["Location", detailItem.location],
+       ["Location", detailItem.location ?? "—"],
       ["Base Daily Rate", `S$${detailItem.baseDailyRate.toLocaleString()}`],
-      ["Weekly Rate", `S$${detailItem.weekly.toLocaleString()}`],
+    ["Weekly Rate", detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—"],
+
       [
         "Availability",
         detailItem.available ? "Available Now" : "Currently On Rent",
@@ -944,7 +949,8 @@ function CustomerPortal({
                     className="aspect-video bg-muted overflow-hidden border border-border opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
                   >
                     <img
-                      src={`https://images.unsplash.com/${detailItem.img}${q}&auto=format`}
+                   src={detailItem.img.startsWith("data:") ? detailItem.img : `https://images.unsplash.com/${detailItem.img}${q}&auto=format`}
+
                       alt=""
                       className="w-full h-full object-cover"
                     />
@@ -961,7 +967,8 @@ function CustomerPortal({
                   Ideal For
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {detailItem.idealFor.map((use) => (
+                  {(detailItem.idealFor ?? []).map((use) => (
+
                     <span
                       key={use}
                       className="px-3 py-1 text-xs bg-primary/10 text-primary border border-primary/20 font-semibold"
@@ -1015,25 +1022,28 @@ function CustomerPortal({
                   </div>
                   <div className="w-px bg-border" />
                   <div>
-                    <p className="text-xs text-muted-foreground mb-0.5">
-                      Weekly rate
-                    </p>
-                    <p
-                      className="text-3xl font-black text-foreground"
-                      style={display}
-                    >
-                      S${detailItem.weekly.toLocaleString()}
-                    </p>
-                    <p className="text-xs text-green-400 mt-0.5">
-                      Save{" "}
-                      {Math.round(
-                        (1 -
-                          detailItem.weekly / (detailItem.baseDailyRate * 7)) *
-                          100,
-                      )}
-                      % vs daily
-                    </p>
-                  </div>
+  <p className="text-xs text-muted-foreground mb-0.5">
+    Weekly rate
+  </p>
+  <p
+    className="text-3xl font-black text-foreground"
+    style={display}
+  >
+    {detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—"}
+  </p>
+  {detailItem.weekly && (
+    <p className="text-xs text-green-400 mt-0.5">
+      Save{" "}
+      {Math.round(
+        (1 -
+          detailItem.weekly / (detailItem.baseDailyRate * 7)) *
+          100,
+      )}
+      % vs daily
+    </p>
+  )}
+</div>
+
                 </div>
               </div>
 
@@ -1087,7 +1097,8 @@ function CustomerPortal({
                   Features & Tags
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {detailItem.tags.map((tag) => (
+                  {(detailItem.tags ?? []).map((tag) => (
+
                     <span
                       key={tag}
                       className="px-2.5 py-1 text-xs bg-secondary/60 text-muted-foreground border border-border"
@@ -2418,11 +2429,20 @@ export default function App() {
     } catch {
       // no linked account for this email — proceed with id: null (existing behavior)
     }
-    const session = issueSession({ id, name, role });
-    saveSession(session);
-    setAuthToken(session.token);
-    setUser(session);
-    scheduleExpiry(session);
+  let session: StoredSession;
+if (import.meta.env.MODE === "api") {
+  const password = ACCOUNTS[email]?.password;
+  const { accessToken, expiresIn } = await login(email, password);
+  const issuedAt = Date.now();
+  session = { token: accessToken, id, name, role, issuedAt, expiresAt: issuedAt + expiresIn * 1000 };
+} else {
+  session = issueSession({ id, name, role });
+}
+saveSession(session);
+setAuthToken(session.token);
+setUser(session);
+scheduleExpiry(session);
+
   };
   const handleLogout = () => {
     if (expiryTimer.current) clearTimeout(expiryTimer.current);
