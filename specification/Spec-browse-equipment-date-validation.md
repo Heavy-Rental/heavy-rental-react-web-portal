@@ -46,6 +46,8 @@ This document is intended to be a living change log for the browse flow, especia
 - The user must be able to choose one shared start date and one shared end date.
 - Once selected, those dates should be applied consistently to items added to the cart.
 - The UI must clearly support the concept of one booking window for the full cart.
+- Past dates should appear visually disabled/greyed out in the calendar and should not be selectable.
+- The restriction should apply in both the browse equipment flow and the equipment detail flow where the shared date picker is used.
 
 ### 3.3 Cart and checkout
 
@@ -73,9 +75,11 @@ This document is intended to be a living change log for the browse flow, especia
 Use this checklist during local verification.
 
 - [ ] Start the app with the expected backend configuration.
-- [ ] Open the browse/equipment view.
+- [ ] Open the browse/equipment view and verify the page loads correctly.
+- [ ] Open the equipment detail view and verify the date picker is available there as well.
 - [ ] Confirm equipment loads successfully.
 - [ ] Confirm only the approved equipment set is displayed.
+- [ ] Verify that past dates are greyed out and cannot be selected in the shared date picker.
 - [ ] Select a shared start and end date.
 - [ ] Add one or more equipment items to the cart.
 - [ ] Confirm the cart reflects the shared date range.
@@ -89,6 +93,7 @@ Use this section to record any change made during validation or implementation.
 
 - 2026-08-07: Created this specification to track browse-equipment and shared-date validation behavior.
 - 2026-08-07: Initial review of browse flow and shared date handling completed.
+- 2026-08-07: Added validation note for disabling past dates in the shared date picker on both the browse equipment page and the equipment detail page.
 - [Add new entries here whenever behavior changes, bugs are fixed, or the implementation diverges from this spec.]
 
 ## 7. Notes for Future Updates

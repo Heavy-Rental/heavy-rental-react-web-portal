@@ -955,7 +955,7 @@ const equipmentRes = useApiResource(
                       className="w-full h-full object-cover"
                     />
                   </div>
-                ))}
+                ))}gi
               </div>
 
               {/* Ideal For */}
