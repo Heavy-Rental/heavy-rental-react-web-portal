@@ -121,6 +121,22 @@ const TESTIMONIALS = [
     rating: 5,
   },
 ];
+const IDEAL_FOR_BY_CATEGORY: Record<string, string[]> = {
+  "Excavator": ["earthmoving", "trenching", "demolition", "foundation work", "digging"],
+  "Scissors Lift": ["indoor access", "installation", "elevated work", "warehousing", "maintenance"],
+  "Boom Lift": ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"],
+  "Fork Lift": ["material handling", "warehouse", "loading", "pallet moving", "logistics"],
+};
+
+function deriveTags(item: Record<string, unknown>): string[] {
+  const tags: string[] = [];
+  if (typeof item.platformHeight === "number") tags.push(`${item.platformHeight}m Reach`);
+  if (typeof item.capacity === "number") tags.push(`${item.capacity}kg Capacity`);
+  if (item.condition === "EXCELLENT") tags.push("Like New");
+  return tags;
+}
+
+
 
 const STATS = [
   { value: "1,200+", label: "Equipment Units" },
@@ -817,19 +833,19 @@ const equipmentRes = useApiResource(
   // ── EQUIPMENT DETAIL PAGE ────────────────────────────────────────────────────
   if (detailItem) {
     const inCart = cart.some((c) => c.equipment.id === detailItem.id);
-    const SPEC_ROWS: [string, string][] = [
-      ["Category", detailItem.category],
-      ["Purchase Year", String(detailItem.purchaseYear)],
-      ["Max Capacity", `${detailItem.capacity} tonnes`],
-       ["Location", detailItem.location ?? "—"],
-      ["Base Daily Rate", `S$${detailItem.baseDailyRate.toLocaleString()}`],
-    ["Weekly Rate", detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—"],
+    const liveAvailable = equipment.find((e) => e.id === detailItem.id)?.available ?? detailItem.available;
 
-      [
-        "Availability",
-        detailItem.available ? "Available Now" : "Currently On Rent",
-      ],
-    ];
+    const SPEC_ROWS: [string, string][] = [
+  ["Category", detailItem.category],
+  ["Purchase Year", String(detailItem.purchaseYear)],
+  ["Max Capacity", `${detailItem.capacity} tonnes`],
+  ["Location", detailItem.location ?? "—"],
+  ["Base Daily Rate", `S$${detailItem.baseDailyRate.toLocaleString()}`],
+  ["Weekly Rate", detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—"],
+  ["Availability", typeof liveAvailable === "boolean" ? (liveAvailable ? "Available Now" : "Currently On Rent") : "—"],
+];
+
+
     return (
       <div className="min-h-screen bg-background text-foreground" style={sans}>
         {/* Nav */}
@@ -919,22 +935,27 @@ const equipmentRes = useApiResource(
             <div className="lg:col-span-3 flex flex-col gap-3">
               <div className="relative aspect-video bg-muted overflow-hidden border border-border">
                 <img
-                  src={`https://images.unsplash.com/${detailItem.img}?w=900&h=520&fit=crop&auto=format`}
+                  src={detailItem.img.startsWith("data:") ? detailItem.img : `https://images.unsplash.com/${detailItem.img}?w=900&h=520&fit=crop&auto=format`}
+
                   alt={detailItem.name}
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-background/60 to-transparent" />
                 <div className="absolute top-4 left-4 flex gap-2">
-                  <span
-                    className={`px-2.5 py-1 text-xs font-bold border ${detailItem.available ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
-                  >
-                    {detailItem.available ? "● Available" : "● On Rent"}
-                  </span>
-                  {inCart && (
-                    <span className="px-2.5 py-1 text-xs font-bold bg-primary text-primary-foreground">
-                      In Cart
-                    </span>
-                  )}
+                 {typeof liveAvailable === "boolean" && (
+  <span
+    className={`px-2.5 py-1 text-xs font-bold border ${liveAvailable ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
+  >
+    {liveAvailable ? "● Available" : "● On Rent"}
+  </span>
+)}
+
+{inCart && (
+  <span className="px-2.5 py-1 text-xs font-bold bg-primary text-primary-foreground">
+    In Cart
+  </span>
+)}
+
                 </div>
               </div>
               {/* Thumbnail strip — same image at different crops for demo */}
@@ -949,13 +970,21 @@ const equipmentRes = useApiResource(
                     className="aspect-video bg-muted overflow-hidden border border-border opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
                   >
                     <img
-                   src={detailItem.img.startsWith("data:") ? detailItem.img : `https://images.unsplash.com/${detailItem.img}${q}&auto=format`}
+  src={detailItem.img.startsWith("data:") ? detailItem.img : `https://images.unsplash.com/${detailItem.img}${q}&auto=format`}
+  alt=""
+  className="w-full h-full object-cover"
+style={detailItem.img.startsWith("data:") ? {
+  transform: "scale(1.7)",
+  transformOrigin: ["10% 10%", "50% 50%", "90% 90%"][i],
+} : undefined}
 
-                      alt=""
-                      className="w-full h-full object-cover"
-                    />
+
+
+
+/>
+
                   </div>
-                ))}gi
+                ))}
               </div>
 
               {/* Ideal For */}
@@ -967,7 +996,8 @@ const equipmentRes = useApiResource(
                   Ideal For
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {(detailItem.idealFor ?? []).map((use) => (
+                 {(detailItem.idealFor ?? IDEAL_FOR_BY_CATEGORY[detailItem.category] ?? []).map((use) => (
+
 
                     <span
                       key={use}
@@ -1097,7 +1127,8 @@ const equipmentRes = useApiResource(
                   Features & Tags
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {(detailItem.tags ?? []).map((tag) => (
+                 {(detailItem.tags ?? deriveTags(detailItem)).map((tag) => (
+
 
                     <span
                       key={tag}
@@ -1135,11 +1166,13 @@ const equipmentRes = useApiResource(
                 >
                   Select
                 </button>
-                {!detailItem.available && (
-                  <p className="text-xs text-center text-amber-400">
-                    This machine is currently on rent. Check back soon.
-                  </p>
-                )}
+               {liveAvailable === false && (
+  <p className="text-xs text-center text-amber-400">
+    This machine is currently on rent. Check back soon.
+  </p>
+)}
+
+
                 <button
                   onClick={() => setDetailItem(null)}
                   className="w-full py-3 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground hover:border-primary/30 transition-all"

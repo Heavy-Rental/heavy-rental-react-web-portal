@@ -102,17 +102,20 @@ export function EquipmentGrid({
                   </span>
                 </div>
                 <div className="absolute top-3 left-3 flex gap-2">
-                  <span
-                    className={`px-2 py-0.5 text-xs font-semibold border ${item.available ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
-                  >
-                    {item.available ? "Available" : "Booked"}
-                  </span>
-                  {inCart && (
-                    <span className="px-2 py-0.5 text-xs font-semibold bg-primary text-primary-foreground">
-                      In Cart
-                    </span>
-                  )}
-                </div>
+  {typeof item.available === "boolean" && (
+    <span
+      className={`px-2 py-0.5 text-xs font-semibold border ${item.available ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
+    >
+      {item.available ? "Available" : "Booked"}
+    </span>
+  )}
+  {inCart && (
+    <span className="px-2 py-0.5 text-xs font-semibold bg-primary text-primary-foreground">
+      In Cart
+    </span>
+  )}
+</div>
+
               </button>
               <div className="p-4 flex flex-col flex-1">
                 <p
