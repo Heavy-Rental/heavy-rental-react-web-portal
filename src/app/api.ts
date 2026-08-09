@@ -32,6 +32,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+
+// ← ADD THIS: real backend login (interim token → login → access token).
+// Uses raw fetch instead of request() because getBearerToken returns plain text, not JSON.
+export async function login(email: string, password: string): Promise<{ accessToken: string; expiresIn: number; username: string }> {
+  const interim = await fetch(`${BASE}/auth/getBearerToken`).then((r) => r.text());
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${interim}` },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error("Login failed");
+  return res.json();
+}
+
+
+
+
+
 // The mock server's POST handler wraps the created resource in a single-element array
 // instead of returning it bare (unlike its own GET/PATCH/PUT responses, which are all
 // bare objects) — unwrap defensively so callers can rely on create() returning T, not T[].
@@ -60,7 +78,15 @@ function readOnlyResource<T extends { id: number }>(path: string) {
   };
 }
 
-export const equipmentApi = resource<Equipment>("/equipment");
+//export const equipmentApi = resource<Equipment>("/equipment"); tricia
+export const equipmentApi = {
+  ...resource<Equipment>("/equipment"),
+  list: (params?: { startDate?: string; endDate?: string }) => {
+    const qs = params?.startDate && params?.endDate ? `?startDate=${params.startDate}&endDate=${params.endDate}` : "";
+    return request<Equipment[]>(`/equipment${qs}`);
+  },
+};
+
 export const depotApi = resource<Depot>("/depots");
 export const userApi = resource<User>("/users");
 export const rentalPlanApi = resource<RentalPlan>("/rental-plans");
