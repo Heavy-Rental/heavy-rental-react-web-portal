@@ -101,3 +101,4 @@ Use this section to record any change made during validation or implementation.
 - If the implementation changes, update this document alongside the code change.
 - If a behavior is found to be inaccurate or incomplete compared with the current UI, add a note here with the date, symptom, and fix.
 - This file should be treated as the authoritative lightweight spec for the browse/date validation work while the broader product/API specs remain the reference for end-to-end business rules.
+- 2026-08-09: `DateRangeBar.tsx` computes `today`/`todayISO` in two separate places — once inside `handleDayClick`, once in the component's render scope. Cosmetic today (both derive `new Date()` the same way), but a future change to one without the other would desync the past-date-disabling logic from the click handler's own date check. Worth consolidating into a single computed value next time this file is touched.

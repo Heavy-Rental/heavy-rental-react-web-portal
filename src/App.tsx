@@ -128,7 +128,11 @@ const IDEAL_FOR_BY_CATEGORY: Record<string, string[]> = {
   "Fork Lift": ["material handling", "warehouse", "loading", "pallet moving", "logistics"],
 };
 
-function deriveTags(item: Record<string, unknown>): string[] {
+function deriveTags(item: {
+  platformHeight?: number | null;
+  capacity?: number;
+  condition?: string;
+}): string[] {
   const tags: string[] = [];
   if (typeof item.platformHeight === "number") tags.push(`${item.platformHeight}m Reach`);
   if (typeof item.capacity === "number") tags.push(`${item.capacity}kg Capacity`);
