@@ -94,6 +94,54 @@ export const bookingApi = resource<Booking>("/bookings");
 export const monthlyUtilizationApi = readOnlyResource<MonthlyUtilization>("/monthly-utilization");
 export const statusDistributionApi = readOnlyResource<StatusDistribution>("/status-distribution");
 
+// ─── REAL BACKEND: booking + deposit-payment (MODE === "api" only) ─────────
+// STRIPE_INTEGRATION_HANDOFF.md §2/§5 — a different contract against the same
+// `/api/bookings` path than the mock resource above (mock and real backend are
+// never targeted in the same MODE, so the two never collide at runtime).
+
+export interface CreateBookingRequest {
+  items: { assetId: number }[];
+  startDate: string;
+  endDate: string;
+  siteAddress: string;
+  deliveryNotes?: string;
+}
+
+export interface CreateBookingResponse {
+  bookingId: number;
+  customerName: string;
+  startDate: string;
+  endDate: string;
+  bookingStatus: string;
+  siteAddress: string;
+  assetName: string;
+  serialNumber: string;
+  deliveryNotes: string;
+  totalAmount: number;
+  depositAmount: number;
+  remainingBalance: number;
+}
+
+export function createDepositBooking(req: CreateBookingRequest): Promise<CreateBookingResponse> {
+  return request<CreateBookingResponse>("/bookings", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export interface CreateDepositIntentResponse {
+  clientSecret: string;
+  paymentIntentId: string;
+}
+
+export const paymentApi = {
+  createDepositIntent: (bookingId: number) =>
+    request<CreateDepositIntentResponse>("/payments/deposit-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId }),
+    }),
+};
+
 // ─── BUSINESS RULES (Spec-ui-heavy-machinery-portal.md §4.4, Spec-mock-api-server.md FR-007/FR-008) ─
 
 export const DEPOSIT_RATE = 0.3;
