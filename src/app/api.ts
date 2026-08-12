@@ -59,8 +59,8 @@ function unwrapCreateResponse<T>(body: T | [T]): T {
 
 function resource<T extends { id: number }>(path: string) {
   return {
-    list: () => request<T[]>(path),
-    get: (id: number) => request<T>(`${path}/${id}`),
+    list: (signal?: AbortSignal) => request<T[]>(path, { signal }),
+    get: (id: number, signal?: AbortSignal) => request<T>(`${path}/${id}`, { signal }),
     create: (body: Omit<T, "id">) =>
       request<T | [T]>(path, { method: "POST", body: JSON.stringify(body) }).then(unwrapCreateResponse),
     replace: (id: number, body: Omit<T, "id">) =>
@@ -73,24 +73,29 @@ function resource<T extends { id: number }>(path: string) {
 
 function readOnlyResource<T extends { id: number }>(path: string) {
   return {
-    list: () => request<T[]>(path),
-    get: (id: number) => request<T>(`${path}/${id}`),
+    list: (signal?: AbortSignal) => request<T[]>(path, { signal }),
+    get: (id: number, signal?: AbortSignal) => request<T>(`${path}/${id}`, { signal }),
   };
 }
 
 //export const equipmentApi = resource<Equipment>("/equipment"); tricia
 export const equipmentApi = {
   ...resource<Equipment>("/equipment"),
-  list: (params?: { startDate?: string; endDate?: string }) => {
+  list: (params?: { startDate?: string; endDate?: string }, signal?: AbortSignal) => {
     const qs = params?.startDate && params?.endDate ? `?startDate=${params.startDate}&endDate=${params.endDate}` : "";
-    return request<Equipment[]>(`/equipment${qs}`);
+    return request<Equipment[]>(`/equipment${qs}`, { signal });
   },
 };
 
 export const depotApi = resource<Depot>("/depots");
 export const userApi = resource<User>("/users");
 export const rentalPlanApi = resource<RentalPlan>("/rentalPlans");
-export const bookingApi = resource<Booking>("/bookings");
+export const bookingApi = {
+  ...resource<Booking>("/bookings"),
+  // Real backend's GET /bookings returns the flat CreateBookingResponse shape (defined
+  // below), not the mock's normalized Booking shape — callers must narrow per-item.
+  list: (signal?: AbortSignal) => request<(Booking | CreateBookingResponse)[]>("/bookings", { signal }),
+};
 export const monthlyUtilizationApi = readOnlyResource<MonthlyUtilization>("/monthly-utilization");
 export const statusDistributionApi = readOnlyResource<StatusDistribution>("/status-distribution");
 

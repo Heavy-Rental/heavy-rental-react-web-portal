@@ -5,23 +5,27 @@ type AsyncState<T> =
   | { status: "success"; data: T; error: null }
   | { status: "error"; data: null; error: string };
 
-export function useApiResource<T>(fetcher: () => Promise<T>, deps: DependencyList = []) {
+export function useApiResource<T>(fetcher: (signal: AbortSignal) => Promise<T>, deps: DependencyList = []) {
   const [state, setState] = useState<AsyncState<T>>({ status: "loading", data: null, error: null });
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetcher()
+    const controller = new AbortController();
+    fetcher(controller.signal)
       .then((data) => {
         if (!cancelled) setState({ status: "success", data, error: null });
       })
       .catch((err) => {
-        if (!cancelled) {
+        // Aborting on cleanup (below) rejects this same promise — not a real
+        // failure, so don't surface it as one.
+        if (!cancelled && err?.name !== "AbortError") {
           setState({ status: "error", data: null, error: err instanceof Error ? err.message : String(err) });
         }
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, reloadKey]);
