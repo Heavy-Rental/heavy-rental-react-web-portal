@@ -21,7 +21,7 @@ export function SiteAddressModal({
 }) {
   const [form, setForm] = useState({ address, postalCode, notes });
   const [error, setError] = useState<string | null>(null);
-  const postalRe = /^S\(\d{6}\)$/;
+  const postalRe = /^\d{6}$/;
 
   const handleSave = () => {
     if (!form.address.trim()) {
@@ -29,7 +29,7 @@ export function SiteAddressModal({
       return;
     }
     if (!postalRe.test(form.postalCode.trim())) {
-      setError("Postal code must be in the format S(XXXXXX).");
+      setError("Postal code must be a 6-digit number, e.g. 619094.");
       return;
     }
     setError(null);
@@ -88,7 +88,7 @@ export function SiteAddressModal({
               onChange={(e) =>
                 setForm((f) => ({ ...f, postalCode: e.target.value }))
               }
-              placeholder="S(619094)"
+              placeholder="619094"
               className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors"
               style={mono}
             />

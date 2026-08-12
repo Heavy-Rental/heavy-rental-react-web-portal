@@ -59,6 +59,8 @@ import {
   calcFullPaymentDueDate,
   setAuthToken,
   login,
+  createDepositBooking,
+  paymentApi,
 } from "./app/api";
 import { useApiResource } from "./app/useApiResource";
 import {
@@ -1441,7 +1443,52 @@ style={detailItem.img.startsWith("data:") ? {
           userName={userName}
           paymentIntentId={paymentIntentId}
           onClose={() => setCheckoutOpen(false)}
-          onPaid={async () => {
+          onBeginPayment={async () => {
+            // Real backend only (STRIPE_INTEGRATION_HANDOFF.md §2/§5) — DepositCheckout
+            // only calls this when MODE === "api"; mock mode still creates its booking
+            // inside onPaid below, after the simulated payment "succeeds". Unlike the
+            // mock-mode path below, POST /api/bookings takes no userId — the real backend
+            // derives the customer from the Authorization bearer token server-side (its
+            // response's customerName proves this), so there's nothing to check here.
+            const { startDate, endDate } = cartDateRange(cart);
+            const booking = await createDepositBooking({
+              items: cart.map((c) => ({ assetId: c.equipment.id })),
+              startDate,
+              endDate,
+              siteAddress,
+              deliveryNotes: deliveryNotes || undefined,
+            });
+            const intent = await paymentApi.createDepositIntent(booking.bookingId);
+            return {
+              bookingId: booking.bookingId,
+              clientSecret: intent.clientSecret,
+              paymentIntentId: intent.paymentIntentId,
+              depositAmount: booking.depositAmount,
+            };
+          }}
+          onPaid={async (result) => {
+            if (result) {
+              // Real backend: booking + Stripe PaymentIntent already exist (onBeginPayment
+              // above) and the payment just succeeded — trust the server's depositAmount
+              // rather than recomputing it client-side.
+              const rid = `RNT-${String(result.bookingId).padStart(4, "0")}`;
+              setReservationId(rid);
+              setConfirmedOrder({
+                items: cart,
+                totalCost,
+                depositPaid: result.depositAmount,
+              });
+              setCheckoutOpen(false);
+              setConfirmed(true);
+              setCart([]);
+              setSiteAddress("");
+              setSitePostalCode("");
+              setDeliveryNotes("");
+              setSiteAddressPrompted(false);
+              setSharedStartDate(null);
+              setSharedEndDate(null);
+              return;
+            }
             if (userId === null)
               throw new Error(
                 "You must be signed in with a linked account to book equipment.",

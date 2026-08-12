@@ -1,13 +1,91 @@
 import { useState } from "react";
 import { X, CheckCircle, AlertTriangle } from "lucide-react";
+import {
+  Elements,
+  PaymentElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
 import type { CartItem } from "../cart/CartContext";
 import type { SimulatedPayment } from "./payment";
 import { CheckoutInputField } from "./CheckoutInputField";
 import { mono, display, sans } from "../../lib/styles";
 import { formatDateRange, daysBetweenISO } from "../../lib/dateFormat";
+import { getStripe } from "../../app/stripe";
 import stripeLogo from "../../assets/stripe.svg";
 
 // ─── DEPOSIT CHECKOUT ─────────────────────────────────────────────────────────
+
+// Real-backend-only (MODE === "api", STRIPE_INTEGRATION_HANDOFF.md §5). Returned
+// by onBeginPayment once the real booking + Stripe PaymentIntent both exist.
+export interface ApiDepositPayment {
+  bookingId: number;
+  clientSecret: string;
+  paymentIntentId: string;
+  depositAmount: number;
+}
+
+// The real PaymentIntent id/depositAmount from a completed API-mode payment,
+// passed to onPaid so the parent doesn't have to recompute server-trusted values.
+export interface ApiPaymentResult {
+  bookingId: number;
+  paymentIntentId: string;
+  depositAmount: number;
+}
+
+function StripeDepositForm({
+  deposit,
+  onSuccess,
+  onFailure,
+}: {
+  deposit: number;
+  onSuccess: (paymentIntentId: string) => void;
+  onFailure: (message: string) => void;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [submitting, setSubmitting] = useState(false);
+
+  // Note: deliberately doesn't flip the parent's `step` to "processing" the way
+  // the mock flow does — the PaymentElement iframe must stay mounted for the
+  // duration of this call, and switching steps would unmount it mid-confirmation.
+  const handleSubmit = async () => {
+    if (!stripe || !elements || submitting) return;
+    setSubmitting(true);
+    const { error, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      redirect: "if_required",
+    });
+    if (error) {
+      setSubmitting(false);
+      onFailure(
+        error.message ??
+          "We couldn't process your payment. Please try again.",
+      );
+      return;
+    }
+    if (paymentIntent?.status === "succeeded") {
+      onSuccess(paymentIntent.id);
+    } else {
+      setSubmitting(false);
+      onFailure("Payment requires additional action. Please try again.");
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      <PaymentElement />
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={!stripe || submitting}
+        className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-50"
+      >
+        {submitting ? "Processing…" : `Pay S$${deposit.toLocaleString()} Deposit`}
+      </button>
+    </div>
+  );
+}
 
 export function DepositCheckout({
   cart,
@@ -15,6 +93,7 @@ export function DepositCheckout({
   userName,
   paymentIntentId,
   onClose,
+  onBeginPayment,
   onPaid,
 }: {
   cart: CartItem[];
@@ -22,9 +101,19 @@ export function DepositCheckout({
   userName: string;
   paymentIntentId: string;
   onClose: () => void;
-  onPaid: () => Promise<void>;
+  // Real-backend-only (MODE === "api"): creates the real booking + Stripe
+  // PaymentIntent when the user leaves the summary step. A no-op returning
+  // null in mock mode, where booking creation still happens inside onPaid.
+  onBeginPayment: () => Promise<ApiDepositPayment | null>;
+  onPaid: (result?: ApiPaymentResult) => Promise<void>;
 }) {
-  const deposit = Math.round(totalCost * 0.3);
+  const isApiMode = import.meta.env.MODE === "api";
+  const [apiPayment, setApiPayment] = useState<ApiDepositPayment | null>(null);
+  const [beginningPayment, setBeginningPayment] = useState(false);
+  const [beginError, setBeginError] = useState<string | null>(null);
+  const deposit = apiPayment
+    ? apiPayment.depositAmount
+    : Math.round(totalCost * 0.3);
   const [step, setStep] = useState<
     "summary" | "payment" | "processing" | "failed"
   >("summary");
@@ -38,6 +127,28 @@ export function DepositCheckout({
   const [payMethod, setPayMethod] = useState<"card" | "paynow">("card");
   const [payError, setPayError] = useState<string | null>(null);
   const [payment, setPayment] = useState<SimulatedPayment | null>(null);
+
+  // API-mode only: create the real booking + PaymentIntent once, the first time
+  // the user leaves the summary step (STRIPE_INTEGRATION_HANDOFF.md §4/§5 — the
+  // backend has no server-side re-initiation guard yet, so this doubles as the
+  // client-side guard against creating a second PaymentIntent for the same booking).
+  const handleContinue = async () => {
+    if (!isApiMode || apiPayment) {
+      setStep("payment");
+      return;
+    }
+    setBeginError(null);
+    setBeginningPayment(true);
+    try {
+      const result = await onBeginPayment();
+      if (result) setApiPayment(result);
+      setStep("payment");
+    } catch (err) {
+      setBeginError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBeginningPayment(false);
+    }
+  };
 
   const fmtCard = (v: string) =>
     v
@@ -250,11 +361,13 @@ export function DepositCheckout({
               </p>
             </div>
 
+            {beginError && <p className="text-xs text-red-400">{beginError}</p>}
             <button
-              onClick={() => setStep("payment")}
-              className="w-full py-3 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all flex items-center justify-center gap-2"
+              onClick={handleContinue}
+              disabled={beginningPayment}
+              className="w-full py-3 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              Continue to Payment →
+              {beginningPayment ? "Creating booking…" : "Continue to Payment →"}
             </button>
           </div>
         )}
@@ -270,160 +383,216 @@ export function DepositCheckout({
               </p>
             </div>
 
-            {/* Payment method toggle */}
-            <div>
-              <p
-                className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-2"
-                style={mono}
-              >
-                Payment Method
-              </p>
-              <div className="flex gap-2">
-                {(
-                  [
-                    ["card", "Credit / Debit Card"],
-                    ["paynow", "PayNow SG"],
-                  ] as const
-                ).map(([m, label]) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setPayMethod(m)}
-                    className={`flex-1 py-2.5 text-xs font-bold tracking-wider uppercase border transition-all ${payMethod === m ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {payMethod === "card" ? (
-              <div className="flex flex-col gap-4">
-                <CheckoutInputField
-                  label="Card Number"
-                  value={card.number}
-                  onChange={(v) =>
-                    setCard((p) => ({ ...p, number: fmtCard(v) }))
-                  }
-                  placeholder="1234 5678 9012 3456"
-                  error={errors.number}
-                />
-                <CheckoutInputField
-                  label="Name on Card"
-                  value={card.name}
-                  onChange={(v) => setCard((p) => ({ ...p, name: v }))}
-                  placeholder={userName}
-                  error={errors.name}
-                />
-                <div className="grid grid-cols-2 gap-4">
-                  <CheckoutInputField
-                    label="Expiry (MM/YY)"
-                    value={card.expiry}
-                    onChange={(v) =>
-                      setCard((p) => ({ ...p, expiry: fmtExpiry(v) }))
-                    }
-                    placeholder="08/27"
-                    maxLen={5}
-                    error={errors.expiry}
-                  />
-                  <CheckoutInputField
-                    label="CVV"
-                    value={card.cvv}
-                    onChange={(v) =>
-                      setCard((p) => ({
-                        ...p,
-                        cvv: v.replace(/\D/g, "").slice(0, 4),
-                      }))
-                    }
-                    placeholder="•••"
-                    maxLen={4}
-                    error={errors.cvv}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1.5 gap-y-1">
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    className="shrink-0"
-                  >
-                    <rect x="3" y="11" width="18" height="11" rx="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                  <span>
-                    Your payment is encrypted and securely processed by
-                  </span>
-                  <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                    <img
-                      src={stripeLogo}
-                      alt="Stripe"
-                      className="h-3.5 w-auto align-middle"
-                    />
-                    .
-                  </span>
-                  <span>Card details are never stored on our servers.</span>
-                </p>
-              </div>
-            ) : (
-              <div className="bg-secondary/30 border border-border p-4 flex flex-col items-center gap-3 text-center">
-                <p
-                  className="text-xs font-semibold text-muted-foreground tracking-widest uppercase"
-                  style={mono}
+            {isApiMode && apiPayment ? (
+              <>
+                <Elements
+                  stripe={getStripe()}
+                  options={{ clientSecret: apiPayment.clientSecret }}
                 >
-                  Scan with your banking app
-                </p>
-                <div className="w-36 h-36 bg-white flex items-center justify-center border border-border">
-                  <svg
-                    width="96"
-                    height="96"
-                    viewBox="0 0 96 96"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
+                  <StripeDepositForm
+                    deposit={deposit}
+                    onSuccess={(piId) => {
+                      onPaid({
+                        bookingId: apiPayment.bookingId,
+                        paymentIntentId: piId,
+                        depositAmount: apiPayment.depositAmount,
+                      }).catch((err) => {
+                        setPayment({
+                          amount: deposit,
+                          paymentType: "DEPOSIT",
+                          status: "FAIL",
+                          failureReason: "processing_error",
+                          paidAt: null,
+                          stripePaymentIntentId: piId,
+                        });
+                        setPayError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                        setStep("failed");
+                      });
+                    }}
+                    onFailure={(message) => {
+                      setPayment({
+                        amount: deposit,
+                        paymentType: "DEPOSIT",
+                        status: "FAIL",
+                        failureReason: message,
+                        paidAt: null,
+                        stripePaymentIntentId: apiPayment.paymentIntentId,
+                      });
+                      setStep("failed");
+                    }}
+                  />
+                </Elements>
+                <button
+                  onClick={() => setStep("summary")}
+                  className="w-full py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all"
+                >
+                  ← Back
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Payment method toggle */}
+                <div>
+                  <p
+                    className="text-xs font-semibold text-muted-foreground tracking-widest uppercase mb-2"
+                    style={mono}
                   >
-                    <rect width="96" height="96" fill="white" />
-                    <rect x="6" y="6" width="24" height="24" fill="black" />
-                    <rect x="66" y="6" width="24" height="24" fill="black" />
-                    <rect x="6" y="66" width="24" height="24" fill="black" />
-                    <rect x="42" y="6" width="12" height="12" fill="black" />
-                    <rect x="42" y="42" width="12" height="12" fill="black" />
-                    <rect x="66" y="42" width="12" height="12" fill="black" />
-                    <rect x="42" y="78" width="12" height="12" fill="black" />
-                    <rect x="78" y="78" width="12" height="12" fill="black" />
-                  </svg>
+                    Payment Method
+                  </p>
+                  <div className="flex gap-2">
+                    {(
+                      [
+                        ["card", "Credit / Debit Card"],
+                        ["paynow", "PayNow SG"],
+                      ] as const
+                    ).map(([m, label]) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setPayMethod(m)}
+                        className={`flex-1 py-2.5 text-xs font-bold tracking-wider uppercase border transition-all ${payMethod === m ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Corporate UEN:{" "}
-                  <span className="text-foreground font-semibold" style={mono}>
-                    201847362K
-                  </span>
-                </p>
-                <p className="text-xs text-muted-foreground pt-2 border-t border-border w-full">
-                  Confirm once you've completed the transfer in your banking
-                  app. Your reservation will be activated once payment clears.
-                </p>
-              </div>
-            )}
 
-            {payError && <p className="text-xs text-red-400">{payError}</p>}
-            <div className="flex gap-3 pt-2 border-t border-border">
-              <button
-                onClick={() => setStep("summary")}
-                className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all"
-              >
-                ← Back
-              </button>
-              <button
-                onClick={handlePay}
-                className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all"
-              >
-                {payMethod === "card"
-                  ? `Pay S$${deposit.toLocaleString()} Deposit`
-                  : "Confirm PayNow Payment"}
-              </button>
-            </div>
+                {payMethod === "card" ? (
+                  <div className="flex flex-col gap-4">
+                    <CheckoutInputField
+                      label="Card Number"
+                      value={card.number}
+                      onChange={(v) =>
+                        setCard((p) => ({ ...p, number: fmtCard(v) }))
+                      }
+                      placeholder="1234 5678 9012 3456"
+                      error={errors.number}
+                    />
+                    <CheckoutInputField
+                      label="Name on Card"
+                      value={card.name}
+                      onChange={(v) => setCard((p) => ({ ...p, name: v }))}
+                      placeholder={userName}
+                      error={errors.name}
+                    />
+                    <div className="grid grid-cols-2 gap-4">
+                      <CheckoutInputField
+                        label="Expiry (MM/YY)"
+                        value={card.expiry}
+                        onChange={(v) =>
+                          setCard((p) => ({ ...p, expiry: fmtExpiry(v) }))
+                        }
+                        placeholder="08/27"
+                        maxLen={5}
+                        error={errors.expiry}
+                      />
+                      <CheckoutInputField
+                        label="CVV"
+                        value={card.cvv}
+                        onChange={(v) =>
+                          setCard((p) => ({
+                            ...p,
+                            cvv: v.replace(/\D/g, "").slice(0, 4),
+                          }))
+                        }
+                        placeholder="•••"
+                        maxLen={4}
+                        error={errors.cvv}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1.5 gap-y-1">
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="shrink-0"
+                      >
+                        <rect x="3" y="11" width="18" height="11" rx="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                      <span>
+                        Your payment is encrypted and securely processed by
+                      </span>
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                        <img
+                          src={stripeLogo}
+                          alt="Stripe"
+                          className="h-3.5 w-auto align-middle"
+                        />
+                        .
+                      </span>
+                      <span>Card details are never stored on our servers.</span>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-secondary/30 border border-border p-4 flex flex-col items-center gap-3 text-center">
+                    <p
+                      className="text-xs font-semibold text-muted-foreground tracking-widest uppercase"
+                      style={mono}
+                    >
+                      Scan with your banking app
+                    </p>
+                    <div className="w-36 h-36 bg-white flex items-center justify-center border border-border">
+                      <svg
+                        width="96"
+                        height="96"
+                        viewBox="0 0 96 96"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <rect width="96" height="96" fill="white" />
+                        <rect x="6" y="6" width="24" height="24" fill="black" />
+                        <rect x="66" y="6" width="24" height="24" fill="black" />
+                        <rect x="6" y="66" width="24" height="24" fill="black" />
+                        <rect x="42" y="6" width="12" height="12" fill="black" />
+                        <rect x="42" y="42" width="12" height="12" fill="black" />
+                        <rect x="66" y="42" width="12" height="12" fill="black" />
+                        <rect x="42" y="78" width="12" height="12" fill="black" />
+                        <rect x="78" y="78" width="12" height="12" fill="black" />
+                      </svg>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Corporate UEN:{" "}
+                      <span
+                        className="text-foreground font-semibold"
+                        style={mono}
+                      >
+                        201847362K
+                      </span>
+                    </p>
+                    <p className="text-xs text-muted-foreground pt-2 border-t border-border w-full">
+                      Confirm once you've completed the transfer in your
+                      banking app. Your reservation will be activated once
+                      payment clears.
+                    </p>
+                  </div>
+                )}
+
+                {payError && <p className="text-xs text-red-400">{payError}</p>}
+                <div className="flex gap-3 pt-2 border-t border-border">
+                  <button
+                    onClick={() => setStep("summary")}
+                    className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    onClick={handlePay}
+                    className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all"
+                  >
+                    {payMethod === "card"
+                      ? `Pay S$${deposit.toLocaleString()} Deposit`
+                      : "Confirm PayNow Payment"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -508,16 +677,18 @@ export function DepositCheckout({
               >
                 Retry Payment
               </button>
-              <button
-                onClick={() => {
-                  setPayMethod("paynow");
-                  setStep("payment");
-                  setPayment(null);
-                }}
-                className="w-full py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all"
-              >
-                Use Alternative Payment Method
-              </button>
+              {!isApiMode && (
+                <button
+                  onClick={() => {
+                    setPayMethod("paynow");
+                    setStep("payment");
+                    setPayment(null);
+                  }}
+                  className="w-full py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all"
+                >
+                  Use Alternative Payment Method
+                </button>
+              )}
               <a
                 href="mailto:support@heavyrental.com?subject=Payment%20issue"
                 className="w-full py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all text-center"
