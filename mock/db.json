@@ -104,7 +104,7 @@
     { "id": 2, "name": "Mei Lin Goh", "email": "mei.lin.goh@example.sg", "role": "customer" },
     { "id": 3, "name": "Ravi Kumar", "email": "ravi.kumar@example.sg", "role": "admin" }
   ],
-  "rental-plans": [
+  "rentalPlans": [
     {
       "id": 1,
       "userId": 1,

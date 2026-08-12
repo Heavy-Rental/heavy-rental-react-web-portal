@@ -89,7 +89,7 @@ export const equipmentApi = {
 
 export const depotApi = resource<Depot>("/depots");
 export const userApi = resource<User>("/users");
-export const rentalPlanApi = resource<RentalPlan>("/rental-plans");
+export const rentalPlanApi = resource<RentalPlan>("/rentalPlans");
 export const bookingApi = resource<Booking>("/bookings");
 export const monthlyUtilizationApi = readOnlyResource<MonthlyUtilization>("/monthly-utilization");
 export const statusDistributionApi = readOnlyResource<StatusDistribution>("/status-distribution");
