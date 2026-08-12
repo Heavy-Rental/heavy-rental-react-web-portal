@@ -1,10 +1,15 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { mono, display, sans } from "../../lib/styles";
 
 // ─── SITE ADDRESS MODAL ─────────────────────────────────────────────────────────
 // Captured once per cart, right after the first successful "Select" (Spec-frontend-ui-changes.md
 // Screen 6) — maps to Booking.siteAddress/sitePostalCode/deliveryNotes.
+
+function derivePostalCode(address: string): string {
+  const last6 = address.trim().slice(-6);
+  return /^\d{6}$/.test(last6) ? last6 : "";
+}
 
 export function SiteAddressModal({
   address,
@@ -19,21 +24,28 @@ export function SiteAddressModal({
   onClose: () => void;
   onSave: (address: string, postalCode: string, notes: string) => void;
 }) {
-  const [form, setForm] = useState({ address, postalCode, notes });
+  const [form, setForm] = useState({ address, notes });
   const [error, setError] = useState<string | null>(null);
   const postalRe = /^\d{6}$/;
+
+  const derivedPostalCode = useMemo(
+    () => derivePostalCode(form.address),
+    [form.address],
+  );
 
   const handleSave = () => {
     if (!form.address.trim()) {
       setError("Site address is required.");
       return;
     }
-    if (!postalRe.test(form.postalCode.trim())) {
-      setError("Postal code must be a 6-digit number, e.g. 619094.");
+    if (!postalRe.test(derivedPostalCode)) {
+      setError(
+        "Address must end with a 6-digit postal code, e.g. \"...Jurong Port Road, 619094\".",
+      );
       return;
     }
     setError(null);
-    onSave(form.address.trim(), form.postalCode.trim(), form.notes.trim());
+    onSave(form.address.trim(), derivedPostalCode, form.notes.trim());
   };
 
   return (
@@ -64,7 +76,7 @@ export function SiteAddressModal({
         <div className="p-6 flex flex-col gap-4">
           <p className="text-xs text-muted-foreground -mt-1">
             Where should this booking's equipment be delivered? One address
-            covers the whole booking.
+            covers the whole booking — include the postal code at the end.
           </p>
           <div>
             <label className="text-xs text-muted-foreground mb-1.5 block">
@@ -75,21 +87,22 @@ export function SiteAddressModal({
               onChange={(e) =>
                 setForm((f) => ({ ...f, address: e.target.value }))
               }
-              placeholder="e.g. 20 Jurong Port Road"
+              placeholder="e.g. 20 Jurong Port Road, 619094"
               className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors"
             />
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1.5 block">
-              Postal Code<span className="text-primary ml-0.5">*</span>
+              Postal Code{" "}
+              <span className="normal-case font-normal text-muted-foreground/60">
+                (auto-detected from address)
+              </span>
             </label>
             <input
-              value={form.postalCode}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, postalCode: e.target.value }))
-              }
-              placeholder="619094"
-              className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors"
+              value={derivedPostalCode}
+              readOnly
+              placeholder="Will appear once typed above"
+              className="w-full bg-secondary/30 border border-border px-3 py-2.5 text-sm text-muted-foreground placeholder-muted-foreground outline-none cursor-not-allowed"
               style={mono}
             />
           </div>
