@@ -1353,7 +1353,6 @@ const equipmentRes = useApiResource(
         {siteAddressModalOpen && (
           <SiteAddressModal
             address={siteAddress}
-            postalCode={sitePostalCode}
             notes={deliveryNotes}
             onClose={() => setSiteAddressModalOpen(false)}
             onSave={(address, postalCode, notes) => {

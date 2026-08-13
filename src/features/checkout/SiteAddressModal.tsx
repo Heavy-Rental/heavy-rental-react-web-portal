@@ -13,17 +13,17 @@ function derivePostalCode(address: string): string {
 
 export function SiteAddressModal({
   address,
-  postalCode,
   notes,
   onClose,
   onSave,
 }: {
   address: string;
-  postalCode: string;
   notes: string;
   onClose: () => void;
   onSave: (address: string, postalCode: string, notes: string) => void;
 }) {
+  // No `postalCode` prop — Postal Code is never seeded from outside, it's
+  // always derived from `form.address` below (see `derivedPostalCode`).
   const [form, setForm] = useState({ address, notes });
   const [error, setError] = useState<string | null>(null);
   const postalRe = /^\d{6}$/;
