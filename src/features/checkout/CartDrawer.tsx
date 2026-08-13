@@ -9,7 +9,6 @@ export function CartDrawer({
   cart,
   onRemoveItem,
   siteAddress,
-  sitePostalCode,
   onEditAddress,
   totalCost,
   onCheckout,
@@ -18,7 +17,6 @@ export function CartDrawer({
   cart: CartItem[];
   onRemoveItem: (equipmentId: number) => void;
   siteAddress: string;
-  sitePostalCode: string;
   onEditAddress: () => void;
   totalCost: number;
   onCheckout: () => void;
@@ -90,9 +88,8 @@ export function CartDrawer({
               </button>
             </div>
             <p className="text-xs text-foreground mb-3 leading-relaxed">
-              {siteAddress
-                ? `${siteAddress}, ${sitePostalCode}`
-                : "No delivery address set yet."}
+              {}
+              {siteAddress || "No delivery address set yet."}
             </p>
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-muted-foreground">
