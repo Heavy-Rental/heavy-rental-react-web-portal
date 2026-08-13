@@ -4,6 +4,7 @@ import type {
   Equipment,
   MonthlyUtilization,
   RentalPlan,
+  RentalPlanResponse,
   StatusDistribution,
   User,
 } from "./types";
@@ -103,6 +104,41 @@ export const statusDistributionApi = readOnlyResource<StatusDistribution>("/stat
 // STRIPE_INTEGRATION_HANDOFF.md §2/§5 — a different contract against the same
 // `/api/bookings` path than the mock resource above (mock and real backend are
 // never targeted in the same MODE, so the two never collide at runtime).
+
+// ─── REAL BACKEND: RentalPlan cart persistence (api-contract-for-frontend.md §1-3, 7) ──
+// Distinct from `rentalPlanApi` above (generic CRUD over the mock's `RentalPlan` shape) —
+// these hit the same `/rentalPlans` routes but speak the real backend's response shape
+// (`RentalPlanResponse`) and its item-level mutation endpoints, which the mock server
+// doesn't implement. There's no server-side "active plan" filter (§7) or generic create
+// body confirmed beyond `startDate`/`endDate` — `list()` + client-side filtering for
+// `status !== "CONVERTED"` is the only way to find the caller's one active plan.
+
+export interface CreateRentalPlanRequest {
+  startDate: string; // ISO YYYY-MM-DD
+  endDate: string; // ISO YYYY-MM-DD
+}
+
+export const rentalPlanCartApi = {
+  list: (signal?: AbortSignal) =>
+    request<RentalPlanResponse[]>("/rentalPlans", { signal }),
+  create: (body: CreateRentalPlanRequest) =>
+    request<RentalPlanResponse>("/rentalPlans", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  // Response reflects the updated status/totalAmount/items/updatedAt in the same call —
+  // no follow-up GET needed (§3: this also succeeds, reverting a QUOTED plan to DRAFT,
+  // instead of the 409 it returns today).
+  addItem: (planId: number, assetId: number) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}/items`, {
+      method: "POST",
+      body: JSON.stringify({ assetId }),
+    }),
+  removeItem: (planId: number, itemId: number) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}/items/${itemId}`, {
+      method: "DELETE",
+    }),
+};
 
 export interface CreateBookingRequest {
   items: { assetId: number }[];
