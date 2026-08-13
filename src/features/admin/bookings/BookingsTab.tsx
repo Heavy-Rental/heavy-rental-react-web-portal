@@ -1,9 +1,9 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { Search, X } from "lucide-react";
 import { bookingApi } from "../../../app/api";
-import type { BookingStatus, PaidStatus } from "../../../app/types";
+import type { BookingStatus } from "../../../app/types";
 import { mono, display } from "../../../lib/styles";
-import { BOOKING_STATUSES, PAID_STATUSES, formatBookingStatus, formatPaidStatus } from "../adminFormat";
+import { BOOKING_STATUSES, formatBookingStatus } from "../adminFormat";
 import type { BookingRow } from "../AdminDataContext";
 
 const PAGE_SIZE = 5;
@@ -32,14 +32,6 @@ const BOOKING_STAT_GROUPS: { label: string; statuses: BookingStatus[]; color: st
   { label: "Completed", statuses: ["COMPLETED"], color: "text-blue-400" },
   { label: "Cancelled", statuses: ["CANCELLED"], color: "text-red-400" },
 ];
-function paidStatusColor(s: PaidStatus) {
-  return {
-    UNPAID: "text-red-400 bg-red-500/10 border-red-500/30",
-    DEPOSIT: "text-amber-400 bg-amber-500/10 border-amber-500/30",
-    FULL: "text-green-400 bg-green-500/10 border-green-500/30",
-  }[s];
-}
-
 export function BookingsTab({
   bookings,
   setBookings,
@@ -51,7 +43,6 @@ export function BookingsTab({
 }) {
   const [bookingSearch, setBookingSearch] = useState("");
   const [bookingStatusFilter, setBookingStatusFilter] = useState("All");
-  const [paidStatusFilter, setPaidStatusFilter] = useState("All");
   const [bookingPage, setBookingPage] = useState(1);
 
   const handleBookingStatus = async (apiId: number, status: BookingStatus) => {
@@ -73,7 +64,6 @@ export function BookingsTab({
     const q = bookingSearch.toLowerCase();
     return (
       (bookingStatusFilter === "All" || b.status === bookingStatusFilter) &&
-      (paidStatusFilter === "All" || b.paidStatus === paidStatusFilter) &&
       (!q ||
         b.id.toLowerCase().includes(q) ||
         b.customer.toLowerCase().includes(q) ||
@@ -158,21 +148,6 @@ export function BookingsTab({
             </option>
           ))}
         </select>
-        <select
-          value={paidStatusFilter}
-          onChange={(e) => {
-            setPaidStatusFilter(e.target.value);
-            setBookingPage(1);
-          }}
-          className="bg-card border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-red-400/60 transition-colors"
-        >
-          <option value="All">All Paid Statuses</option>
-          {PAID_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {formatPaidStatus(s)}
-            </option>
-          ))}
-        </select>
       </div>
 
       <div className="bg-card border border-border">
@@ -180,7 +155,7 @@ export function BookingsTab({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                {["Booking ID", "Customer", "Equipment", "Depot", "Dates", "Deposit", "Total", "Status", "Paid"].map(
+                {["Booking ID", "Customer", "Equipment", "Depot", "Dates", "Deposit", "Total", "Status"].map(
                   (h) => (
                     <th
                       key={h}
@@ -224,11 +199,6 @@ export function BookingsTab({
                         </option>
                       ))}
                     </select>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 text-xs font-semibold border ${paidStatusColor(b.paidStatus)}`}>
-                      {formatPaidStatus(b.paidStatus)}
-                    </span>
                   </td>
                 </tr>
               ))}
