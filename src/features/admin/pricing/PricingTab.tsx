@@ -1,6 +1,6 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { CheckCircle, Info, Lock, RefreshCw, TrendingUp, BarChart2, Calendar } from "lucide-react";
-import { equipmentApi } from "../../../app/api";
+import { assetApi } from "../../../app/api";
 import type { AssetRecord } from "../../../app/assetRecord";
 import { mono, display } from "../../../lib/styles";
 import type { PricingRule } from "../AdminDataContext";
@@ -53,7 +53,7 @@ export function PricingTab({
     const rule = pricingRules.find((r) => r.id === id);
     if (!rule) return;
     try {
-      await equipmentApi.update(id, {
+      await assetApi.update(id, {
         baseDailyRate: rule.mlRecommendedDaily,
         weekly: rule.mlRecommendedWeekly,
       });
@@ -82,7 +82,7 @@ export function PricingTab({
     try {
       await Promise.all(
         unlocked.map((r) =>
-          equipmentApi.update(r.id, {
+          assetApi.update(r.id, {
             baseDailyRate: r.mlRecommendedDaily,
             weekly: r.mlRecommendedWeekly,
           }),

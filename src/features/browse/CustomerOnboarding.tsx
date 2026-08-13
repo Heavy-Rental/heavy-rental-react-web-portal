@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Search, ArrowRight, Wrench, CheckCircle, ChevronLeft, ChevronRight, Sparkles, Gauge, Info } from "lucide-react";
-import type { Equipment as EquipmentItem, OnboardingMode } from "../../app/types";
-import { equipmentApi } from "../../app/api";
+import type { Asset as EquipmentItem, OnboardingMode } from "../../app/types";
+import { assetApi } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
 
 interface QuoteLine {
@@ -334,7 +334,7 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
   const [rentalDays, setRentalDays] = useState(7);
   const [quoteRef] = useState(() => `QUO-${secureFourDigit()}`);
   const fileRef = useRef<HTMLInputElement>(null);
-  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipmentRes = useApiResource(() => assetApi.list());
   const equipment = equipmentRes.data ?? [];
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

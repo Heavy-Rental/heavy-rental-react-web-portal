@@ -2,7 +2,8 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 import { Search, X, Truck } from "lucide-react";
 import type { AssetRecord, ConditionType } from "../../../app/assetRecord";
 import { formatCondition, deriveAssetRecord } from "../../../app/assetRecord";
-import { equipmentApi } from "../../../app/api";
+import { assetApi, ApiError } from "../../../app/api";
+import type { Asset } from "../../../app/types";
 import { mono, display, sans } from "../../../lib/styles";
 import { AssetFormModal } from "./AssetFormModal";
 
@@ -30,16 +31,33 @@ export function AssetsTab({
 }) {
   const [assetForm, setAssetForm] = useState(false);
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
+  const [assetNameError, setAssetNameError] = useState<string | null>(null);
   const [deleteAssetId, setDeleteAssetId] = useState<number | null>(null);
   const [assetSearch, setAssetSearch] = useState("");
   const [assetCatFilter, setAssetCatFilter] = useState("All");
   const [assetPage, setAssetPage] = useState(1);
 
+  const openAssetForm = (a: AssetRecord | null) => {
+    setEditingAsset(a);
+    setAssetNameError(null);
+    setAssetForm(true);
+  };
+
+  const closeAssetForm = () => {
+    setAssetForm(false);
+    setEditingAsset(null);
+    setAssetNameError(null);
+  };
+
   const handleAssetSave = async (a: AssetRecord) => {
     const isNew = !assets.some((x) => x.id === a.id);
+    const previous = assets.find((x) => x.id === a.id);
+    const photoChanged = !!a.photo?.startsWith("data:") && a.photo !== previous?.photo;
+    setAssetNameError(null);
     try {
+      let saved: Asset;
       if (isNew) {
-        const created = await equipmentApi.create({
+        saved = await assetApi.create({
           name: a.name,
           category: a.category,
           baseDailyRate: a.baseDailyRate,
@@ -63,10 +81,12 @@ export function AssetsTab({
           hoursThisMonth: a.hoursThisMonth,
           desc: a.desc,
           idealFor: [],
+          serialno: a.serialno,
+          condition: a.condition,
+          lastConditionUpdatedAt: null,
         });
-        setAssets((prev) => [...prev, deriveAssetRecord(created)]);
       } else {
-        await equipmentApi.update(a.id, {
+        saved = await assetApi.update(a.id, {
           name: a.name,
           category: a.category,
           baseDailyRate: a.baseDailyRate,
@@ -82,31 +102,60 @@ export function AssetsTab({
           revenue: a.revenue,
           hoursThisMonth: a.hoursThisMonth,
           desc: a.desc,
+          serialno: a.serialno,
+          condition: a.condition,
         });
-        setAssets((prev) => prev.map((x) => (x.id === a.id ? a : x)));
       }
-      setAssetForm(false);
-      setEditingAsset(null);
-      showToast(isNew ? "New asset added." : "Asset updated.");
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to save asset.",
-        "error",
+
+      let photoWarning: string | null = null;
+      if (photoChanged && a.photo) {
+        try {
+          saved = await assetApi.uploadImage(saved.id, a.photo);
+        } catch (err) {
+          if (err instanceof ApiError && err.code === "payload_too_large") {
+            photoWarning = "the photo was too large to upload";
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      const record = deriveAssetRecord(saved);
+      setAssets((prev) =>
+        isNew ? [...prev, record] : prev.map((x) => (x.id === record.id ? record : x)),
       );
+      closeAssetForm();
+      const baseMsg = isNew ? "New asset added." : "Asset updated.";
+      showToast(photoWarning ? `${baseMsg} However, ${photoWarning}.` : baseMsg, photoWarning ? "error" : "success");
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "forbidden") {
+        showToast("You don't have permission to do this.", "error");
+      } else if (err instanceof ApiError && err.code === "conflict") {
+        setAssetNameError(err.message);
+      } else {
+        showToast(
+          err instanceof Error ? err.message : "Failed to save asset.",
+          "error",
+        );
+      }
     }
   };
 
   const handleAssetDelete = async (id: number) => {
     try {
-      await equipmentApi.remove(id);
+      await assetApi.remove(id);
       setAssets((prev) => prev.filter((x) => x.id !== id));
       setDeleteAssetId(null);
       showToast("Asset deleted.", "error");
     } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to delete asset.",
-        "error",
-      );
+      if (err instanceof ApiError && err.code === "forbidden") {
+        showToast("You don't have permission to do this.", "error");
+      } else {
+        showToast(
+          err instanceof Error ? err.message : "Failed to delete asset.",
+          "error",
+        );
+      }
     }
   };
 
@@ -131,10 +180,8 @@ export function AssetsTab({
         <AssetFormModal
           asset={editingAsset}
           onSave={handleAssetSave}
-          onClose={() => {
-            setAssetForm(false);
-            setEditingAsset(null);
-          }}
+          onClose={closeAssetForm}
+          nameError={assetNameError}
         />
       )}
 
@@ -179,10 +226,7 @@ export function AssetsTab({
           </p>
         </div>
         <button
-          onClick={() => {
-            setEditingAsset(null);
-            setAssetForm(true);
-          }}
+          onClick={() => openAssetForm(null)}
           className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white text-xs font-bold tracking-widest uppercase hover:bg-red-600 transition-all shrink-0"
         >
           + Add New Asset
@@ -323,10 +367,7 @@ export function AssetsTab({
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => {
-                          setEditingAsset(a);
-                          setAssetForm(true);
-                        }}
+                        onClick={() => openAssetForm(a)}
                         className="px-3 py-1 border border-border text-xs text-muted-foreground hover:text-primary hover:border-primary/40 transition-all font-semibold"
                       >
                         Edit

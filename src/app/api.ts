@@ -1,7 +1,7 @@
 import type {
+  Asset,
   Booking,
   Depot,
-  Equipment,
   MonthlyUtilization,
   RentalPlan,
   StatusDistribution,
@@ -16,6 +16,18 @@ export function setAuthToken(token: string | null): void {
   authToken = token;
 }
 
+// Thrown for any non-2xx response whose body parses as the backend's
+// {"error": "<code>", "message": "<text>"} envelope — callers switch on `code`
+// (e.g. "forbidden"/"conflict"/"payload_too_large") instead of string-matching text.
+export class ApiError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: {
@@ -25,8 +37,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`${init?.method ?? "GET"} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ""}`);
+    const raw = await res.text().catch(() => "");
+    let envelope: { error?: string; message?: string } | null = null;
+    try {
+      if (raw) envelope = JSON.parse(raw);
+    } catch {
+      // not a JSON error envelope — fall through to the raw-text Error below
+    }
+    if (envelope?.error && envelope?.message) {
+      throw new ApiError(envelope.error, envelope.message);
+    }
+    throw new Error(`${init?.method ?? "GET"} ${path} failed: ${res.status}${raw ? ` — ${raw}` : ""}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -78,13 +99,20 @@ function readOnlyResource<T extends { id: number }>(path: string) {
   };
 }
 
-//export const equipmentApi = resource<Equipment>("/equipment"); tricia
-export const equipmentApi = {
-  ...resource<Equipment>("/equipment"),
+export const assetApi = {
+  ...resource<Asset>("/assets"),
   list: (params?: { startDate?: string; endDate?: string }, signal?: AbortSignal) => {
     const qs = params?.startDate && params?.endDate ? `?startDate=${params.startDate}&endDate=${params.endDate}` : "";
-    return request<Equipment[]>(`/equipment${qs}`, { signal });
+    return request<Asset[]>(`/assets${qs}`, { signal });
   },
+  // SPEC-equipment-browse-api.md §7.6 (paraphrased in TASKS-frontend-admin-asset-records.md —
+  // the spec file itself isn't present in this repo): body carries base64 with no "data:" prefix,
+  // response is the full updated AssetResponse with `img` set to a data URI.
+  uploadImage: (id: number, dataUri: string) =>
+    request<Asset>(`/assets/${id}/image`, {
+      method: "PUT",
+      body: JSON.stringify({ image: dataUri.replace(/^data:[^,]*,/, "") }),
+    }),
 };
 
 export const depotApi = resource<Depot>("/depots");

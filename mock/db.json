@@ -1,5 +1,5 @@
 {
-  "equipment": [
+  "assets": [
     {
       "id": 1,
       "name": "JLG 1350SJP Telescopic Boom",
@@ -21,7 +21,10 @@
       "revenue": 32480,
       "hoursThisMonth": 155,
       "desc": "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
-      "idealFor": ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"]
+      "idealFor": ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"],
+      "serialno": "SN-BOO-2023-0001",
+      "condition": "GOOD",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
     },
     {
       "id": 2,
@@ -44,7 +47,10 @@
       "revenue": 20160,
       "hoursThisMonth": 148,
       "desc": "Compact scissors lift suited for indoor and outdoor elevated access on construction and facility sites.",
-      "idealFor": ["access", "maintenance", "fit-out", "indoor", "elevated"]
+      "idealFor": ["access", "maintenance", "fit-out", "indoor", "elevated"],
+      "serialno": "SN-SCI-2024-0002",
+      "condition": "EXCELLENT",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
     },
     {
       "id": 3,
@@ -67,7 +73,10 @@
       "revenue": 17920,
       "hoursThisMonth": 132,
       "desc": "Electric fork lift for warehouse operations, indoor material handling, and pallet moving.",
-      "idealFor": ["warehouse", "indoor", "pallet", "forklift", "material handling"]
+      "idealFor": ["warehouse", "indoor", "pallet", "forklift", "material handling"],
+      "serialno": "SN-FOR-2023-0003",
+      "condition": "FAIR",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
     },
     {
       "id": 4,
@@ -90,7 +99,10 @@
       "revenue": 58400,
       "hoursThisMonth": 187,
       "desc": "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
-      "idealFor": ["excavation", "demolition", "earthmoving", "foundation", "trenching"]
+      "idealFor": ["excavation", "demolition", "earthmoving", "foundation", "trenching"],
+      "serialno": "SN-EXC-2022-0004",
+      "condition": "NEEDS_REPAIR",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
     }
   ],
   "depots": [

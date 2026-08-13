@@ -7,7 +7,7 @@ import {
   type SetStateAction,
 } from "react";
 import type {
-  Equipment,
+  Asset,
   User as ApiUser,
   RentalPlan as ApiRentalPlan,
   Booking as ApiBooking,
@@ -18,7 +18,7 @@ import type {
   ConditionType,
 } from "../../app/types";
 import {
-  equipmentApi,
+  assetApi,
   depotApi,
   userApi,
   rentalPlanApi,
@@ -27,7 +27,7 @@ import {
   type CreateBookingResponse,
 } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
-import { deriveAssetRecord, type AssetRecord } from "../../app/assetRecord";
+import { deriveAssetRecord, resolvePhoto, type AssetRecord } from "../../app/assetRecord";
 import type { DeploymentStatus, LifecycleStatus } from "./adminFormat";
 
 /* eslint-disable react-refresh/only-export-components -- Same rationale as CartContext: the
@@ -160,7 +160,7 @@ function buildBookingRows(
   apiBookings: (ApiBooking | CreateBookingResponse)[],
   rentalPlans: ApiRentalPlan[],
   apiUsers: ApiUser[],
-  equipment: Equipment[],
+  equipment: Asset[],
   depots: Depot[],
 ): BookingRow[] {
   const fmt = (iso: string) =>
@@ -218,7 +218,7 @@ function buildBookingRows(
   });
 }
 
-const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
+const buildFleetAssets = (equipment: Asset[]): FleetAsset[] =>
   equipment.map((e, i) => {
     const statuses: DeploymentStatus[] = [
       "Available",
@@ -246,9 +246,9 @@ const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
       name: e.name,
       category: e.category,
       purchaseYear: e.purchaseYear,
-      serialno: `SN-${e.category.slice(0, 3).toUpperCase()}-${e.purchaseYear}-${String(e.id).padStart(4, "0")}`,
+      serialno: e.serialno,
       location: e.location,
-      photo: `https://images.unsplash.com/photo-${e.img}?w=400&q=80`,
+      photo: resolvePhoto(e.img),
       deploymentStatus: statuses[idx],
       assignedBooking: bookings[idx],
       assignedCustomer: customers[idx],
@@ -256,9 +256,7 @@ const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
       lastUpdated: "2026-08-01 08:30",
       updatedBy: "Carlos Vega",
       notes: notes[idx],
-      condition: ["EXCELLENT", "GOOD", "FAIR", "NEEDS_REPAIR"][
-        idx
-      ] as ConditionType,
+      condition: e.condition ?? "GOOD",
     };
   });
 
@@ -455,7 +453,7 @@ interface AdminDataValue {
 const AdminDataContext = createContext<AdminDataValue | null>(null);
 
 export function AdminDataProvider({ children }: { children: ReactNode }) {
-  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
+  const equipmentRes = useApiResource((signal) => assetApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
   const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const usersRes = useApiResource((signal) => userApi.list(signal));
