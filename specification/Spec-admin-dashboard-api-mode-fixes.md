@@ -7,7 +7,7 @@
 | **Module** | `heavy-rental-react-web-portal` |
 | **Primary surface** | Admin dashboard (`src/features/admin/`), shared API client (`src/app/api.ts`), shared data-fetch hook (`src/app/useApiResource.ts`) |
 | **Method** | Live debugging against the real Spring Boot backend (`heavy-rental-rest-api`) in `npm run dev:api` mode, driven by browser console/network errors |
-| **Related code** | `src/app/api.ts`, `src/app/useApiResource.ts`, `src/App.tsx`, `src/features/admin/AdminDataContext.tsx`, `mock/db.json` |
+| **Related code** | `src/app/api.ts`, `src/app/useApiResource.ts`, `src/App.tsx`, `src/features/admin/AdminDataContext.tsx`, `src/features/admin/AdminDashboard.tsx`, `src/features/admin/overview/OverviewTab.tsx`, `mock/db.json` |
 | **Environment context** | [`Spec-frontend-api-integration.md`](./Spec-frontend-api-integration.md), [`Spec-mock-api-server.md`](./Spec-mock-api-server.md) |
 | **Linked backend** | `heavy-rental-spring-rest-api`, branch `36-link-rest-api-users-to-front-end` (separate repo, reachable at `heavy-rental-rest-api:8080` from this frontend's `dev:api` mode; not present in this workspace — verified only via live HTTP calls, not by reading its source) |
 
@@ -125,8 +125,29 @@ Unlike the three Open Questions in `Spec-ui-heavy-machinery-portal.md`, these ar
 
 ---
 
-## 8. Change control
+## 8. Additional Admin Dashboard cleanup (not API-mode specific)
+
+These two changes landed on the same branch but aren't related to real-backend compatibility — both apply identically under `dev:mock` and `dev:api`, so they're kept separate from the FIX-01–03 numbering above.
+
+### CHANGE-01: Removed the unused Pricing tab
+
+The Admin Dashboard's "Pricing" tab (`src/features/admin/pricing/PricingTab.tsx`) and its supporting data — the `PricingRule` type, the `pricingRules`/`setPricingRules` state, and the derivation logic that computed ML-recommended rates from asset utilization — were removed entirely. Confirmed via a full-repo `grep` for `PricingRule`/`pricingRules`/`PricingTab` before removing that no other tab or component depended on any of it. Removed: the nav entry and render block in `AdminDashboard.tsx`, the `"pricing"` member of the `AdminTab` union, the `PricingRule` interface and its state/derivation/context-value entries in `AdminDataContext.tsx`, and the `PricingTab.tsx` file plus its now-empty `pricing/` folder.
+
+### CHANGE-02: Fixed two leaked internal chart labels on the Overview tab
+
+`OverviewTab.tsx`'s charts use an `adm-*` naming convention ("admin") for internal Recharts `key`/`name` props, purely for uniqueness — not meant to be user-visible. Two of them leaked into the visible tooltip anyway, because the custom `ChartTip` component renders each payload item's `name` directly:
+
+- **Utilization chart**: `Bar name="adm-util-asset"` → `"Utilization"`. Also wrapped the value in `Math.round(...)` (`utilizationByAsset`, line ~104) so the tooltip can't show a decimal, and added a new optional `unit` prop to `ChartTip` (defaults to none, so other charts are unaffected) so this one now shows `%`.
+- **Revenue chart**: `Bar name="adm-revenue-trend"` → `"Revenue"`. Added a `valueFormatter` prop to `ChartTip` (also optional/opt-in) so this tooltip shows `S$214,000` instead of a raw `214000`, matching the Y-axis's existing `S$214K` tick formatting.
+- **Fleet Health pie chart**: checked `Pie name="adm-fleet-health"` for the same issue and confirmed it does *not* leak — Recharts sources each pie slice's tooltip label from the slice's own `name` field in `fleetHealthData`, not from the `<Pie name>` prop, so no fix was needed there.
+
+Both fixes are additive/opt-in on `ChartTip` (`unit`/`valueFormatter` both default to unset), so neither one affects the other two charts sharing that component.
+
+---
+
+## 9. Change control
 
 | Version | Date | Notes |
 |---------|------|--------|
 | 0.1.0 | 2026-08-12 | Initial draft, documenting FIX-01 (rentalPlans naming mismatch, committed), FIX-02 (StrictMode duplicate equipment fetch via AbortController), and FIX-03 (Admin Dashboard booking-shape crash) — all found and fixed while validating the admin login/dashboard flow against the real backend on the `122-fix-error-admin-login` branch. |
+| 0.2.0 | 2026-08-13 | Added §8: CHANGE-01 (removed the unused Pricing tab and its `PricingRule` data layer) and CHANGE-02 (fixed two leaked internal `adm-*` chart labels — Utilization and Revenue tooltips on the Overview tab — and confirmed the Fleet Health pie chart wasn't affected). Both made on the `142-fix-admin-login-web-portal-utilization` branch; neither is API-mode specific. |
