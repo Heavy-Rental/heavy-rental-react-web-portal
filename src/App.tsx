@@ -382,19 +382,14 @@ function CustomerPortal({
   const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
   const [siteAddressPrompted, setSiteAddressPrompted] = useState(false);
 
-  const equipmentRes = useApiResource(
-    () =>
-      equipmentApi.list(
-        sharedStartDate && sharedEndDate
-          ? { startDate: sharedStartDate, endDate: sharedEndDate }
-          : undefined,
-      ),
-    [sharedStartDate, sharedEndDate],
-  );
+const equipmentRes = useApiResource(
+  (signal) => equipmentApi.list(sharedStartDate && sharedEndDate ? { startDate: sharedStartDate, endDate: sharedEndDate } : undefined, signal),
+  [sharedStartDate, sharedEndDate],
+);
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
-  const depotsRes = useApiResource(() => depotApi.list());
+  const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const depots = depotsRes.data ?? [];
-  const rentalPlansRes = useApiResource(() => rentalPlanApi.list());
+  const rentalPlansRes = useApiResource((signal) => rentalPlanApi.list(signal));
   const rentalPlans = useMemo(
     () =>
       rentalPlansRes.status === "success" && userId !== null
@@ -1619,11 +1614,11 @@ function EmployeeDashboard({
   onHome: () => void;
 }) {
   const [tab, setTab] = useState<"dashboard" | "assets">("dashboard");
-  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
-  const monthlyUtilRes = useApiResource(() => monthlyUtilizationApi.list());
+  const monthlyUtilRes = useApiResource((signal) => monthlyUtilizationApi.list(signal));
   const monthlyUtilization = monthlyUtilRes.data ?? [];
-  const statusDistRes = useApiResource(() => statusDistributionApi.list());
+  const statusDistRes = useApiResource((signal) => statusDistributionApi.list(signal));
   const statusDist = statusDistRes.data ?? [];
   const categories = Array.from(new Set(equipment.map((e) => e.category)));
 
@@ -2527,7 +2522,7 @@ export default function App() {
     initialSession.notice,
   );
   const expiryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
 
   const scheduleExpiry = (session: StoredSession) => {

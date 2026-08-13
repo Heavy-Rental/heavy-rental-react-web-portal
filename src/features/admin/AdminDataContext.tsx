@@ -24,6 +24,7 @@ import {
   rentalPlanApi,
   bookingApi,
   monthlyUtilizationApi,
+  type CreateBookingResponse,
 } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
 import { deriveAssetRecord, type AssetRecord } from "../../app/assetRecord";
@@ -115,16 +116,31 @@ export interface PricingRule {
   locked: boolean;
 }
 
+// Real backend's GET /bookings returns a flat, denormalized shape (no rentalPlanId/
+// depotId/equipmentIds join keys — customer/asset info is inlined instead). This guard
+// lets the builders below branch per-item so both this API-mode shape and the mock's
+// normalized Booking shape produce the same UserRow/BookingRow view-models.
+function isApiBookingRecord(
+  b: ApiBooking | CreateBookingResponse,
+): b is CreateBookingResponse {
+  return "bookingId" in b;
+}
+
 function buildUserRows(
   apiUsers: ApiUser[],
   rentalPlans: ApiRentalPlan[],
-  bookings: ApiBooking[],
+  bookings: (ApiBooking | CreateBookingResponse)[],
 ): UserRow[] {
   return apiUsers.map((u) => {
     const planIds = new Set(
       rentalPlans.filter((p) => p.userId === u.id).map((p) => p.id),
     );
-    const userBookings = bookings.filter((b) => planIds.has(b.rentalPlanId));
+    // No rentalPlanId to join on for the flat API-mode shape — approximate via
+    // customerName === user.name instead (fragile on duplicate display names, but
+    // it's the only link the real backend's booking response actually carries).
+    const userBookings = bookings.filter((b) =>
+      isApiBookingRecord(b) ? b.customerName === u.name : planIds.has(b.rentalPlanId),
+    );
     const hasActivePlan = rentalPlans.some(
       (p) => p.userId === u.id && p.status === "active",
     );
@@ -141,7 +157,7 @@ function buildUserRows(
 }
 
 function buildBookingRows(
-  apiBookings: ApiBooking[],
+  apiBookings: (ApiBooking | CreateBookingResponse)[],
   rentalPlans: ApiRentalPlan[],
   apiUsers: ApiUser[],
   equipment: Equipment[],
@@ -154,10 +170,32 @@ function buildBookingRows(
       year: "numeric",
     });
   return apiBookings.map((b) => {
-    const plan = rentalPlans.find((p) => p.id === b.rentalPlanId);
-    const user = plan ? apiUsers.find((u) => u.id === plan.userId) : undefined;
     const start = new Date(`${b.startDate}T00:00:00`);
     const end = new Date(`${b.endDate}T00:00:00`);
+    const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+    const dates = `${fmt(b.startDate)} – ${fmt(b.endDate)}`;
+
+    if (isApiBookingRecord(b)) {
+      // Flat API-mode shape: customer/asset are already inlined, no joins needed.
+      // depot and paidStatus have no real equivalent here — approximated from
+      // siteAddress and remainingBalance respectively.
+      return {
+        id: `RNT-${String(b.bookingId).padStart(4, "0")}`,
+        apiId: b.bookingId,
+        customer: b.customerName,
+        equipment: b.assetName,
+        depot: b.siteAddress,
+        dates,
+        days,
+        total: b.totalAmount,
+        deposit: b.depositAmount,
+        status: b.bookingStatus as BookingStatus,
+        paidStatus: b.remainingBalance === 0 ? "FULL" : b.depositAmount > 0 ? "DEPOSIT" : "UNPAID",
+      };
+    }
+
+    const plan = rentalPlans.find((p) => p.id === b.rentalPlanId);
+    const user = plan ? apiUsers.find((u) => u.id === plan.userId) : undefined;
     return {
       id: `RNT-${String(b.id).padStart(4, "0")}`,
       apiId: b.id,
@@ -170,8 +208,8 @@ function buildBookingRows(
         .join(", "),
       depot:
         depots.find((d) => d.id === b.depotId)?.name ?? `Depot #${b.depotId}`,
-      dates: `${fmt(b.startDate)} – ${fmt(b.endDate)}`,
-      days: Math.round((end.getTime() - start.getTime()) / 86400000) + 1,
+      dates,
+      days,
       total: b.totalAmount,
       deposit: b.depositAmount,
       status: b.status,
@@ -417,13 +455,13 @@ interface AdminDataValue {
 const AdminDataContext = createContext<AdminDataValue | null>(null);
 
 export function AdminDataProvider({ children }: { children: ReactNode }) {
-  const equipmentRes = useApiResource(() => equipmentApi.list());
+  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
-  const depotsRes = useApiResource(() => depotApi.list());
-  const usersRes = useApiResource(() => userApi.list());
-  const bookingsRes = useApiResource(() => bookingApi.list());
-  const rentalPlansRes = useApiResource(() => rentalPlanApi.list());
-  const monthlyUtilRes = useApiResource(() => monthlyUtilizationApi.list());
+  const depotsRes = useApiResource((signal) => depotApi.list(signal));
+  const usersRes = useApiResource((signal) => userApi.list(signal));
+  const bookingsRes = useApiResource((signal) => bookingApi.list(signal));
+  const rentalPlansRes = useApiResource((signal) => rentalPlanApi.list(signal));
+  const monthlyUtilRes = useApiResource((signal) => monthlyUtilizationApi.list(signal));
   const monthlyUtilization = monthlyUtilRes.data ?? [];
   const categories = Array.from(new Set(equipment.map((e) => e.category)));
 
