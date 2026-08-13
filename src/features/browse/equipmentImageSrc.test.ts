@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { equipmentImageSrc } from "./CustomerOnboarding";
+import { equipmentImageSrc } from "./equipmentImageSrc";
 
 describe("equipmentImageSrc", () => {
   it("returns null for empty or unknown placeholders", () => {

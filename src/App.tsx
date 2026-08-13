@@ -34,7 +34,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { CustomerOnboarding, equipmentImageSrc } from "./features/browse/CustomerOnboarding";
+import { CustomerOnboarding } from "./features/browse/CustomerOnboarding";
+import { equipmentImageSrc } from "./features/browse/equipmentImageSrc";
 import { AdminDashboard } from "./features/admin/AdminDashboard";
 import { AssetFormModal } from "./features/admin/assets/AssetFormModal";
 import { SafetyPage } from "./app/SafetyPage";
