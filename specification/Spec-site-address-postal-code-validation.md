@@ -68,8 +68,9 @@ The `sitePostalCode` prop was dropped from `CartDrawer`'s props entirely, and it
 
 ## 4. Manual Validation Checklist
 
-- [ ] Type an address with no trailing 6-digit number (e.g. `"20 Jurong Port Road"`) — Postal Code field stays empty, and clicking Save shows the "Address must end with a 6-digit postal code..." error.
-- [ ] Type an address ending in 6 digits (e.g. `"20 Jurong Port Road, 619094"`) — Postal Code field auto-populates with `619094` and Save succeeds.
+- [ ] Type an address with no postal code (e.g. `"20 Jurong Port Road"`) — after a short pause, Postal Code fills with `619094` from OneMap and Save succeeds.
+- [ ] Type an address containing 6 digits (e.g. `"20 Jurong Port Road, 619094"`) — Postal Code fills immediately from the typed digits, without waiting on OneMap.
+- [ ] Type a non-Singapore / unmatched address — Postal Code stays empty and Save explains that no postal code was found.
 - [ ] Confirm the Postal Code input cannot be typed into directly (read-only).
 - [ ] Confirm leaving the address blank still shows "Site address is required." before the postal-code check runs.
 - [ ] Open the cart drawer after saving a valid address — confirm the delivery-site line shows the full address once, with no duplicated or re-appended postal code.
@@ -78,5 +79,8 @@ The `sitePostalCode` prop was dropped from `CartDrawer`'s props entirely, and it
 ## 5. Change Log
 
 - 2026-08-12: Postal code auto-derivation and updated validation added to `SiteAddressModal.tsx` (`derivePostalCode()`, read-only Postal Code field, updated error/help copy). Commit `130cd65`.
+- 2026-08-13: Specs-banner Select no longer opens Delivery Details. `CartDrawer` **Proceed to Deposit** is disabled until `siteAddress` is saved; the **Add** control is highlighted (same amber ring as the date bar) when the rental plan has items and no address yet.
 - 2026-08-13: Removed the now-duplicate postal code from `CartDrawer.tsx`'s delivery-site summary line (previously `${siteAddress}, ${sitePostalCode}`, now `siteAddress` alone) and dropped the unused `sitePostalCode` prop. Commit `80d4077`.
 - 2026-08-13: Created this document to capture both changes above; see `Spec-equipment-card-detail-changes.md` and `Spec-browse-equipment-date-validation.md` for the sibling docs this follows in structure.
+- 2026-08-13: Delivery Details now looks up a Singapore 6-digit postal code from the typed address via OneMap (`lookupSingaporePostal` in `src/lib/sgPostal.ts`). A 6-digit code already in the address still wins; otherwise the first OneMap hit's `POSTAL` fills the read-only field. Save no longer requires the address to end with the postal code.
+- 2026-08-13: Automated coverage — `src/lib/sgPostal.test.ts` and `src/features/checkout/SiteAddressModal.test.tsx` (typed postal, mocked OneMap lookup, save blocked on miss). Run with `npm test`.

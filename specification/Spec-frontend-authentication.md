@@ -71,7 +71,7 @@ As a customer, employee, or admin, once I log in I stay signed in — including 
 
 ## Dependencies & Assumptions
 
-- No new npm dependency — uses native `crypto.randomUUID()` and `sessionStorage`.
+- Session helpers still use native `crypto.randomUUID()` and `sessionStorage`. The post-login overlay uses `@mui/material` (`Backdrop`, `CircularProgress`). Unit tests live in `src/app/auth.test.ts` and `src/components/AuthLoadingOverlay.test.tsx` (`npm test`). The 500ms minimum overlay time is still a manual check.
 - Assumes `Spec-frontend-api-integration.md`'s login-to-`userId` resolution remains the source of truth for *who* logs in; this spec only adds *what happens after* that resolution succeeds.
 - Assumes the mock server continues to have zero authentication, per `Spec-mock-api-server.md`.
 - Assumes a single-tab usage model for session continuity — `sessionStorage` does not synchronize the session across multiple tabs/windows.
@@ -125,4 +125,5 @@ No test framework exists in this repo (`Spec-project-environment.md` FR-012), so
 ## Change Log
 
 - 2026-08-04: Initial specification written, adding a client-simulated bearer-token session (3600s TTL, `sessionStorage`-persisted, proactive-timer + on-mount expiry detection, `Authorization` header injection in `src/app/api.ts`) on top of the existing demo-account login gate in `src/App.tsx` (`src/app/auth.ts` new; `src/app/types.ts`, `src/app/api.ts`, `src/App.tsx` modified). Amends `Spec-frontend-api-integration.md`'s authentication Out-of-Scope note (see that spec's own Change Log) and confirms the mock API (`Spec-mock-api-server.md`) remains fully unauthenticated.
-- 2026-08-04: Added FR-010 — `ACCOUNTS` in `src/App.tsx` now carries a fixed demo password per account, and `LoginModal.handleSubmit` compares the entered password against it (single generic "Invalid email or password." error on any mismatch), superseding the prior "Password validation or hashing: still none" Out-of-Scope line. Still a plaintext, fully client-side check — no hashing, no backend involvement.
+- 2026-08-04: Added FR-010 — `ACCOUNTS` in `App.tsx` now carries a fixed demo password per account, and `LoginModal.handleSubmit` compares the entered password against it (single generic "Invalid email or password." error on any mismatch), superseding the prior "Password validation or hashing: still none" Out-of-Scope line. Still a plaintext, fully client-side check — no hashing, no backend involvement.
+- 2026-08-13: After a successful password match, a Material 3 `Backdrop` + `CircularProgress` (`src/components/AuthLoadingOverlay.tsx`, `@mui/material`) covers the viewport until the session is written. Minimum overlay time is 500ms so mock login is visible. Session restore on reload does not show the overlay. Overlay render and `sessionStorage` persist/restore/expiry are covered by `npm test`.
