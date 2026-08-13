@@ -1,0 +1,113 @@
+# Feature Specification: Rental Plan Cart & Checkout Flow (Real Backend)
+
+**Feature Area**: heavy-rental-react-web-portal
+**Created**: 2026-08-13
+**Status**: Planned — not started
+**Input**: A design conversation establishing that the current real-backend checkout (`createDepositBooking()` booking directly from ephemeral client cart state) should be replaced with a persisted `RentalPlan` lifecycle: `DRAFT` → `QUOTED` → `CONVERTED`, with a client-side estimate shown during cart-building and a Haystack-backed `quote` shown at checkout.
+
+**Revised 2026-08-13** against `api-contract-for-frontend.md` (this folder), the authoritative contract handed off from the Spring Boot side. That document explicitly states it wins over this one wherever they disagree — several assumptions below have been corrected accordingly rather than left as "unconfirmed." See inline notes and the Change Log.
+
+## Overview
+
+Today, `npm run dev:api`'s checkout path books directly from `CartContext`'s in-memory cart ([App.tsx:1453-1460](../../src/App.tsx#L1453-L1460)) — no `RentalPlan` is created or read during real-backend checkout, `CartContext` has no persistence (`Spec-rest-api-reference.md` traced this: cart is lost on logout, reload, or navigating away from the Customer Portal), and `POST /api/rentalPlans/{id}/quote` / the item-level plan routes are documented as backend-live but frontend-unwired (`Spec-rest-api-reference.md` §2.4).
+
+This feature replaces that with a persisted cart: adding an item to cart creates (or reuses) a `RentalPlan` server-side and adds a `RentalPlanItem`, a pure client-side calculation shows a fast non-authoritative price (**not** a backend call — corrected below), "Get Quote" fetches a Haystack-backed authoritative price and moves the plan to `QUOTED`, and "Proceed to Payment" converts the plan into a real `Booking`. This is a substantially different flow from what `Spec-stripe-payment-checkout.md` built — that spec's `onBeginPayment`/`createDepositBooking()` call site is what PR 3 below rewires.
+
+## Clarifications
+
+### Session 2026-08-13
+
+- Q: How many active (non-`CONVERTED`) rental plans can a customer have at once? → A: Exactly one, enforced server-side (`SPEC-rental-plan-quote.md` BR-06, per the contract §7). "Active" means not yet `CONVERTED` — a plan is active in `DRAFT` or `QUOTED`.
+- Q: What happens on "add to cart" if the customer has no active plan yet? → A: A new `RentalPlan` is created (`status = DRAFT`), then the item is added to it.
+- Q: What's the actual wire format for `status`? → **Corrected.** Uppercase enum names — `"DRAFT" | "SAVED" | "QUOTED" | "CONVERTED"` — confirmed via `api-contract-for-frontend.md` §1 (`Enum.name()`, no casing transform anywhere in the codebase). Earlier drafts of this document used lowercase as documentation shorthand; treat every status value below as the uppercase wire form.
+- Q: What price is shown while building the cart (pre-quote)? → **Corrected — there is no backend endpoint for this.** Per the contract §8: *"There is no `POST /api/pricing/estimate` and none is planned."* It's a pure client-side calculation: `price = asset.baseDailyRate × days`, with `days` inclusive of both endpoints (`(end − start) + 1`). This is already exactly what `daysBetweenISO()` (`src/lib/dateFormat.ts:35-41`) computes — no new date-math helper needed, and no backend dependency for this step at all. This replaces the `POST /api/pricing/estimate` proposal in `Spec-rest-api-reference.md` §8.2, which is now contradicted by the authoritative contract and needs correcting separately.
+- Q: What happens when "Get Quote" is clicked? → A: `POST /api/rentalPlans/{id}/quote` is called (reaches Haystack, per `Spec-rest-api-reference.md` §8.1). On success the plan's status becomes `QUOTED`, `totalAmount` becomes the authoritative price, and — confirmed by the contract §4 — `updatedAt` reliably refreshes as part of this call succeeding (today it doesn't; that's part of what's being fixed).
+- Q: The `PlanStatus` enum has four values (`DRAFT`, `SAVED`, `QUOTED`, `CONVERTED`) but the design only uses three — why not remove `SAVED`? → A: The enum class is not being touched. `SAVED` stays defined but unused; the contract confirms it will never appear on a live plan but shouldn't be treated as invalid input if seen.
+- Q: How is 24-hour quote validity tracked without adding a new field? → A: `RentalPlan.updatedAt` (an existing field, distinct from `createdAt`) is repurposed as the quote timestamp. `createdAt` is untouched and keeps its normal meaning (true row-creation time). Checkout is gated on `status == QUOTED AND now - updatedAt <= 24h`. If a quote is stale, the customer must click "Get Quote" again — `updatedAt` refreshes, `status` stays `QUOTED`.
+- Q: Does a `RentalPlanItem` carry its own per-item date range, the way cart items do today? → **Confirmed 2026-08-13: no.** `startDate`/`endDate` live once on the *plan*, not per item — items only carry `assetId`/`assetName`/`dailyRate`/`subtotal`. **Still open (tracked as B11 below)**: only the *mutability* question remains — the contract doesn't show the request body for `POST /api/rentalPlans` or `POST .../items`, so it's unconfirmed whether the plan's date range is fixed at creation (no update route exists anywhere in this contract) or can change later some other way. This has a real UX consequence for PR 1 if it's fixed at creation.
+- Q: What happens if the customer adds or removes an item after the plan is already `QUOTED`? → **Corrected — this is a bigger behavior change than assumed.** Per the contract §3, item mutation on a `QUOTED` plan is currently a hard `409` today (mutation is rejected outright). The planned change makes it *succeed*: the item is added/removed, `status` reverts to `DRAFT`, `totalAmount` becomes `null`, and `updatedAt` refreshes — all reflected in that same call's response, no follow-up `GET` needed.
+- Q: What happens when "Proceed to Payment" is clicked? → A: The plan converts to a `Booking` via `POST /api/bookings` with `rentalPlanId` (contract §5) — confirmed: `items`/`startDate`/`endDate` are optional and silently ignored when `rentalPlanId` is present (derived server-side from the plan instead), `siteAddress` stays required, the response `totalAmount` is guaranteed to equal the plan's quoted amount exactly (no independent recomputation), the new `Booking` starts at `PENDING_DEPOSIT`, and the plan's `status` becomes `CONVERTED` in the same transaction.
+- Q: What happens after the deposit payment succeeds? → A: `Booking.status` moves to `PENDING_CONFIRMED`. **Corrected 2026-08-13: this already works.** `Spec-stripe-payment-checkout.md` documented this as a known backend gap at the time it was written, but the backend fixed it long ago — it's a non-issue today, not something this plan or PR 3 needs to wait on. `Spec-stripe-payment-checkout.md` itself is now stale on this point and needs a matching correction (flagged, not done here).
+- Q: Does the "checkout" step (before "Proceed to Payment") need its own no-commit pricing call? → A: Effectively already resolved by this design — `quote` (a prior, separate step) already is the no-commit preview; the checkout screen just displays the plan's already-quoted `totalAmount`, and only "Proceed to Payment" commits by calling `createBooking`. Spring Boot's own open question (B4 below) should be treated as most likely satisfied by this design, pending their confirmation.
+
+## 2. Backend (Spring Boot) dependencies
+
+`api-contract-for-frontend.md` resolved most of what was previously unconfirmed here — its numbering below follows the original B-item list from this plan's first draft, with status updated per the contract rather than left as speculation.
+
+### Confirmed by the contract (2026-08-13)
+
+- **B1** — `POST /api/bookings` + `rentalPlanId`: ownership + `status == QUOTED` required, items/dates ignored if sent, `siteAddress` still required, pricing derived from the plan, plan flips to `CONVERTED` in the same transaction. Full contract now known (§5 there).
+- **B2** — Day-count fix: the target formula is inclusive (`(end − start) + 1`), matching `DefaultPricingClient` (already used for item pricing and quotes today). This is almost certainly reconciling the legacy direct-booking path's exclusive `ChronoUnit.DAYS.between` (no `+1`, per the original backend index) against that. No frontend action needed either way — `daysBetweenISO()` is already inclusive and needs no change.
+- **B3** — 24h quote-validity check, now with a precise error taxonomy the original plan didn't have: `quote_expired` (409, was `QUOTED`, now stale) is a **distinct** code from `quote_not_ready` (409, `rentalPlanId` given but never quoted at all) and the pre-existing generic `conflict` (409, concurrent double-submit). PR 3 needs to branch on the `error` field, not bare HTTP status.
+- **B4** (Spring Boot's own open question) — whether checkout needs a no-commit preview endpoint. Unchanged from this plan's original position: `quote` already serves that purpose, so this is most likely moot — still theirs to confirm.
+- **B5** — **Resolved, opposite of what was expected.** No `/api/pricing/estimate` endpoint exists or is planned (contract §8). Cart pricing is pure client-side math (see Clarifications above). `Spec-rest-api-reference.md` §8.2 is now contradicted by this and needs correcting/removing — not done in this pass, flagged for a separate update.
+- **B7** — Confirmed as a real, current bug: the contract states quoting "today... doesn't [refresh `updatedAt`]" (§4), and confirms it will after this change.
+- **B8** — Confirmed resolved. Full `RentalPlanResponse` shape now known:
+  ```json
+  {
+    "id": 55, "startDate": "2026-09-01", "endDate": "2026-09-05",
+    "siteAddress": "20 Jurong Port Road, 619094", "status": "QUOTED",
+    "totalAmount": 2250.00,
+    "items": [{ "id": 101, "assetId": 4, "assetName": "CAT 320 Excavator", "dailyRate": 450.00, "subtotal": 2250.00 }],
+    "updatedAt": "2026-08-13T10:30:00", "createdAt": "2026-08-13T09:15:00"
+  }
+  ```
+  Returned by every rental-plan route this workflow touches. `totalAmount` is `null` whenever `status != "QUOTED"`, including immediately after an item mutation reverts a `QUOTED` plan back to `DRAFT` — PR 1/2 UI must handle that null, not treat it as a loading/error state.
+- **B9** — Confirmed: no server-side "active plan" filter exists or is planned (contract §7). Frontend must call `GET /api/rentalPlans` and filter client-side for `status != "CONVERTED"`.
+- **B10** — Confirmed, and confirmed as a bigger change than originally assumed: today, item mutation on a `QUOTED` plan is a hard `409` (rejected outright), not silently allowed-through. The planned change makes it succeed with the revert-to-`DRAFT` behavior described above.
+
+### Resolved — not actually a gap
+
+- **B6** — `Booking.status → PENDING_CONFIRMED` on successful deposit payment. **Corrected 2026-08-13: already fixed by the backend, long before this conversation.** `Spec-stripe-payment-checkout.md`'s known-gaps list is stale on this point and needs its own correction (flagged, not done here). Nothing in PR 3 needs to wait on this.
+
+### Still open
+
+- **B11** (new) — *Not* whether rental dates live at the plan level (confirmed above, in Clarifications) — only how/when that date range gets set: fixed at `POST /api/rentalPlans` creation and immutable thereafter (no update route exists anywhere in this contract), or changeable some other way. Matters directly for PR 1: if immutable-after-creation, the customer's *first* "add to cart" action pins the rental date range for everything subsequently added to that plan — a real UX change from today's cart, where each item can carry its own date range until checkout normalizes them.
+- **B12** (new, minor) — `POST /api/bookings`'s checkout request separately carries `siteAddress` even when `rentalPlanId` is given, and the plan's own `RentalPlanResponse` also carries `siteAddress`. Unclear whether checkout's value overrides the plan's, must match it, or the plan's is simply unused at conversion time. Low priority; worth a one-line confirmation.
+
+## 3. Execution plan — three web-portal PRs
+
+Recommended over one combined PR: PR 1 no longer has *any* new-backend dependency (B5 turned out to not exist — pricing is pure client-side math) and otherwise uses backend routes that are already live today (`Spec-rest-api-reference.md` §2.4) — it can ship and be tested independently of Spring Boot's PR, pending only B11's answer. PRs 2 and 3 are both tightly coupled to that backend PR and to each other (quote-validity and conversion are two halves of one mechanism), so they stay together as sequential-but-linked units rather than being split further.
+
+### PR 1 — Cart persistence + client-side estimate pricing
+
+- Add `rentalPlanApi.get()`, `.addItem()`, `.removeItem()` to `src/app/api.ts`, wiring the already-live `POST /api/rentalPlans`, `POST /api/rentalPlans/{id}/items`, `DELETE /api/rentalPlans/{id}/items/{itemId}` routes (currently unwired per §2.4 of `Spec-rest-api-reference.md`).
+- **No new API client method for pricing** — compute `baseDailyRate × daysBetweenISO(startDate, endDate)` client-side, reusing the existing helper. Display as explicitly non-authoritative.
+- Rework "add to cart": fetch `GET /api/rentalPlans`, filter client-side for the caller's plan with `status != "CONVERTED"` (B9); create one if none exists; add the item via the items endpoint; use that call's own response (which already reflects updated `status`/`totalAmount`/`items`, per B10) rather than issuing a follow-up `GET`.
+- Rework "remove from cart" the same way, via the item-delete endpoint.
+- Replace (or significantly rework) `CartContext`'s pure in-memory model, since the source of truth for cart contents becomes the persisted `RentalPlan`.
+- **Blocked on B11** before finalizing: whether the cart can still offer per-item dates (collapsing to one shared range only at the moment the plan is first created) or must ask for one shared date range up front, before the first item can be added at all.
+
+### PR 2 — "Get Quote" wiring
+
+- Wire "Get Quote" to `POST /api/rentalPlans/{id}/quote`; its response already carries the authoritative `totalAmount`, `status: "QUOTED"`, and a freshly-refreshed `updatedAt` (B7, confirmed fixed) — no separate read needed to reflect the new state.
+- Add 24h-validity UI computed directly off the plan response's `updatedAt` (B8, resolved) — if stale, show "quote expired — get a new one" and disable checkout until re-quoted.
+- Handle `totalAmount: null` gracefully wherever the plan isn't currently `QUOTED` (including right after an item-mutation revert, B10) — this is a normal state, not an error.
+
+### PR 3 — Checkout & payment conversion rewire
+
+- Replace `createDepositBooking()`'s current direct-cart booking call ([DepositCheckout.tsx](../../src/features/checkout/DepositCheckout.tsx), [App.tsx:1453-1460](../../src/App.tsx#L1453-L1460)) with `{ rentalPlanId, siteAddress, deliveryNotes }` (contract §5) — no `items`/dates.
+- Branch UI on the response's `error` field, not bare HTTP status: `quote_not_ready` (never quoted — route to "Get Quote"), `quote_expired` (was quoted, now stale — route to "Get Quote" with a specific "your quote expired" message, as originally planned), `conflict` (rare double-submit race — disable the button / brief retry message, not a generic error toast).
+- `ConfirmationScreen.tsx`'s deliberate independence from booking status (`Spec-stripe-payment-checkout.md` FR-008) was built around a backend gap that no longer exists (B6, resolved) — worth revisiting now, not waiting on anything, since the status update it was designed around already happens.
+- Depends on B1, B2, B3 (all confirmed in scope). No remaining dependency on B6.
+
+## Dependencies & Assumptions
+
+- Treats `api-contract-for-frontend.md` (2026-08-13) as authoritative per its own stated precedence, superseding this document's and `Spec-rest-api-reference.md`'s earlier field-level assumptions wherever they disagreed.
+- Assumes B1-B3, B7-B10 are genuinely covered by Spring Boot's single PR (the contract describes them as the target behavior of that work) — B11, B12 are not covered by anything seen so far and still need raising separately. B6 is resolved (already fixed, unrelated to this PR).
+- Assumes `POST /api/bookings`'s existing `rentalPlanId` field is the intended (and now fully specified) conversion mechanism — confirmed, not just assumed, per contract §5.
+- Assumes the item-level plan routes (`POST/DELETE .../items`) already exist and work today per `Spec-rest-api-reference.md` §2.4, independent of this contract's changes to their behavior when `QUOTED`.
+
+## Out of Scope
+
+- Mock-mode (`npm run dev:mock`/`dev`) checkout — unaffected, continues creating a `RentalPlan` + `Booking` in one shot at checkout as it does today.
+- Deciding B4 unilaterally — flagged as likely-resolved-by-design but left for Spring Boot to confirm, not decided here.
+- Fixing the day-count mismatch (B2) from the frontend side — backend-owned; `daysBetweenISO()` already inclusive, no frontend change needed. (B6 was a candidate for this line but is resolved — already fixed, nothing to do.)
+- Correcting `Spec-rest-api-reference.md` §8.2's now-contradicted `/api/pricing/estimate` proposal — flagged, not done as part of this revision.
+
+## Change Log
+
+- 2026-08-13: **Correction: B6 was never actually a gap** — the backend fixed `Booking.status → PENDING_CONFIRMED` long before this conversation; `Spec-stripe-payment-checkout.md`'s known-gaps list is stale on this point (flagged for its own correction, not done here). Removed B6 from PR 3's dependencies and reframed its `ConfirmationScreen.tsx` note from "once this lands" to "worth doing now."
+- 2026-08-13: Confirmed rental dates live once at the plan level, not per item — narrowed B11 to only the remaining mutability question (how/when the date range is set), since the location question is now settled.
+- 2026-08-13: Initial plan written. Establishes the `DRAFT`/`QUOTED`/`CONVERTED` lifecycle backed by `updatedAt`-as-`quotedAt`, cross-references Spring Boot's stated PR scope (B1-B4) against this workflow's actual requirements, flags additional backend items not in their stated scope (B5-B10), and sequences the web-portal side into three PRs by dependency rather than one combined PR.
+- 2026-08-13: Moved to `specification/features/`; relative links to `src/` updated for the new depth. Revised substantially against `api-contract-for-frontend.md`, added to this folder from the Spring Boot side: corrected status casing to uppercase throughout; reversed B5 (no `/api/pricing/estimate` endpoint exists or is planned — cart pricing is pure client-side math using the already-inclusive `daysBetweenISO()`); confirmed B7-B10 with full detail (including that item-mutation-on-`QUOTED` is currently a hard `409`, not silently allowed, and is being changed to a revert-to-`DRAFT` response); added the precise `quote_not_ready`/`quote_expired`/`conflict` error-code taxonomy for PR 3; discovered rental dates live at the plan level, not per item, raising new open item B11; added minor open item B12 on `siteAddress` duplication between the plan and the checkout request. B6 remains open and uncovered by either source.
