@@ -49,6 +49,18 @@ This document is intended to be a living change log for the browse flow, especia
 - Past dates should appear visually disabled/greyed out in the calendar and should not be selectable.
 - The restriction should apply in both the browse equipment flow and the equipment detail flow where the shared date picker is used.
 
+### 3.2.1 Instant Quote → DateRangeBar
+
+After **Add All to Rental Plan** on the Instant Quotation screen, `CustomerOnboarding` resolves a window from the quote DTO and passes it through the existing `onDone` callback. `CustomerPortal` seeds the same `sharedStartDate` / `sharedEndDate` state the `DateRangeBar` already reads (`App.tsx` ~1326). DateRangeBar itself is unchanged.
+
+Resolution uses only:
+
+1. `tentativeStartDate` + `tentativeEndDate` when both are valid ISO `YYYY-MM-DD` and start ≤ end
+2. else `tentativeStartDate` + `days` (end = start + days − 1, inclusive)
+3. else `days` alone (start = today, end = today + days − 1)
+
+A start in the past is clamped to today, keeping the same duration. Know / Browse onboarding still leave the bar empty. After Add All, recommended machines appear in the specs banner and are added to the Rental Plan with those quote dates (`applySpecsRecsToPlan`). Delivery Details is not opened. Each card **Select** / **Selected** still toggles that machine (`toggleSpecsRecInPlan`). Thumbnails use quote `equipment.img` via `equipmentImageSrc`. Proceed to Deposit stays disabled until a delivery address is saved; the cart **Add** address control is highlighted while the plan has items and no address. This path does **not** set `pendingAutoAdd`. If the quote has no usable dates, the cart stays empty, the bar opens, and Select stays disabled until the user sets dates.
+
 ### 3.3 Cart and checkout
 
 - If multiple items are added to the cart, they must be treated as one rental window.
@@ -69,6 +81,7 @@ This document is intended to be a living change log for the browse flow, especia
 4. Checkout uses a normalized booking window based on the cart contents.
 5. The UI provides a clear inline error when date/cart data is invalid.
 6. The page shows loading and error states correctly when the backend is slow or unavailable.
+7. After Add All to Rental Plan, when the quote has `tentativeStartDate` / `tentativeEndDate` (or `days`), the shared date bar shows that window without the user picking dates again, and every specs-banner Select is enabled so the customer can add machines individually.
 
 ## 5. Manual Validation Checklist
 
@@ -80,6 +93,9 @@ Use this checklist during local verification.
 - [ ] Confirm equipment loads successfully.
 - [ ] Confirm only the approved equipment set is displayed.
 - [ ] Verify that past dates are greyed out and cannot be selected in the shared date picker.
+- [ ] From Instant Quote, click Add All to Rental Plan and confirm the date bar is prefilled from `tentativeStartDate` / `tentativeEndDate` (mock: 2026-09-01 – 2026-09-21).
+- [ ] Confirm every specs-banner Select is enabled and clicking one adds only that machine.
+- [ ] Confirm Know / Browse still leave the date bar empty.
 - [ ] Select a shared start and end date.
 - [ ] Add one or more equipment items to the cart.
 - [ ] Confirm the cart reflects the shared date range.
@@ -102,3 +118,9 @@ Use this section to record any change made during validation or implementation.
 - If a behavior is found to be inaccurate or incomplete compared with the current UI, add a note here with the date, symptom, and fix.
 - This file should be treated as the authoritative lightweight spec for the browse/date validation work while the broader product/API specs remain the reference for end-to-end business rules.
 - 2026-08-09: `DateRangeBar.tsx` computes `today`/`todayISO` in two separate places — once inside `handleDayClick`, once in the component's render scope. Cosmetic today (both derive `new Date()` the same way), but a future change to one without the other would desync the past-date-disabling logic from the click handler's own date check. Worth consolidating into a single computed value next time this file is touched.
+- 2026-08-13: After Add All to Rental Plan, Instant Quote `tentativeStartDate` / `tentativeEndDate` / `days` seed the existing shared date-bar state (`resolveQuoteDates` → optional `onDone` argument → `setSharedStartDate` / `setSharedEndDate`). DateRangeBar and `handleSharedEndDateSelected` are unchanged.
+- 2026-08-13: Add All no longer queues `pendingAutoAdd`. Dates seed the bar so every specs-banner Select is enabled; the customer adds individual machines via existing `addToCart`.
+- 2026-08-13: Specs-banner Select toggles Rental Plan membership without opening Delivery Details. Quote `equipment.img` drives the card thumbnail. Cart **Proceed to Deposit** is disabled until a delivery address is saved; **Add** is highlighted when the plan has items and no address.
+- 2026-08-13: Add All to Rental Plan seeds quote dates and puts every recommended match into the Rental Plan (`applySpecsRecsToPlan`). Delivery Details is not opened; the customer can still toggle cards off. If quote dates are missing, the cart stays empty until dates are set.
+- 2026-08-13: After Add All (`onboardingMode === "specs"`), equipment-card and detail **Select** still use `addToCart` but skip the Delivery Details modal. Know / Browse still open it on first add.
+- 2026-08-13: Automated coverage — `src/lib/dateFormat.test.ts` (`resolveQuoteDates`), `src/features/checkout/specsPlan.test.ts` (`buildQuoteCartItems`, `shouldPromptDeliveryDetails`, `toggleEquipmentInPlan`), `src/features/browse/equipmentImageSrc.test.ts`, `src/features/checkout/CartDrawer.test.tsx`. Run with `npm test`.

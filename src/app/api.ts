@@ -171,6 +171,142 @@ export const paymentApi = {
     }),
 };
 
+// ─── Project-spec recommendations ──────────────────────────────────────────
+// POST /api/recommendations/project-spec (Call 1). Two hops on the same path:
+//   JSON  — camelCase body matching Spring SubmitProjectSpecRequest
+//   multipart — camelCase form parts + optional file
+// Response is the Instant Quotation DTO (quote + ranked equipment items).
+
+export interface CreateProjectSpecRequest {
+  projectText: string;
+  startDate?: string;
+  endDate?: string;
+  userName?: string;
+  query?: string;
+  topK?: number;
+}
+
+export interface ProjectSpecNeed {
+  needId: string;
+  description: string;
+  equipmentHints: string[];
+  quantity: number;
+}
+
+export interface ProjectSpecBudget {
+  amount: number;
+  currency: string;
+  source: string;
+}
+
+// Nested fleet card on each recommendation item — the fields Instant Quotation
+// returns, not the full Equipment catalog record (min/max rates, ratings, etc.).
+// Live Spring omits / nulls weekly and may send a non-URL img placeholder.
+export type ProjectSpecEquipment = Omit<
+  Pick<
+    Equipment,
+    | "id"
+    | "name"
+    | "category"
+    | "baseDailyRate"
+    | "weekly"
+    | "capacity"
+    | "platformHeight"
+    | "purchaseYear"
+    | "location"
+    | "available"
+    | "img"
+    | "desc"
+    | "tags"
+  >,
+  "weekly"
+> & {
+  weekly?: number | null;
+};
+
+export interface ProjectSpecRecommendationItem {
+  rankOrder: number;
+  matchScore: number;
+  reason: string;
+  lineTotal: number;
+  quantity: number;
+  equipment: ProjectSpecEquipment;
+}
+
+export interface CreateProjectSpecResponse {
+  recommendationId: number;
+  ingestId: string;
+  userRequirementSummary: string;
+  tentativeStartDate?: string | null;
+  tentativeEndDate?: string | null;
+  needsSummary: ProjectSpecNeed[];
+  expectedBudget?: ProjectSpecBudget | null;
+  warnings: string[];
+  correlationId: string;
+  quoteRef: string;
+  confidenceScore: number;
+  days?: number | null;
+  estimatedTotal: number;
+  specSummary: string;
+  rationale: string;
+  items: ProjectSpecRecommendationItem[];
+}
+
+export interface CreateProjectSpecMultipartRequest {
+  file?: File;
+  projectText?: string;
+  startDate?: string;
+  endDate?: string;
+  userName?: string;
+  query?: string;
+  topK?: number;
+  correlationId?: string;
+}
+
+// Multipart hop of the same POST /recommendations/project-spec path.
+// Must not go through request() — that helper forces Content-Type: application/json
+// and would break the FormData boundary. Omit Content-Type so the browser sets it.
+async function postProjectSpecMultipart(
+  req: CreateProjectSpecMultipartRequest,
+  signal?: AbortSignal,
+): Promise<CreateProjectSpecResponse> {
+  const form = new FormData();
+  if (req.file) form.append("file", req.file);
+  if (req.projectText != null) form.append("projectText", req.projectText);
+  if (req.startDate != null) form.append("startDate", req.startDate);
+  if (req.endDate != null) form.append("endDate", req.endDate);
+  if (req.userName != null) form.append("userName", req.userName);
+  if (req.query != null) form.append("query", req.query);
+  if (req.topK != null) form.append("topK", String(req.topK));
+
+  const res = await fetch(`${BASE}/recommendations/project-spec`, {
+    method: "POST",
+    headers: {
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      "X-Correlation-Id": req.correlationId ?? crypto.randomUUID(),
+    },
+    body: form,
+    signal,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`POST /recommendations/project-spec failed: ${res.status}${detail ? ` — ${detail}` : ""}`);
+  }
+  const payload = (await res.json()) as CreateProjectSpecResponse | [CreateProjectSpecResponse];
+  return unwrapCreateResponse(payload);
+}
+
+export const recommendationApi = {
+  createFromProjectSpec: (req: CreateProjectSpecRequest, signal?: AbortSignal) =>
+    request<CreateProjectSpecResponse | [CreateProjectSpecResponse]>("/recommendations/project-spec", {
+      method: "POST",
+      body: JSON.stringify(req),
+      signal,
+    }).then(unwrapCreateResponse),
+  createFromProjectSpecMultipart: (req: CreateProjectSpecMultipartRequest, signal?: AbortSignal) =>
+    postProjectSpecMultipart(req, signal),
+};
+
 // ─── BUSINESS RULES (Spec-ui-heavy-machinery-portal.md §4.4, Spec-mock-api-server.md FR-007/FR-008) ─
 
 export const DEPOSIT_RATE = 0.3;

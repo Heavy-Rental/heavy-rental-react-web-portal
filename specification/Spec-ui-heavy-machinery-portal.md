@@ -64,6 +64,7 @@ The following rules are mandatory for this UI implementation:
 
 - If multiple items are selected in one booking, they must share the same start and end date.
 - The UI should prevent or clearly warn against mismatched dates across items.
+- When the customer reaches the catalog via Instant Quote **Add All to Rental Plan**, the shared date bar SHOULD be prefilled from the quote's `tentativeStartDate` / `tentativeEndDate` (or `days` when a bound is missing). The user can still clear or change dates before adding items. Know / Browse MUST leave the bar empty.
 
 ### 4.4 Pricing and deposits
 
@@ -182,3 +183,5 @@ The app is a single-page shell (`src/App.tsx`) driven by a `View` state union â€
 - 2026-08-03: Rebuilt project to validate changes; production build completed successfully (`vite build`).
 - 2026-08-05: Added Section 6, "Pages / Views," documenting each public, customer, and admin/employee page, its purpose, and how it's reached.
 - 2026-08-06: Added "Folder structure" to Section 6
+- 2026-08-13: Instant Quote Add All to Rental Plan prefills the catalog DateRangeBar from quote `tentativeStartDate` / `tentativeEndDate` / `days` via the existing shared-date setters. DateRangeBar is unchanged.
+- 2026-08-13: Add All also writes recommended machines into the Rental Plan with those dates. Specs-mode Select does not open Delivery Details; the customer toggles banner cards and saves an address from the highlighted Add control. Covered by `npm test` (`specsPlan`, `CartDrawer`, `dateFormat`).
