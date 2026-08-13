@@ -95,6 +95,16 @@ export const bookingApi = {
   // Real backend's GET /bookings returns the flat CreateBookingResponse shape (defined
   // below), not the mock's normalized Booking shape — callers must narrow per-item.
   list: (signal?: AbortSignal) => request<(Booking | CreateBookingResponse)[]>("/bookings", { signal }),
+  // The generic resource().update() above PATCHes /bookings/{id} with an arbitrary
+  // partial body — there's no backend route for that (405). Status changes go through
+  // the real PATCH /bookings/{id}/status endpoint instead, matching how
+  // deliveries/returns already do status updates, with the field name (bookingStatus,
+  // not status) the backend's StatusUpdateRequest actually expects.
+  updateStatus: (id: number, status: string) =>
+    request<Booking | CreateBookingResponse>(`/bookings/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ bookingStatus: status }),
+    }),
 };
 export const monthlyUtilizationApi = readOnlyResource<MonthlyUtilization>("/monthly-utilization");
 export const statusDistributionApi = readOnlyResource<StatusDistribution>("/status-distribution");

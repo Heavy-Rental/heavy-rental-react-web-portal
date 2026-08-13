@@ -47,7 +47,7 @@ export function BookingsTab({
 
   const handleBookingStatus = async (apiId: number, status: BookingStatus) => {
     try {
-      await bookingApi.update(apiId, { status });
+      await bookingApi.updateStatus(apiId, status);
       setBookings((prev) =>
         prev.map((b) => (b.apiId === apiId ? { ...b, status } : b)),
       );
