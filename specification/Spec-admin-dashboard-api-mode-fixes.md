@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | **Feature** | Admin Dashboard — Real Backend (API Mode) Compatibility Fixes |
-| **Status** | Implemented — FIX-01 committed; FIX-02 and FIX-03 pending commit on this branch |
+| **Status** | Implemented — FIX-01 through FIX-03 committed; FIX-04 and FIX-05 added in a later pass on this branch, also committed |
 | **Module** | `heavy-rental-react-web-portal` |
 | **Primary surface** | Admin dashboard (`src/features/admin/`), shared API client (`src/app/api.ts`), shared data-fetch hook (`src/app/useApiResource.ts`) |
 | **Method** | Live debugging against the real Spring Boot backend (`heavy-rental-rest-api`) in `npm run dev:api` mode, driven by browser console/network errors |
@@ -22,7 +22,9 @@ When these fixes are correct:
 1. `rentalPlanApi` resolves to the same route the real backend's `RentalPlanController` actually serves, in both `dev:mock` and `dev:api` (FIX-01).
 2. Loading the equipment catalog (Asset Records, the customer browse page, the landing page's category tiles) no longer triggers two concurrent multi-megabyte downloads of the same data in development, eliminating the intermittent `net::ERR_INCOMPLETE_CHUNKED_ENCODING` failures this caused (FIX-02).
 3. The Admin Dashboard's Bookings and Users tabs render correctly against the real backend's booking response, instead of crashing the entire dashboard with an uncaught `TypeError` (FIX-03).
-4. Logging out in API mode actually revokes the session token server-side, instead of only discarding it client-side (ADD-01).
+4. The admin Bookings tab's equipment column and search filter no longer crash the dashboard when the real backend's response shape changes out from under a field the frontend assumed was always present (FIX-04).
+5. The admin Bookings tab's status filter, inline status editor, and summary stat cards cover the real backend's full 6-value `BookingStatus` enum instead of a stale 5-value subset, and the "Paid" column/filter (a `PaidStatus` enum the backend has since removed entirely) no longer exists (FIX-05).
+6. Logging out in API mode actually revokes the session token server-side, instead of only discarding it client-side (ADD-01).
 
 ---
 
@@ -33,6 +35,7 @@ When these fixes are correct:
 - The `rentalPlanApi` route path (`src/app/api.ts`), and the mock server's matching data key (`mock/db.json`).
 - The shared data-fetching hook (`src/app/useApiResource.ts`) and every one of its call sites in `src/App.tsx` and `src/features/admin/AdminDataContext.tsx`.
 - The Admin Dashboard's booking view-model builders (`buildBookingRows`, `buildUserRows` in `AdminDataContext.tsx`) and the `bookingApi.list()` client (`src/app/api.ts`).
+- `CreateBookingResponse`'s shape (`src/app/api.ts`), the admin Bookings tab (`src/features/admin/bookings/BookingsTab.tsx`), the shared `BookingStatus` type (`src/app/types.ts`), and status label/list helpers (`src/features/admin/adminFormat.ts`) — FIX-04 and FIX-05.
 
 ### 2.2 Out of scope
 
@@ -80,6 +83,13 @@ When these fixes are correct:
 
 **Change**: added `logout(): Promise<void>` to `api.ts:50-52`, posting to `/auth/logout` via the shared `request()` helper (which attaches the current `Authorization: Bearer` header automatically). `handleLogout` (`App.tsx:2590-2601`) now calls it, gated to `import.meta.env.MODE === "api"` — matching how `login()` itself is only invoked in that mode, so `dev:mock`'s logout stays purely client-side, unchanged. The call is best-effort: its rejection is caught and ignored, so a failed/unreachable server-side revoke never blocks the local session cleanup that follows it. Implemented directly by the user on this branch; verified here via `npx tsc --noEmit -p tsconfig.app.json` (clean) and a read of the resulting code.
 
+### FIX-04: Admin Bookings equipment column / search crash after backend's `items` shape change
+
+[... FIX-04 body as above ...]
+
+### FIX-05: `BookingStatus` type only covered 5 of the real backend's 6 values; `PaidStatus` removed entirely
+
+[... FIX-05 body as above ...]
 ---
 
 ## 4. Known approximations & follow-ups
@@ -87,7 +97,7 @@ When these fixes are correct:
 Unlike the three Open Questions in `Spec-ui-heavy-machinery-portal.md`, these aren't undecided — they're accepted, working approximations, noted here so they're not mistaken for exact values if revisited later.
 
 1. **Bookings tab `depot` column (API mode only)**: the real backend's booking response has no depot foreign key, only `siteAddress`. The `depot` column shows the raw site address instead of a depot name in API mode. Exact fix would require the backend to add a `depotId`/depot name to its booking response.
-2. **Bookings tab `paidStatus` column (API mode only)**: the real backend's booking response has no `paidStatus` field. It's derived heuristically: `remainingBalance === 0 ? "FULL" : depositAmount > 0 ? "DEPOSIT" : "UNPAID"`. This should be correct in the common cases but isn't a real backend-asserted value.
+2. ~~**Bookings tab `paidStatus` column (API mode only)**: the real backend's booking response has no `paidStatus` field. It's derived heuristically...~~ **RESOLVED (FIX-05)**: the backend has since removed `PaidStatus` entirely, and the "Paid" column/filter this approximation fed were removed from the admin Bookings tab. The underlying heuristic derivation still exists unused in `AdminDataContext.tsx` (`BookingRow.paidStatus`) — harmless dead code, not cleaned up in this pass, see FIX-05.
 3. **Users tab `rentals`/`spent` counts (API mode only)**: with no `rentalPlanId` to join bookings to users, the fallback join matches `booking.customerName === user.name` by string equality. This is fragile if two users ever share a display name — there is no user-id foreign key on the real backend's booking response to join on instead.
 4. **FIX-02 mitigates, doesn't eliminate, the equipment payload cost**: the ~4.5MB `/api/equipment` response (full base64 photos embedded per item) is still downloaded once per genuine mount, and that single download can still fail on its own — confirmed in-browser 2026-08-12, where a non-duplicated request failed with `net::ERR_INCOMPLETE_CHUNKED_ENCODING` at 4,465–4,583 kB out of ~4,714 kB expected. A backend change — a dedicated `GET /api/equipment/{id}/image` endpoint returning raw JPEG bytes, with the list endpoint switched to a plain image URL instead of an embedded `data:` URI — was scoped in conversation but not implemented; it would remove the root cause rather than just the duplicate-download symptom. Note this would also require a coordinated frontend change: `EquipmentGrid.tsx:93` and `App.tsx:944,979,982` currently branch on `img.startsWith("data:")` to decide how to render it, which would need a third case (and null guards) added for a real image URL.
 5. **Two unexplained `502` responses observed alongside the above** — cause not yet root-caused (possibly the dev proxy/backend not being warmed up at the very first request of a session). Not chased further since it wasn't the item being verified; worth a look if it recurs.
@@ -109,9 +119,11 @@ Unlike the three Open Questions in `Spec-ui-heavy-machinery-portal.md`, these ar
 - [x] `rentalPlanApi` requests match the real backend's actual route in API mode
 - [x] `mock/db.json`'s rental-plans key matches the renamed route in mock mode
 - [x] `npx tsc --noEmit` passes clean after all four files' changes
-- [x] No other call site (`BookingsTab.tsx`'s `.update()`, `App.tsx`'s `.create()`) was broken by widening `bookingApi.list()`'s return type
+- [x] No other call site (`App.tsx`'s `.create()`) was broken by widening `bookingApi.list()`'s return type (note: `BookingsTab.tsx`'s status editor no longer calls the generic `.update()` at all as of a later change — see `Spec-rest-api-reference.md` §2.5/§5)
 - [~] Manual confirmation in-browser that only one `/api/equipment` request completes per mount — **partially confirmed** 2026-08-12: duplicate requests are now cleanly `(canceled)` as intended, but the single surviving request still failed with `net::ERR_INCOMPLETE_CHUNKED_ENCODING` on a subsequent refresh (see FIX-02 and §4 item 4) — the duplicate-transfer symptom is fixed, the underlying payload-size fragility is not
 - [x] Manual confirmation that the Admin Dashboard's Bookings/Users tabs render without crashing in API mode — confirmed 2026-08-12, no crash
+- [x] FIX-04: `npx tsc -b --noEmit` and `npx eslint .` clean after `CreateBookingResponse`/`buildBookingRows` changes; manual confirmation typing in the Bookings search box no longer crashes the dashboard in API mode
+- [x] FIX-05: `npx tsc -b --noEmit` and `npx eslint .` clean after `BookingStatus`/`adminFormat.ts`/`BookingsTab.tsx` changes; manual confirmation the stat row shows a single "Pending Payments" count summing both pending statuses, the status filter/editor list all 6 values with correct labels, and no "Paid" column/filter remains
 
 ### 6.2 Manual smoke test
 
@@ -161,3 +173,4 @@ Both fixes are additive/opt-in on `ChartTip` (`unit`/`valueFormatter` both defau
 | 0.1.0 | 2026-08-12 | Initial draft, documenting FIX-01 (rentalPlans naming mismatch, committed), FIX-02 (StrictMode duplicate equipment fetch via AbortController), and FIX-03 (Admin Dashboard booking-shape crash) — all found and fixed while validating the admin login/dashboard flow against the real backend on the `122-fix-error-admin-login` branch. |
 | 0.2.0 | 2026-08-13 | Added §8: CHANGE-01 (removed the unused Pricing tab and its `PricingRule` data layer) and CHANGE-02 (fixed two leaked internal `adm-*` chart labels — Utilization and Revenue tooltips on the Overview tab — and confirmed the Fleet Health pie chart wasn't affected). Both made on the `142-fix-admin-login-web-portal-utilization` branch; neither is API-mode specific. |
 | 0.3.0 | 2026-08-13 | Added ADD-01 to §3: a real `logout()` API call (`POST /auth/logout`), wired into `handleLogout` gated to API mode, so a real backend session token is actually revoked server-side on logout instead of only being forgotten client-side. Implemented by the user directly; documented here after review. |
+| 0.4.0 | 2026-08-13 | Added FIX-04 (admin Bookings equipment column / search crash, `assetName` → `items: BookingItemLine[]` after a backend shape change) and FIX-05 (`BookingStatus` widened from 5 to the real 6 values; "Paid" column/filter removed after the backend dropped `PaidStatus` entirely) — both found while continuing to exercise the admin Bookings tab against the real backend. §4 item 2 marked resolved by FIX-05 rather than removed, to keep the other items' numbering stable for existing cross-references. |

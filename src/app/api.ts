@@ -100,6 +100,16 @@ export const bookingApi = {
   // Real backend's GET /bookings returns the flat CreateBookingResponse shape (defined
   // below), not the mock's normalized Booking shape — callers must narrow per-item.
   list: (signal?: AbortSignal) => request<(Booking | CreateBookingResponse)[]>("/bookings", { signal }),
+  // The generic resource().update() above PATCHes /bookings/{id} with an arbitrary
+  // partial body — there's no backend route for that (405). Status changes go through
+  // the real PATCH /bookings/{id}/status endpoint instead, matching how
+  // deliveries/returns already do status updates, with the field name (bookingStatus,
+  // not status) the backend's StatusUpdateRequest actually expects.
+  updateStatus: (id: number, status: string) =>
+    request<Booking | CreateBookingResponse>(`/bookings/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ bookingStatus: status }),
+    }),
 };
 export const monthlyUtilizationApi = readOnlyResource<MonthlyUtilization>("/monthly-utilization");
 export const statusDistributionApi = readOnlyResource<StatusDistribution>("/status-distribution");
@@ -117,6 +127,11 @@ export interface CreateBookingRequest {
   deliveryNotes?: string;
 }
 
+export interface BookingItemLine {
+  assetName: string;
+  serialNumber: string;
+}
+
 export interface CreateBookingResponse {
   bookingId: number;
   customerName: string;
@@ -124,8 +139,12 @@ export interface CreateBookingResponse {
   endDate: string;
   bookingStatus: string;
   siteAddress: string;
-  assetName: string;
-  serialNumber: string;
+  // Was a flat assetName/serialNumber pair; the real backend's BookingResponse now
+  // carries one row per booked item (dto/BookingItemLine.java, HR-113) — a booking can
+  // cover more than one asset. Reading the old flat fields here was silently undefined
+  // at runtime (TS didn't catch it, nothing enforces the interface against live JSON),
+  // which crashed the admin Bookings search the moment `.toLowerCase()` ran on it.
+  items: BookingItemLine[];
   deliveryNotes: string;
   totalAmount: number;
   depositAmount: number;

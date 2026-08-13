@@ -36,6 +36,7 @@ Scope is **this web portal's perspective only**: routes owned by the mobile/driv
 | ⚠️ Frontend calls it, backend doesn't have it | This portal's code (unconditionally, not mode-gated) targets a path/method the real backend does not implement — see §5 |
 | ⏳ Backend live, frontend not wired | Real backend route is implemented but this portal has no code calling it yet — see §7 |
 | — | Not applicable to this portal (mobile/driver-only) — see §4 |
+| 🚫 Not planned | This portal's code doesn't call it and isn't expected to — distinct from §5's gaps, which the frontend *does* call and *does* need the backend to add |
 
 ## 2. Endpoint index — routes this portal uses or depends on
 
@@ -88,7 +89,8 @@ There is one login flow, no web-vs-mobile distinction at the backend level (no `
 | `GET` | `/api/bookings` | ⏳ Backend live, frontend not wired | Real route exists; this portal's "My Rental Plans" / admin bookings views still read from the mock server only in API mode's current scope (`Spec-stripe-payment-checkout.md` Out of Scope). Relevant if API-mode parity is extended later. |
 | `GET` | `/api/bookings/{id}` | ⏳ Backend live, frontend not wired | Same. |
 | `PUT` | `/api/bookings/{id}` | ⏳ Backend live, frontend not wired | Same — note this is a full-replace endpoint on the real backend, not a partial merge. |
-| `PATCH` / `DELETE` | `/api/bookings/{id}` | ⚠️ Frontend calls it, backend doesn't have it | Admin `BookingsTab` calls `bookingApi.update()` (PATCH) for status changes; `bookingApi.remove()` (DELETE) also has no backend route. See §5. |
+| `PATCH` | `/api/bookings/{id}/status` | ✅ Backend live, frontend wired | `bookingApi.updateStatus()` — admin `BookingsTab`'s status dropdown. Real route, `{ "bookingStatus": "..." }` body, any of the 6 `BookingStatus` values accepted with no transition restriction. Previously called the generic `bookingApi.update()` against plain `/api/bookings/{id}` (PATCH), which 405'd — see `Spec-admin-dashboard-api-mode-fixes.md`. |
+| `DELETE` | `/api/bookings/{id}` | 🚫 Not planned | `CANCELLED` is a real `BookingStatus` value, reachable via the status route above, and covers the "remove a booking" use case without a hard delete. `bookingApi.remove()` exists on the generic resource client but the admin UI never calls it for bookings. |
 
 ### 2.6 Analytics
 
@@ -136,7 +138,6 @@ These are treated as backend work still owed, not frontend bugs to fix — the f
 - **`/api/users`** — no route exists at all. Needed for: resolving a login's numeric `userId` (`handleLogin`, silently falls back to `id: null` today via try/catch), and the admin Users tab's full CRUD.
 - **`/api/depots` write routes** (`POST`/`PUT`/`PATCH`/`DELETE`) — real backend has GET-only stub, no `Depot` entity. Needed if depot management is ever exercised in API mode (currently only read via the stub, so no visible breakage yet — but any write path would fail).
 - **`/api/rentalPlans/{id}`** generic `PUT`/`PATCH`/`DELETE` — real backend only has item- and quote-scoped mutations (§2.4).
-- **`/api/bookings/{id}` `PATCH`/`DELETE`** — real backend only has `PUT` (full replace). Admin `BookingsTab`'s status-change call assumes PATCH.
 - **`/api/status-distribution`** — no real-backend equivalent at all; mock-only today.
 
 ## 6. Open item — `POST /api/auth/logout`
@@ -224,6 +225,7 @@ Same three fields `POST /api/bookings`'s response already carries — no new sha
 - 2026-08-13: Initial reference written, consolidating the real backend's REST surface as relevant to this portal (auth, equipment, depots, rental plans, bookings, payments, analytics, users, recommendations), scoped to routes this portal uses, is documented to use, or plans to use. Excludes mobile/driver-only routes with no web-portal feature (§4). Records backend implementation gaps (§5) and two explicitly undecided items — the unused `/api/auth/logout` route (§6) and the unwired recommender endpoints (§7) — as open/owed rather than resolving them.
 - 2026-08-13: Added §7.1 — a proposed (unconfirmed) request/response contract for `POST /api/recommendations/project-spec`, since the authoritative contract isn't available in this repo. Covers the `description`/`attachmentFileNames`/`startDate`/`endDate` request shape and a `recommendationId`/`confidenceScore`/`quoteRef`/`items` response that reuses the existing `POST /api/rentalPlans/{id}/quote` engine for pricing rather than duplicating it.
 - 2026-08-13: Added §8 — clarified this portal needs two distinct pricing paths: `POST /api/rentalPlans/{id}/quote` (§8.1, corrected to reach Haystack for AI-informed pricing, reversing this document's earlier speculation that it was Spring-only) and a new, proposed `POST /api/pricing/estimate` (§8.2, Spring-only, never reaches Haystack, reuses `POST /api/bookings`'s pricing formula and request/response shape). §2.4's quote row note updated to cross-reference §8.1.
+- 2026-08-13: §2.5/§5 updated — the `PATCH /api/bookings/{id}` gap is resolved: the backend added `PATCH /api/bookings/{id}/status` (not the same path — a dedicated sub-resource, `{ "bookingStatus": "..." }` body, no transition restriction) and the frontend's admin `BookingsTab` now calls it via a new `bookingApi.updateStatus()`. Added a new 🚫 Not planned status to the legend and reclassified `DELETE /api/bookings/{id}` under it — no longer listed as a gap, since `CANCELLED` (a real status, reachable via the new route) covers the same need without a hard delete.
 - 2026-08-13: Marked `POST /api/recommendations/project-spec` as frontend-wired (`recommendationApi` + Instant Quote in `CustomerOnboarding`). §7 now only tracks `knowledge-query` and `GET /{id}`. Vite `/api` proxy timeout set to 180s so `dev:api` can wait out Spring’s Haystack saga.
 - 2026-08-13: Documented `tentativeStartDate` / `tentativeEndDate` on the Instant Quotation DTO and the frontend binding that seeds DateRangeBar from those fields (or `days`) after Add All to Rental Plan.
 - 2026-08-13: `resolveQuoteDates` field rules are locked by `src/lib/dateFormat.test.ts` (`npm test`).
