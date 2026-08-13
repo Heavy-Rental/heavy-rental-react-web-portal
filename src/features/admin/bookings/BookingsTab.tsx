@@ -10,13 +10,28 @@ const PAGE_SIZE = 5;
 
 function bookingStatusColor(s: BookingStatus) {
   return {
-    PENDING: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    PENDING_DEPOSIT: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    PENDING_CONFIRMED: "text-amber-400 bg-amber-500/10 border-amber-500/30",
     CONFIRMED: "text-green-400 bg-green-500/10 border-green-500/30",
     MOBILISED: "text-violet-400 bg-violet-500/10 border-violet-500/30",
     COMPLETED: "text-blue-400 bg-blue-500/10 border-blue-500/30",
     CANCELLED: "text-red-400 bg-red-500/10 border-red-500/30",
   }[s];
 }
+
+// The stats row groups the two "money not yet settled" statuses (PENDING_DEPOSIT —
+// no deposit paid yet, and PENDING_CONFIRMED — deposit paid, awaiting admin
+// confirmation) under a single "Pending Payments" card, since from an admin's glance
+// they're the same "needs my attention before this is a real booking" bucket. The
+// status filter dropdown and each row's inline editor still expose both individually —
+// only this summary card collapses them.
+const BOOKING_STAT_GROUPS: { label: string; statuses: BookingStatus[]; color: string }[] = [
+  { label: "Pending Payments", statuses: ["PENDING_DEPOSIT", "PENDING_CONFIRMED"], color: "text-amber-400" },
+  { label: "Confirmed", statuses: ["CONFIRMED"], color: "text-green-400" },
+  { label: "Mobilised", statuses: ["MOBILISED"], color: "text-violet-400" },
+  { label: "Completed", statuses: ["COMPLETED"], color: "text-blue-400" },
+  { label: "Cancelled", statuses: ["CANCELLED"], color: "text-red-400" },
+];
 function paidStatusColor(s: PaidStatus) {
   return {
     UNPAID: "text-red-400 bg-red-500/10 border-red-500/30",
@@ -88,21 +103,14 @@ export function BookingsTab({
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-        {BOOKING_STATUSES.map((status) => {
-          const count = bookings.filter((b) => b.status === status).length;
-          const colors: Record<BookingStatus, string> = {
-            PENDING: "text-amber-400",
-            CONFIRMED: "text-green-400",
-            MOBILISED: "text-violet-400",
-            COMPLETED: "text-blue-400",
-            CANCELLED: "text-red-400",
-          };
+        {BOOKING_STAT_GROUPS.map(({ label, statuses, color }) => {
+          const count = bookings.filter((b) => statuses.includes(b.status)).length;
           return (
-            <div key={status} className="bg-card border border-border px-4 py-3 flex items-center justify-between">
+            <div key={label} className="bg-card border border-border px-4 py-3 flex items-center justify-between">
               <span className="text-xs text-muted-foreground" style={mono}>
-                {formatBookingStatus(status)}
+                {label}
               </span>
-              <span className={`text-2xl font-black ${colors[status]}`} style={display}>
+              <span className={`text-2xl font-black ${color}`} style={display}>
                 {count}
               </span>
             </div>

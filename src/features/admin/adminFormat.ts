@@ -3,14 +3,21 @@ import type { BookingStatus, PaidStatus, ConditionType } from "../../app/types";
 // Booking lifecycle vs. payment status are two separate fields on the real Booking
 // entity (SPEC-entity-repository.md) — status is the lifecycle, paidStatus is payment.
 export const BOOKING_STATUSES: BookingStatus[] = [
-  "PENDING",
+  "PENDING_DEPOSIT",
+  "PENDING_CONFIRMED",
   "CONFIRMED",
   "MOBILISED",
   "COMPLETED",
   "CANCELLED",
 ];
 export function formatBookingStatus(s: BookingStatus): string {
-  return s[0] + s.slice(1).toLowerCase();
+  // Handles multi-word statuses (PENDING_DEPOSIT -> "Pending Deposit"), not just the
+  // single-word ones the old single-capitalize version assumed.
+  return s
+    .toLowerCase()
+    .split("_")
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export const PAID_STATUSES: PaidStatus[] = ["UNPAID", "DEPOSIT", "FULL"];
