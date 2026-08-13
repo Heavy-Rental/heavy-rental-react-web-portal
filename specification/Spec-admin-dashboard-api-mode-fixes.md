@@ -7,7 +7,7 @@
 | **Module** | `heavy-rental-react-web-portal` |
 | **Primary surface** | Admin dashboard (`src/features/admin/`), shared API client (`src/app/api.ts`), shared data-fetch hook (`src/app/useApiResource.ts`) |
 | **Method** | Live debugging against the real Spring Boot backend (`heavy-rental-rest-api`) in `npm run dev:api` mode, driven by browser console/network errors |
-| **Related code** | `src/app/api.ts`, `src/app/useApiResource.ts`, `src/App.tsx`, `src/features/admin/AdminDataContext.tsx`, `mock/db.json` |
+| **Related code** | `src/app/api.ts`, `src/app/useApiResource.ts`, `src/App.tsx`, `src/features/admin/AdminDataContext.tsx`, `src/features/admin/AdminDashboard.tsx`, `src/features/admin/overview/OverviewTab.tsx`, `mock/db.json` |
 | **Environment context** | [`Spec-frontend-api-integration.md`](./Spec-frontend-api-integration.md), [`Spec-mock-api-server.md`](./Spec-mock-api-server.md) |
 | **Linked backend** | `heavy-rental-spring-rest-api`, branch `36-link-rest-api-users-to-front-end` (separate repo, reachable at `heavy-rental-rest-api:8080` from this frontend's `dev:api` mode; not present in this workspace — verified only via live HTTP calls, not by reading its source) |
 
@@ -22,6 +22,7 @@ When these fixes are correct:
 1. `rentalPlanApi` resolves to the same route the real backend's `RentalPlanController` actually serves, in both `dev:mock` and `dev:api` (FIX-01).
 2. Loading the equipment catalog (Asset Records, the customer browse page, the landing page's category tiles) no longer triggers two concurrent multi-megabyte downloads of the same data in development, eliminating the intermittent `net::ERR_INCOMPLETE_CHUNKED_ENCODING` failures this caused (FIX-02).
 3. The Admin Dashboard's Bookings and Users tabs render correctly against the real backend's booking response, instead of crashing the entire dashboard with an uncaught `TypeError` (FIX-03).
+4. Logging out in API mode actually revokes the session token server-side, instead of only discarding it client-side (ADD-01).
 
 ---
 
@@ -70,6 +71,14 @@ When these fixes are correct:
 **THEN** `buildBookingRows` throws `Uncaught TypeError: Cannot read properties of undefined (reading 'map')` trying to call `.map()` on the nonexistent `equipmentIds` field, crashing the entire dashboard (no error boundary exists in this app, so the crash renders as a blank page).
 
 **Fix**: `bookingApi.list()` (`src/app/api.ts`) now declares its honest return type — `(Booking | CreateBookingResponse)[]` — since the same `/bookings` path returns different shapes depending on which backend answers it. `AdminDataContext.tsx` adds a type guard, `isApiBookingRecord()`, keyed on the presence of `bookingId` (only the real shape has it), and both `buildBookingRows` and `buildUserRows` branch per-item on that guard to produce the same `BookingRow`/`UserRow` view-models from either shape. See §4 for the two fields this fix approximates rather than computes exactly.
+
+### ADD-01: Server-side session revocation on logout (API mode)
+
+**GIVEN** `login()` (`api.ts:38-47`) performs a real `getBearerToken` → `login` round-trip against the backend in API mode, issuing a real bearer token
+**AND** `handleLogout` (`App.tsx`, previously) only cleared client-side state (`clearSession()`, `setAuthToken(null)`, `setUser(null)`) and never told the backend the session was ending
+**THEN** a token issued by the real backend was never actually revoked server-side on logout — only forgotten locally.
+
+**Change**: added `logout(): Promise<void>` to `api.ts:50-52`, posting to `/auth/logout` via the shared `request()` helper (which attaches the current `Authorization: Bearer` header automatically). `handleLogout` (`App.tsx:2590-2601`) now calls it, gated to `import.meta.env.MODE === "api"` — matching how `login()` itself is only invoked in that mode, so `dev:mock`'s logout stays purely client-side, unchanged. The call is best-effort: its rejection is caught and ignored, so a failed/unreachable server-side revoke never blocks the local session cleanup that follows it. Implemented directly by the user on this branch; verified here via `npx tsc --noEmit -p tsconfig.app.json` (clean) and a read of the resulting code.
 
 ---
 
@@ -125,8 +134,30 @@ Unlike the three Open Questions in `Spec-ui-heavy-machinery-portal.md`, these ar
 
 ---
 
-## 8. Change control
+## 8. Additional Admin Dashboard cleanup (not API-mode specific)
+
+These two changes landed on the same branch but aren't related to real-backend compatibility — both apply identically under `dev:mock` and `dev:api`, so they're kept separate from the FIX-01–03 numbering above.
+
+### CHANGE-01: Removed the unused Pricing tab
+
+The Admin Dashboard's "Pricing" tab (`src/features/admin/pricing/PricingTab.tsx`) and its supporting data — the `PricingRule` type, the `pricingRules`/`setPricingRules` state, and the derivation logic that computed ML-recommended rates from asset utilization — were removed entirely. Confirmed via a full-repo `grep` for `PricingRule`/`pricingRules`/`PricingTab` before removing that no other tab or component depended on any of it. Removed: the nav entry and render block in `AdminDashboard.tsx`, the `"pricing"` member of the `AdminTab` union, the `PricingRule` interface and its state/derivation/context-value entries in `AdminDataContext.tsx`, and the `PricingTab.tsx` file plus its now-empty `pricing/` folder.
+
+### CHANGE-02: Fixed two leaked internal chart labels on the Overview tab
+
+`OverviewTab.tsx`'s charts use an `adm-*` naming convention ("admin") for internal Recharts `key`/`name` props, purely for uniqueness — not meant to be user-visible. Two of them leaked into the visible tooltip anyway, because the custom `ChartTip` component renders each payload item's `name` directly:
+
+- **Utilization chart**: `Bar name="adm-util-asset"` → `"Utilization"`. Also wrapped the value in `Math.round(...)` (`utilizationByAsset`, line ~104) so the tooltip can't show a decimal, and added a new optional `unit` prop to `ChartTip` (defaults to none, so other charts are unaffected) so this one now shows `%`.
+- **Revenue chart**: `Bar name="adm-revenue-trend"` → `"Revenue"`. Added a `valueFormatter` prop to `ChartTip` (also optional/opt-in) so this tooltip shows `S$214,000` instead of a raw `214000`, matching the Y-axis's existing `S$214K` tick formatting.
+- **Fleet Health pie chart**: checked `Pie name="adm-fleet-health"` for the same issue and confirmed it does *not* leak — Recharts sources each pie slice's tooltip label from the slice's own `name` field in `fleetHealthData`, not from the `<Pie name>` prop, so no fix was needed there.
+
+Both fixes are additive/opt-in on `ChartTip` (`unit`/`valueFormatter` both default to unset), so neither one affects the other two charts sharing that component.
+
+---
+
+## 9. Change control
 
 | Version | Date | Notes |
 |---------|------|--------|
 | 0.1.0 | 2026-08-12 | Initial draft, documenting FIX-01 (rentalPlans naming mismatch, committed), FIX-02 (StrictMode duplicate equipment fetch via AbortController), and FIX-03 (Admin Dashboard booking-shape crash) — all found and fixed while validating the admin login/dashboard flow against the real backend on the `122-fix-error-admin-login` branch. |
+| 0.2.0 | 2026-08-13 | Added §8: CHANGE-01 (removed the unused Pricing tab and its `PricingRule` data layer) and CHANGE-02 (fixed two leaked internal `adm-*` chart labels — Utilization and Revenue tooltips on the Overview tab — and confirmed the Fleet Health pie chart wasn't affected). Both made on the `142-fix-admin-login-web-portal-utilization` branch; neither is API-mode specific. |
+| 0.3.0 | 2026-08-13 | Added ADD-01 to §3: a real `logout()` API call (`POST /auth/logout`), wired into `handleLogout` gated to API mode, so a real backend session token is actually revoked server-side on logout instead of only being forgotten client-side. Implemented by the user directly; documented here after review. |

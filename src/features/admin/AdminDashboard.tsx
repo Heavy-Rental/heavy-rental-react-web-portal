@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BarChart2, Wrench, Truck, Calendar, TrendingUp, User, LogOut, CheckCircle } from "lucide-react";
+import { BarChart2, Wrench, Truck, Calendar, User, LogOut, CheckCircle } from "lucide-react";
 import { sans, display, mono } from "../../lib/styles";
 import { AdminDataProvider, useAdminData, type AdminTab } from "./AdminDataContext";
 import { OverviewTab } from "./overview/OverviewTab";
@@ -7,7 +7,6 @@ import { AssetsTab } from "./assets/AssetsTab";
 import { FleetTab } from "./fleet/FleetTab";
 import { BookingsTab } from "./bookings/BookingsTab";
 import { UsersTab } from "./users/UsersTab";
-import { PricingTab } from "./pricing/PricingTab";
 
 function AdminDashboardContent({
   userName,
@@ -44,7 +43,6 @@ function AdminDashboardContent({
     { key: "assets", label: "Asset Records", icon: Wrench },
     { key: "fleet", label: "Fleet Board", icon: Truck },
     { key: "bookings", label: "Bookings", icon: Calendar },
-    { key: "pricing", label: "Pricing", icon: TrendingUp },
     { key: "users", label: "Users", icon: User },
   ];
 
@@ -141,14 +139,6 @@ function AdminDashboardContent({
           <BookingsTab
             bookings={data.bookings}
             setBookings={data.setBookings}
-            showToast={data.showToast}
-          />
-        )}
-        {activeTab === "pricing" && (
-          <PricingTab
-            pricingRules={data.pricingRules}
-            setPricingRules={data.setPricingRules}
-            setAssets={data.setAssets}
             showToast={data.showToast}
           />
         )}
