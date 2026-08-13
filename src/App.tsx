@@ -124,10 +124,35 @@ const TESTIMONIALS = [
   },
 ];
 const IDEAL_FOR_BY_CATEGORY: Record<string, string[]> = {
-  "Excavator": ["earthmoving", "trenching", "demolition", "foundation work", "digging"],
-  "Scissors Lift": ["indoor access", "installation", "elevated work", "warehousing", "maintenance"],
-  "Boom Lift": ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"],
-  "Fork Lift": ["material handling", "warehouse", "loading", "pallet moving", "logistics"],
+  Excavator: [
+    "earthmoving",
+    "trenching",
+    "demolition",
+    "foundation work",
+    "digging",
+  ],
+  "Scissors Lift": [
+    "indoor access",
+    "installation",
+    "elevated work",
+    "warehousing",
+    "maintenance",
+  ],
+  "Boom Lift": [
+    "aerial work",
+    "height",
+    "painting",
+    "electrical",
+    "maintenance",
+    "elevated",
+  ],
+  "Fork Lift": [
+    "material handling",
+    "warehouse",
+    "loading",
+    "pallet moving",
+    "logistics",
+  ],
 };
 
 function deriveTags(item: {
@@ -136,13 +161,13 @@ function deriveTags(item: {
   condition?: string;
 }): string[] {
   const tags: string[] = [];
-  if (typeof item.platformHeight === "number") tags.push(`${item.platformHeight}m Reach`);
-  if (typeof item.capacity === "number") tags.push(`${item.capacity}kg Capacity`);
+  if (typeof item.platformHeight === "number")
+    tags.push(`${item.platformHeight}m Reach`);
+  if (typeof item.capacity === "number")
+    tags.push(`${item.capacity}kg Capacity`);
   if (item.condition === "EXCELLENT") tags.push("Like New");
   return tags;
 }
-
-
 
 const STATS = [
   { value: "1,200+", label: "Equipment Units" },
@@ -357,10 +382,15 @@ function CustomerPortal({
   const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
   const [siteAddressPrompted, setSiteAddressPrompted] = useState(false);
 
-const equipmentRes = useApiResource(
-  () => equipmentApi.list(sharedStartDate && sharedEndDate ? { startDate: sharedStartDate, endDate: sharedEndDate } : undefined),
-  [sharedStartDate, sharedEndDate],
-);
+  const equipmentRes = useApiResource(
+    () =>
+      equipmentApi.list(
+        sharedStartDate && sharedEndDate
+          ? { startDate: sharedStartDate, endDate: sharedEndDate }
+          : undefined,
+      ),
+    [sharedStartDate, sharedEndDate],
+  );
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
   const depotsRes = useApiResource(() => depotApi.list());
   const depots = depotsRes.data ?? [];
@@ -839,18 +869,29 @@ const equipmentRes = useApiResource(
   // ── EQUIPMENT DETAIL PAGE ────────────────────────────────────────────────────
   if (detailItem) {
     const inCart = cart.some((c) => c.equipment.id === detailItem.id);
-    const liveAvailable = equipment.find((e) => e.id === detailItem.id)?.available ?? detailItem.available;
+    const liveAvailable =
+      equipment.find((e) => e.id === detailItem.id)?.available ??
+      detailItem.available;
 
     const SPEC_ROWS: [string, string][] = [
-  ["Category", detailItem.category],
-  ["Purchase Year", String(detailItem.purchaseYear)],
-  ["Max Capacity", `${detailItem.capacity} tonnes`],
-  ["Location", detailItem.location ?? "—"],
-  ["Base Daily Rate", `S$${detailItem.baseDailyRate.toLocaleString()}`],
-  ["Weekly Rate", detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—"],
-  ["Availability", typeof liveAvailable === "boolean" ? (liveAvailable ? "Available Now" : "Currently On Rent") : "—"],
-];
-
+      ["Category", detailItem.category],
+      ["Purchase Year", String(detailItem.purchaseYear)],
+      ["Max Capacity", `${detailItem.capacity} tonnes`],
+      ["Location", detailItem.location ?? "—"],
+      ["Base Daily Rate", `S$${detailItem.baseDailyRate.toLocaleString()}`],
+      [
+        "Weekly Rate",
+        detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—",
+      ],
+      [
+        "Availability",
+        typeof liveAvailable === "boolean"
+          ? liveAvailable
+            ? "Available Now"
+            : "Currently On Rent"
+          : "—",
+      ],
+    ];
 
     return (
       <div className="min-h-screen bg-background text-foreground" style={sans}>
@@ -941,27 +982,29 @@ const equipmentRes = useApiResource(
             <div className="lg:col-span-3 flex flex-col gap-3">
               <div className="relative aspect-video bg-muted overflow-hidden border border-border">
                 <img
-                  src={detailItem.img.startsWith("data:") ? detailItem.img : `https://images.unsplash.com/${detailItem.img}?w=900&h=520&fit=crop&auto=format`}
-
+                  src={
+                    detailItem.img.startsWith("data:")
+                      ? detailItem.img
+                      : `https://images.unsplash.com/${detailItem.img}?w=900&h=520&fit=crop&auto=format`
+                  }
                   alt={detailItem.name}
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-background/60 to-transparent" />
                 <div className="absolute top-4 left-4 flex gap-2">
-                 {typeof liveAvailable === "boolean" && (
-  <span
-    className={`px-2.5 py-1 text-xs font-bold border ${liveAvailable ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
-  >
-    {liveAvailable ? "● Available" : "● On Rent"}
-  </span>
-)}
+                  {typeof liveAvailable === "boolean" && (
+                    <span
+                      className={`px-2.5 py-1 text-xs font-bold border ${liveAvailable ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
+                    >
+                      {liveAvailable ? "● Available" : "● On Rent"}
+                    </span>
+                  )}
 
-{inCart && (
-  <span className="px-2.5 py-1 text-xs font-bold bg-primary text-primary-foreground">
-    In Cart
-  </span>
-)}
-
+                  {inCart && (
+                    <span className="px-2.5 py-1 text-xs font-bold bg-primary text-primary-foreground">
+                      In Cart
+                    </span>
+                  )}
                 </div>
               </div>
               {/* Thumbnail strip — same image at different crops for demo */}
@@ -976,19 +1019,26 @@ const equipmentRes = useApiResource(
                     className="aspect-video bg-muted overflow-hidden border border-border opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
                   >
                     <img
-  src={detailItem.img.startsWith("data:") ? detailItem.img : `https://images.unsplash.com/${detailItem.img}${q}&auto=format`}
-  alt=""
-  className="w-full h-full object-cover"
-style={detailItem.img.startsWith("data:") ? {
-  transform: "scale(1.7)",
-  transformOrigin: ["10% 10%", "50% 50%", "90% 90%"][i],
-} : undefined}
-
-
-
-
-/>
-
+                      src={
+                        detailItem.img.startsWith("data:")
+                          ? detailItem.img
+                          : `https://images.unsplash.com/${detailItem.img}${q}&auto=format`
+                      }
+                      alt=""
+                      className="w-full h-full object-cover"
+                      style={
+                        detailItem.img.startsWith("data:")
+                          ? {
+                              transform: "scale(1.7)",
+                              transformOrigin: [
+                                "10% 10%",
+                                "50% 50%",
+                                "90% 90%",
+                              ][i],
+                            }
+                          : undefined
+                      }
+                    />
                   </div>
                 ))}
               </div>
@@ -1002,9 +1052,11 @@ style={detailItem.img.startsWith("data:") ? {
                   Ideal For
                 </p>
                 <div className="flex flex-wrap gap-2">
-                 {(detailItem.idealFor ?? IDEAL_FOR_BY_CATEGORY[detailItem.category] ?? []).map((use) => (
-
-
+                  {(
+                    detailItem.idealFor ??
+                    IDEAL_FOR_BY_CATEGORY[detailItem.category] ??
+                    []
+                  ).map((use) => (
                     <span
                       key={use}
                       className="px-3 py-1 text-xs bg-primary/10 text-primary border border-primary/20 font-semibold"
@@ -1058,28 +1110,30 @@ style={detailItem.img.startsWith("data:") ? {
                   </div>
                   <div className="w-px bg-border" />
                   <div>
-  <p className="text-xs text-muted-foreground mb-0.5">
-    Weekly rate
-  </p>
-  <p
-    className="text-3xl font-black text-foreground"
-    style={display}
-  >
-    {detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—"}
-  </p>
-  {detailItem.weekly && (
-    <p className="text-xs text-green-400 mt-0.5">
-      Save{" "}
-      {Math.round(
-        (1 -
-          detailItem.weekly / (detailItem.baseDailyRate * 7)) *
-          100,
-      )}
-      % vs daily
-    </p>
-  )}
-</div>
-
+                    <p className="text-xs text-muted-foreground mb-0.5">
+                      Weekly rate
+                    </p>
+                    <p
+                      className="text-3xl font-black text-foreground"
+                      style={display}
+                    >
+                      {detailItem.weekly
+                        ? `S$${detailItem.weekly.toLocaleString()}`
+                        : "—"}
+                    </p>
+                    {detailItem.weekly && (
+                      <p className="text-xs text-green-400 mt-0.5">
+                        Save{" "}
+                        {Math.round(
+                          (1 -
+                            detailItem.weekly /
+                              (detailItem.baseDailyRate * 7)) *
+                            100,
+                        )}
+                        % vs daily
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1133,9 +1187,7 @@ style={detailItem.img.startsWith("data:") ? {
                   Features & Tags
                 </p>
                 <div className="flex flex-wrap gap-2">
-                 {(detailItem.tags ?? deriveTags(detailItem)).map((tag) => (
-
-
+                  {(detailItem.tags ?? deriveTags(detailItem)).map((tag) => (
                     <span
                       key={tag}
                       className="px-2.5 py-1 text-xs bg-secondary/60 text-muted-foreground border border-border"
@@ -1172,12 +1224,11 @@ style={detailItem.img.startsWith("data:") ? {
                 >
                   Select
                 </button>
-               {liveAvailable === false && (
-  <p className="text-xs text-center text-amber-400">
-    This machine is currently on rent. Check back soon.
-  </p>
-)}
-
+                {liveAvailable === false && (
+                  <p className="text-xs text-center text-amber-400">
+                    This machine is currently on rent. Check back soon.
+                  </p>
+                )}
 
                 <button
                   onClick={() => setDetailItem(null)}
@@ -1422,7 +1473,6 @@ style={detailItem.img.startsWith("data:") ? {
                 )
               }
               siteAddress={siteAddress}
-              sitePostalCode={sitePostalCode}
               onEditAddress={() => setSiteAddressModalOpen(true)}
               totalCost={totalCost}
               onCheckout={() => {
@@ -1458,7 +1508,9 @@ style={detailItem.img.startsWith("data:") ? {
               siteAddress,
               deliveryNotes: deliveryNotes || undefined,
             });
-            const intent = await paymentApi.createDepositIntent(booking.bookingId);
+            const intent = await paymentApi.createDepositIntent(
+              booking.bookingId,
+            );
             return {
               bookingId: booking.bookingId,
               clientSecret: intent.clientSecret,
@@ -2455,12 +2507,18 @@ function restoreSession(): {
 }
 
 function viewForRole(role: Role): View {
-  return role === "customer" ? "customer" : role === "admin" ? "admin" : "dashboard";
+  return role === "customer"
+    ? "customer"
+    : role === "admin"
+      ? "admin"
+      : "dashboard";
 }
 
 export default function App() {
   const [initialSession] = useState(restoreSession);
-  const [view, setView] = useState<View>(initialSession.user ? viewForRole(initialSession.user.role) : "portal");
+  const [view, setView] = useState<View>(
+    initialSession.user ? viewForRole(initialSession.user.role) : "portal",
+  );
   const [user, setUser] = useState<StoredSession | null>(initialSession.user);
   const [showLogin, setShowLogin] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -2513,20 +2571,26 @@ export default function App() {
     } catch {
       // no linked account for this email — proceed with id: null (existing behavior)
     }
-  let session: StoredSession;
-if (import.meta.env.MODE === "api") {
-  const password = ACCOUNTS[email]?.password;
-  const { accessToken, expiresIn } = await login(email, password);
-  const issuedAt = Date.now();
-  session = { token: accessToken, id, name, role, issuedAt, expiresAt: issuedAt + expiresIn * 1000 };
-} else {
-  session = issueSession({ id, name, role });
-}
-saveSession(session);
-setAuthToken(session.token);
-setUser(session);
-scheduleExpiry(session);
-
+    let session: StoredSession;
+    if (import.meta.env.MODE === "api") {
+      const password = ACCOUNTS[email]?.password;
+      const { accessToken, expiresIn } = await login(email, password);
+      const issuedAt = Date.now();
+      session = {
+        token: accessToken,
+        id,
+        name,
+        role,
+        issuedAt,
+        expiresAt: issuedAt + expiresIn * 1000,
+      };
+    } else {
+      session = issueSession({ id, name, role });
+    }
+    saveSession(session);
+    setAuthToken(session.token);
+    setUser(session);
+    scheduleExpiry(session);
   };
   const handleLogout = () => {
     if (expiryTimer.current) clearTimeout(expiryTimer.current);
