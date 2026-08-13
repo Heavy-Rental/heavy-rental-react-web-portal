@@ -443,9 +443,10 @@ const equipmentRes = useApiResource(
 
   // API mode only: ensures a RentalPlan exists for the given date range, reusing the
   // caller's one active (non-CONVERTED) plan if it already matches (B9 — no server-side
-  // filter, so this always fetches the list and filters client-side). Returns null (and
-  // sets cartDateError) if an active plan exists with a *different* range — the plan's
-  // date range is fixed at creation (B11), so that's a real conflict, not just a stale read.
+  // filter, so this always fetches the list and filters client-side; the backend itself
+  // 409s a second create() while one exists, so checking first also avoids that). Returns
+  // null (and sets cartDateError) if an active plan exists with a *different* range — the
+  // plan's date range is fixed at creation (B11), so that's a real conflict, not a stale read.
   const ensureApiRentalPlanId = async (
     startDate: string,
     endDate: string,
@@ -462,7 +463,21 @@ const equipmentRes = useApiResource(
       }
       return active.id;
     }
-    const created = await rentalPlanCartApi.create({ startDate, endDate });
+    // siteAddress is required to create a plan (RentalPlanCreateRequest.siteAddress is
+    // @NotBlank + must end in a 6-digit postal code) — block and prompt for it rather
+    // than sending a blank value the server would reject as validation_failed.
+    if (!siteAddress.trim()) {
+      setSiteAddressModalOpen(true);
+      setCartDateError(
+        "Add a delivery address before adding equipment to your rental plan.",
+      );
+      return null;
+    }
+    const created = await rentalPlanCartApi.create({
+      startDate,
+      endDate,
+      siteAddress,
+    });
     return created.id;
   };
 

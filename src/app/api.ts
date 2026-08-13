@@ -105,17 +105,21 @@ export const statusDistributionApi = readOnlyResource<StatusDistribution>("/stat
 // `/api/bookings` path than the mock resource above (mock and real backend are
 // never targeted in the same MODE, so the two never collide at runtime).
 
-// ─── REAL BACKEND: RentalPlan cart persistence (api-contract-for-frontend.md §1-3, 7) ──
+// ─── REAL BACKEND: RentalPlan cart persistence (api-contract-for-frontend.md §1-3, 7;
+// RentalPlanController.java, RentalPlanService.java, RentalPlanCreateRequest.java) ──
 // Distinct from `rentalPlanApi` above (generic CRUD over the mock's `RentalPlan` shape) —
 // these hit the same `/rentalPlans` routes but speak the real backend's response shape
 // (`RentalPlanResponse`) and its item-level mutation endpoints, which the mock server
-// doesn't implement. There's no server-side "active plan" filter (§7) or generic create
-// body confirmed beyond `startDate`/`endDate` — `list()` + client-side filtering for
-// `status !== "CONVERTED"` is the only way to find the caller's one active plan.
+// doesn't implement. There's no server-side "active plan" filter (§7) — `list()` +
+// client-side filtering for `status !== "CONVERTED"` is the only way to find the
+// caller's one active plan (the backend itself 409s a second `create()` while one exists).
 
 export interface CreateRentalPlanRequest {
-  startDate: string; // ISO YYYY-MM-DD
-  endDate: string; // ISO YYYY-MM-DD
+  startDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
+  endDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
+  // Required — RentalPlanCreateRequest.siteAddress is @NotBlank + must end in a
+  // 6-digit postal code; a blank/missing value 400s as validation_failed.
+  siteAddress: string;
 }
 
 export const rentalPlanCartApi = {
