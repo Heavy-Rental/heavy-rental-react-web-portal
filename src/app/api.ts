@@ -105,14 +105,15 @@ export const statusDistributionApi = readOnlyResource<StatusDistribution>("/stat
 // `/api/bookings` path than the mock resource above (mock and real backend are
 // never targeted in the same MODE, so the two never collide at runtime).
 
-// ─── REAL BACKEND: RentalPlan cart persistence (api-contract-for-frontend.md §1-3, 7;
+// ─── REAL BACKEND: RentalPlan cart persistence (api-contract-for-frontend.md §1-3, 5.5, 7;
 // RentalPlanController.java, RentalPlanService.java, RentalPlanCreateRequest.java) ──
 // Distinct from `rentalPlanApi` above (generic CRUD over the mock's `RentalPlan` shape) —
 // these hit the same `/rentalPlans` routes but speak the real backend's response shape
 // (`RentalPlanResponse`) and its item-level mutation endpoints, which the mock server
 // doesn't implement. There's no server-side "active plan" filter (§7) — `list()` +
-// client-side filtering for `status !== "CONVERTED"` is the only way to find the
-// caller's one active plan (the backend itself 409s a second `create()` while one exists).
+// client-side filtering for `status` not in `("CONVERTED", "CANCELLED")` is the only way
+// to find the caller's one active plan (the backend itself 409s a second `create()` while
+// one exists; cancelling, like converting, frees the slot again).
 
 export interface CreateRentalPlanRequest {
   startDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
@@ -141,6 +142,12 @@ export const rentalPlanCartApi = {
   removeItem: (planId: number, itemId: number) =>
     request<RentalPlanResponse>(`/rentalPlans/${planId}/items/${itemId}`, {
       method: "DELETE",
+    }),
+  // Allowed from DRAFT/SAVED/QUOTED; 409 already_converted on a CONVERTED plan,
+  // 409 already_cancelled if already cancelled (api-contract-for-frontend.md §5.5).
+  cancel: (planId: number) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}/cancel`, {
+      method: "POST",
     }),
 };
 

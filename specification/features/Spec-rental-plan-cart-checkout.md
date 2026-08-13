@@ -3,7 +3,7 @@
 **Feature Area**: heavy-rental-react-web-portal
 **Created**: 2026-08-13
 **Status**: Planned — not started
-**Input**: A design conversation establishing that the current real-backend checkout (`createDepositBooking()` booking directly from ephemeral client cart state) should be replaced with a persisted `RentalPlan` lifecycle: `DRAFT` → `QUOTED` → `CONVERTED`, with a client-side estimate shown during cart-building and a Haystack-backed `quote` shown at checkout.
+**Input**: A design conversation establishing that the current real-backend checkout (`createDepositBooking()` booking directly from ephemeral client cart state) should be replaced with a persisted `RentalPlan` lifecycle: `DRAFT` → `QUOTED` → `CONVERTED` (or → `CANCELLED` at any point before conversion), with a client-side estimate shown during cart-building and a Haystack-backed `quote` shown at checkout.
 
 **Revised 2026-08-13** against `api-contract-for-frontend.md` (this folder), the authoritative contract handed off from the Spring Boot side. That document explicitly states it wins over this one wherever they disagree — several assumptions below have been corrected accordingly rather than left as "unconfirmed." See inline notes and the Change Log.
 
@@ -29,6 +29,8 @@ This feature replaces that with a persisted cart: adding an item to cart creates
 - Q: What happens when "Proceed to Payment" is clicked? → A: The plan converts to a `Booking` via `POST /api/bookings` with `rentalPlanId` (contract §5) — confirmed: `items`/`startDate`/`endDate` are optional and silently ignored when `rentalPlanId` is present (derived server-side from the plan instead), `siteAddress` stays required, the response `totalAmount` is guaranteed to equal the plan's quoted amount exactly (no independent recomputation), the new `Booking` starts at `PENDING_DEPOSIT`, and the plan's `status` becomes `CONVERTED` in the same transaction.
 - Q: What happens after the deposit payment succeeds? → A: `Booking.status` moves to `PENDING_CONFIRMED`. **Corrected 2026-08-13: this already works.** `Spec-stripe-payment-checkout.md` documented this as a known backend gap at the time it was written, but the backend fixed it long ago — it's a non-issue today, not something this plan or PR 3 needs to wait on. `Spec-stripe-payment-checkout.md` itself is now stale on this point and needs a matching correction (flagged, not done here).
 - Q: Does the "checkout" step (before "Proceed to Payment") need its own no-commit pricing call? → A: Effectively already resolved by this design — `quote` (a prior, separate step) already is the no-commit preview; the checkout screen just displays the plan's already-quoted `totalAmount`, and only "Proceed to Payment" commits by calling `createBooking`. Spring Boot's own open question (B4 below) should be treated as most likely satisfied by this design, pending their confirmation.
+- Q: **(New 2026-08-13)** Can a customer abandon a rental plan without converting it? → A: Yes — Spring Boot has landed `POST /api/rentalPlans/{id}/cancel` (as-built, per `rental-plan-quote/spec.md` FR-RP-010 and `rental-plan-quote/contracts/checkout.md`, both confirmed against `api-contract-for-frontend.md` §5.5). It sets `status = "CANCELLED"`, clears `totalAmount`, and refreshes `updatedAt`, from any of `DRAFT`/`SAVED`/`QUOTED` — no "must be quoted" or "must have items" precondition, unlike `quote`. A `CONVERTED` plan can't be cancelled (`409 already_converted`); an already-`CANCELLED` plan can't be re-cancelled (`409 already_cancelled`).
+- Q: Does cancelling change the one-active-plan rule? → A: Yes, in the customer's favor — `CANCELLED` is a terminal status exactly like `CONVERTED` for purposes of BR-06/FR-RP-001. The moment a plan is cancelled, `POST /api/rentalPlans` succeeds again immediately. Every place this plan currently filters for "the caller's active plan" via `status != "CONVERTED"` (B9, `findActiveRentalPlan()`) now needs to also exclude `"CANCELLED"`, or a cancelled plan will be misread as still-active.
 
 ## 2. Backend (Spring Boot) dependencies
 
@@ -53,8 +55,9 @@ This feature replaces that with a persisted cart: adding an item to cart creates
   }
   ```
   Returned by every rental-plan route this workflow touches. `totalAmount` is `null` whenever `status != "QUOTED"`, including immediately after an item mutation reverts a `QUOTED` plan back to `DRAFT` — PR 1/2 UI must handle that null, not treat it as a loading/error state.
-- **B9** — Confirmed: no server-side "active plan" filter exists or is planned (contract §7). Frontend must call `GET /api/rentalPlans` and filter client-side for `status != "CONVERTED"`.
+- **B9** — Confirmed: no server-side "active plan" filter exists or is planned (contract §7). Frontend must call `GET /api/rentalPlans` and filter client-side for `status` not in `("CONVERTED", "CANCELLED")` — **updated 2026-08-13** to add `CANCELLED` to the exclusion set alongside `CONVERTED`, now that cancellation exists (see B13).
 - **B10** — Confirmed, and confirmed as a bigger change than originally assumed: today, item mutation on a `QUOTED` plan is a hard `409` (rejected outright), not silently allowed-through. The planned change makes it succeed with the revert-to-`DRAFT` behavior described above.
+- **B13** (new 2026-08-13) — `POST /api/rentalPlans/{id}/cancel` is **as-built** on the Spring Boot side (`rental-plan-quote/spec.md` FR-RP-010), not merely proposed. Sets `status = "CANCELLED"`, clears `totalAmount`, refreshes `updatedAt`; allowed from `DRAFT`/`SAVED`/`QUOTED`; `409 already_converted` from `CONVERTED`; `409 already_cancelled` if already `CANCELLED`; non-owner → `404`. Full contract in `api-contract-for-frontend.md` §5.5.
 
 ### Resolved — not actually a gap
 
@@ -73,7 +76,7 @@ Recommended over one combined PR: PR 1 no longer has *any* new-backend dependenc
 
 - Add `rentalPlanApi.get()`, `.addItem()`, `.removeItem()` to `src/app/api.ts`, wiring the already-live `POST /api/rentalPlans`, `POST /api/rentalPlans/{id}/items`, `DELETE /api/rentalPlans/{id}/items/{itemId}` routes (currently unwired per §2.4 of `Spec-rest-api-reference.md`).
 - **No new API client method for pricing** — compute `baseDailyRate × daysBetweenISO(startDate, endDate)` client-side, reusing the existing helper. Display as explicitly non-authoritative.
-- Rework "add to cart": fetch `GET /api/rentalPlans`, filter client-side for the caller's plan with `status != "CONVERTED"` (B9); create one if none exists; add the item via the items endpoint; use that call's own response (which already reflects updated `status`/`totalAmount`/`items`, per B10) rather than issuing a follow-up `GET`.
+- Rework "add to cart": fetch `GET /api/rentalPlans`, filter client-side for the caller's plan with `status` not in `("CONVERTED", "CANCELLED")` (B9); create one if none exists; add the item via the items endpoint; use that call's own response (which already reflects updated `status`/`totalAmount`/`items`, per B10) rather than issuing a follow-up `GET`.
 - Rework "remove from cart" the same way, via the item-delete endpoint.
 - Replace (or significantly rework) `CartContext`'s pure in-memory model, since the source of truth for cart contents becomes the persisted `RentalPlan`.
 - **Blocked on B11** before finalizing: whether the cart can still offer per-item dates (collapsing to one shared range only at the moment the plan is first created) or must ask for one shared date range up front, before the first item can be added at all.
@@ -91,10 +94,20 @@ Recommended over one combined PR: PR 1 no longer has *any* new-backend dependenc
 - `ConfirmationScreen.tsx`'s deliberate independence from booking status (`Spec-stripe-payment-checkout.md` FR-008) was built around a backend gap that no longer exists (B6, resolved) — worth revisiting now, not waiting on anything, since the status update it was designed around already happens.
 - Depends on B1, B2, B3 (all confirmed in scope). No remaining dependency on B6.
 
+### PR 4 — Cancel rental plan (new 2026-08-13)
+
+- Add `rentalPlanApi.cancel(planId)` (`POST /api/rentalPlans/{id}/cancel`, no body) to `src/app/api.ts`'s `rentalPlanCartApi`, matching the existing `.addItem()`/`.removeItem()` pattern.
+- Add `"CANCELLED"` to `RentalPlanApiStatus` (`src/app/types.ts`).
+- Update every place that currently reads "the caller's active plan" as `status !== "CONVERTED"` to also exclude `"CANCELLED"` (B9/B13) — concretely `findActiveRentalPlan()` in `CartContext.tsx` and the three `plan.status === "CONVERTED" ? null : plan.id` call sites in `App.tsx` that decide whether to keep tracking a plan as the live cart.
+- Surface a "Cancel rental plan" action somewhere a customer can see their in-progress cart/quote (e.g. `RentalPlanDetail.tsx` or the cart drawer) — confirm dialog recommended since it's destructive-feeling even though the backend keeps the row. On success, clear local cart state (`setCart([])`, `setPlanId(null)`, `setPlanItemIds(...)`) from the response rather than re-fetching.
+- Branch on `error` for the two cancel-specific codes: `already_converted` (plan already became a booking — surface differently from a generic error, e.g. "this plan is already booked") and `already_cancelled` (likely a stale UI / double-click — safe to treat as a no-op success).
+- No dependency on PR 2 or PR 3 — cancellation only needs PR 1's cart persistence (`rentalPlanCartApi`) already in place, which is already implemented in `src/app/api.ts`. Can ship independently and in parallel with PR 2/3.
+- Depends on B13 (confirmed, as-built on the Spring Boot side already — no coordination needed with a future backend PR, unlike PR 2/3).
+
 ## Dependencies & Assumptions
 
 - Treats `api-contract-for-frontend.md` (2026-08-13) as authoritative per its own stated precedence, superseding this document's and `Spec-rest-api-reference.md`'s earlier field-level assumptions wherever they disagreed.
-- Assumes B1-B3, B7-B10 are genuinely covered by Spring Boot's single PR (the contract describes them as the target behavior of that work) — B11, B12 are not covered by anything seen so far and still need raising separately. B6 is resolved (already fixed, unrelated to this PR).
+- Assumes B1-B3, B7-B10 are genuinely covered by Spring Boot's single PR (the contract describes them as the target behavior of that work) — B11, B12 are not covered by anything seen so far and still need raising separately. B6 is resolved (already fixed, unrelated to this PR). B13 (cancellation) is separately confirmed as-built already, independent of that PR's remaining scope.
 - Assumes `POST /api/bookings`'s existing `rentalPlanId` field is the intended (and now fully specified) conversion mechanism — confirmed, not just assumed, per contract §5.
 - Assumes the item-level plan routes (`POST/DELETE .../items`) already exist and work today per `Spec-rest-api-reference.md` §2.4, independent of this contract's changes to their behavior when `QUOTED`.
 
@@ -107,6 +120,7 @@ Recommended over one combined PR: PR 1 no longer has *any* new-backend dependenc
 
 ## Change Log
 
+- 2026-08-13: **Added rental plan cancellation.** Spring Boot has landed `POST /api/rentalPlans/{id}/cancel` (as-built — `rental-plan-quote/spec.md` FR-RP-010, `rental-plan-quote/contracts/checkout.md`), adding a new `CANCELLED` terminal status alongside `CONVERTED`. New B13; new PR 4 (independent of PR 2/3, only needs PR 1's already-implemented cart persistence). Updated B9 and every "active plan" filter description in this document (Clarifications, PR 1) to exclude `CANCELLED` as well as `CONVERTED`. Companion update: `api-contract-for-frontend.md` §1, §5.5 (new), §6, §7.
 - 2026-08-13: **Correction: B6 was never actually a gap** — the backend fixed `Booking.status → PENDING_CONFIRMED` long before this conversation; `Spec-stripe-payment-checkout.md`'s known-gaps list is stale on this point (flagged for its own correction, not done here). Removed B6 from PR 3's dependencies and reframed its `ConfirmationScreen.tsx` note from "once this lands" to "worth doing now."
 - 2026-08-13: Confirmed rental dates live once at the plan level, not per item — narrowed B11 to only the remaining mutability question (how/when the date range is set), since the location question is now settled.
 - 2026-08-13: Initial plan written. Establishes the `DRAFT`/`QUOTED`/`CONVERTED` lifecycle backed by `updatedAt`-as-`quotedAt`, cross-references Spring Boot's stated PR scope (B1-B4) against this workflow's actual requirements, flags additional backend items not in their stated scope (B5-B10), and sequences the web-portal side into three PRs by dependency rather than one combined PR.

@@ -99,8 +99,10 @@ export interface Booking {
 // Distinct from `RentalPlan` above (the mock server's shape, still used by mock mode
 // and the account "my rental plans" view) — MODE === "api" only, wired by
 // `rentalPlanCartApi` in api.ts. Wire status is uppercase; `SAVED` is declared but
-// never appears on a live plan.
-export type RentalPlanApiStatus = "DRAFT" | "SAVED" | "QUOTED" | "CONVERTED";
+// never appears on a live plan. `CANCELLED` (§5.5) is a terminal status set by
+// `POST /rentalPlans/{id}/cancel` — treat it like `CONVERTED` for "is this plan
+// still active" checks (both free up the one-active-plan slot).
+export type RentalPlanApiStatus = "DRAFT" | "SAVED" | "QUOTED" | "CONVERTED" | "CANCELLED";
 
 export interface RentalPlanItemResponse {
   id: number;

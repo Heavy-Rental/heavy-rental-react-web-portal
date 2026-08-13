@@ -442,7 +442,7 @@ const equipmentRes = useApiResource(
   }, [isApiMode, equipmentRes.status]);
 
   // API mode only: ensures a RentalPlan exists for the given date range, reusing the
-  // caller's one active (non-CONVERTED) plan if it already matches (B9 — no server-side
+  // caller's one active (non-CONVERTED, non-CANCELLED) plan if it already matches (B9 — no server-side
   // filter, so this always fetches the list and filters client-side; the backend itself
   // 409s a second create() while one exists, so checking first also avoids that). Returns
   // null (and sets cartDateError) if an active plan exists with a *different* range — the
@@ -527,7 +527,7 @@ const equipmentRes = useApiResource(
           const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
           setCart(synced);
           setPlanItemIds(itemIds);
-          setPlanId(plan.status === "CONVERTED" ? null : plan.id);
+          setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
         } else {
           setPlanId(id);
         }
@@ -644,7 +644,7 @@ const equipmentRes = useApiResource(
         const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
         setCart(synced);
         setPlanItemIds(itemIds);
-        setPlanId(plan.status === "CONVERTED" ? null : plan.id);
+        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
       } catch (err) {
         setCartDateError(
           err instanceof Error
@@ -668,7 +668,7 @@ const equipmentRes = useApiResource(
         const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
         setCart(synced);
         setPlanItemIds(itemIds);
-        setPlanId(plan.status === "CONVERTED" ? null : plan.id);
+        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
       })
       .catch((err) => {
         setCartDateError(

@@ -11,8 +11,8 @@ export interface CartItem {
 }
 
 // ─── REAL BACKEND (MODE === "api"): cart ↔ persisted RentalPlan ────────────────
-// In API mode, `cart` is a mirror of the customer's one active (non-CONVERTED)
-// RentalPlan (Spec-rental-plan-cart-checkout.md B9) — every mutation goes through
+// In API mode, `cart` is a mirror of the customer's one active (non-CONVERTED,
+// non-CANCELLED) RentalPlan (Spec-rental-plan-cart-checkout.md B9) — every mutation goes through
 // `rentalPlanCartApi` first, and `cart` is only ever set from that call's response,
 // never optimistically. These are pure derivation helpers, not part of the context
 // itself, since the async orchestration (which endpoint to call, when to create a
@@ -37,11 +37,11 @@ export function cartFromRentalPlan(
 }
 
 // No server-side "active plan" filter exists (contract §7) — a customer has at most
-// one non-CONVERTED plan at a time, enforced server-side.
+// one plan at a time whose status isn't CONVERTED or CANCELLED, enforced server-side.
 export function findActiveRentalPlan(
   plans: RentalPlanResponse[],
 ): RentalPlanResponse | undefined {
-  return plans.find((p) => p.status !== "CONVERTED");
+  return plans.find((p) => p.status !== "CONVERTED" && p.status !== "CANCELLED");
 }
 
 // Spec-ui-heavy-machinery-portal.md §4.3: all equipment in one booking must share a

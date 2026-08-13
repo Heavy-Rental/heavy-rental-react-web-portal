@@ -16,10 +16,10 @@ This is the literal request/response contract for the rental-plan checkout workf
 `RentalPlan.status` serializes via Java's `Enum.name()` — there is no casing transform anywhere in the codebase (confirmed: no `@JsonProperty`/enum-naming-strategy on `PlanStatus`). The wire values are:
 
 ```
-"DRAFT" | "SAVED" | "QUOTED" | "CONVERTED"
+"DRAFT" | "SAVED" | "QUOTED" | "CONVERTED" | "CANCELLED"
 ```
 
-**Not** `"draft"`/`"quoted"`/`"converted"` — `Spec-rental-plan-cart-checkout.md`'s Clarifications section uses lowercase throughout; treat that as documentation shorthand, not the real wire value, and code status comparisons against the uppercase strings above. `SAVED` is a declared-but-unused enum value (per that same doc's own Q&A) — it will never appear on a live plan, but don't treat it as invalid input if you ever see it.
+**Not** `"draft"`/`"quoted"`/`"converted"` — `Spec-rental-plan-cart-checkout.md`'s Clarifications section uses lowercase throughout; treat that as documentation shorthand, not the real wire value, and code status comparisons against the uppercase strings above. `SAVED` is a declared-but-unused enum value (per that same doc's own Q&A) — it will never appear on a live plan, but don't treat it as invalid input if you ever see it. `CANCELLED` is **new in this change** — see §5.5 for the cancel endpoint that produces it.
 
 ## 2. `RentalPlanResponse` — full shape
 
@@ -85,6 +85,21 @@ No shape change from what's live today — still returns `RentalPlanResponse` (�
 
 **Side effect:** the referenced `RentalPlan`'s `status` becomes `"CONVERTED"` in the same transaction. A subsequent `GET /rentalPlans/{id}` will reflect that, and `POST /rentalPlans` (start a new cart) becomes available again immediately.
 
+## 5.5. `POST /api/rentalPlans/{id}/cancel` — cancel a plan
+
+**New in this change.** Cancels the caller's plan regardless of its current `DRAFT`/`SAVED`/`QUOTED` state — there's no "must be quoted" or "must have items" precondition the way there is for `quote`.
+
+**Request:** no body.
+
+**Success response** — same `RentalPlanResponse` shape as §2: `status` → `"CANCELLED"`, `totalAmount` → `null` (cleared even if it currently held a quoted amount), `updatedAt` refreshed to now. `startDate`/`endDate`/`items`/`siteAddress` are left as-is — cancelling doesn't delete the plan or its items, just marks it terminal.
+
+- A `CONVERTED` plan cannot be cancelled — it's already become a booking. Returns `409 already_converted`.
+- An already-`CANCELLED` plan cannot be cancelled again. Returns `409 already_cancelled`.
+- Non-owner, or a plan id that doesn't exist → `404 not_found`, same convention as every other plan route (§6).
+- `CANCELLED` counts the same as `CONVERTED` for the one-active-plan rule (§7): cancelling immediately frees the caller to `POST /api/rentalPlans` again.
+
+**UI implication:** if you're showing "Quoted ✓" or any cached plan state client-side, cancelling should be treated the same way as the §3 item-mutation revert — trust the response you get back from `cancel`, don't diff against previously-held state.
+
 ## 6. Error codes relevant to this workflow
 
 All error responses share the shape `{"error": "<code>", "message": "<human-readable text>"}`. Codes below are what to branch UI logic on — **not** the `message` string, which can change wording without notice.
@@ -95,14 +110,16 @@ All error responses share the shape `{"error": "<code>", "message": "<human-read
 | `409` | `quote_not_ready` | `rentalPlanId` present but `status != "QUOTED"` (e.g. still `DRAFT`, never quoted) | **Yes** |
 | `409` | `quote_expired` | `rentalPlanId` present, `status == "QUOTED"`, but `now - updatedAt > 24h` | **Yes** — route this back to your "Get Quote" flow with a specific message, not a generic error toast |
 | `409` | `conflict` | Rare: two concurrent "Proceed to Payment" clicks race on the same plan (optimistic-lock double-submit) | No — pre-existing generic double-submit guard, now also reachable from checkout since this step writes `RentalPlan.status` too |
+| `409` | `already_converted` | `POST .../cancel` attempted on a plan whose `status == "CONVERTED"` | **Yes** — cancel-specific |
+| `409` | `already_cancelled` | `POST .../cancel` attempted on a plan whose `status == "CANCELLED"` already | **Yes** — cancel-specific |
 | `400` | `bad_request` | No `rentalPlanId` **and** no `items`/dates (the pre-existing direct-booking path's own validation) | No — existing convention, only relevant if you're not using `rentalPlanId` |
 | `400` | `validation_failed` | `siteAddress` blank or missing a 6-digit postal code | No — existing convention |
 
-`quote_not_ready` and `quote_expired` did not exist before this change and previously would have come back as generic `"error":"conflict"` with only the message text to go on — worth updating any existing error-handling code that might have been written against that assumption.
+`quote_not_ready` and `quote_expired` did not exist before this change and previously would have come back as generic `"error":"conflict"` with only the message text to go on — worth updating any existing error-handling code that might have been written against that assumption. `already_converted`/`already_cancelled` are new alongside them and only ever come from `POST .../cancel` — no other route returns them.
 
 ## 7. `GET /rentalPlans` — no server-side "active plan" filter
 
-There's no query param to fetch "just my current active plan." A customer has at most one non-`CONVERTED` plan at a time (enforced server-side, `SPEC-rental-plan-quote.md` BR-06), so filter client-side: the plan (if any) where `status != "CONVERTED"`.
+There's no query param to fetch "just my current active plan." A customer has at most one plan at a time whose status is not `"CONVERTED"` **or `"CANCELLED"`** (enforced server-side, `SPEC-rental-plan-quote.md` BR-06/FR-RP-001), so filter client-side: the plan (if any) where `status` is not in `("CONVERTED", "CANCELLED")`. Both terminal statuses free up the one-active-plan slot equally — cancelling, like converting, immediately unblocks a new `POST /rentalPlans`.
 
 ## 8. Single-item price preview — no new endpoint
 
@@ -121,4 +138,5 @@ days  = (endDate - startDate in whole days) + 1     // inclusive of both ends
 
 ## Change Log
 
+- 2026-08-13: **Added `POST /api/rentalPlans/{id}/cancel` (§5.5).** New `CANCELLED` status value (§1); allowed from `DRAFT`/`SAVED`/`QUOTED`, blocked from `CONVERTED` (`409 already_converted`) and from an already-`CANCELLED` plan (`409 already_cancelled`); clears `totalAmount` and refreshes `updatedAt` the same way item mutation does. §7's one-active-plan filter now excludes `CANCELLED` alongside `CONVERTED`. Source of truth: `rental-plan-quote/spec.md` FR-RP-010 and `rental-plan-quote/contracts/checkout.md`, both already as-built on the Spring Boot side.
 - 2026-08-13: Initial contract, generated from `plan.md` v0.3.0. Covers status casing, the full `RentalPlanResponse` shape with new `updatedAt`/`createdAt` fields, the item-mutation revert-to-`DRAFT` behavior, the `rentalPlanId` checkout contract, the new `quote_not_ready`/`quote_expired` error codes, and the client-side single-item pricing formula (no `/api/pricing/estimate` endpoint).
