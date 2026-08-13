@@ -59,6 +59,7 @@ import {
   calcFullPaymentDueDate,
   setAuthToken,
   login,
+  logout,
   createDepositBooking,
   paymentApi,
 } from "./app/api";
@@ -2587,12 +2588,18 @@ export default function App() {
     scheduleExpiry(session);
   };
   const handleLogout = () => {
-    if (expiryTimer.current) clearTimeout(expiryTimer.current);
-    clearSession();
-    setAuthToken(null);
-    setUser(null);
-    setView("portal");
-  };
+  if (import.meta.env.MODE === "api") {
+    logout().catch(() => {
+      // best-effort revoke — still clear the local session even if this fails
+    });
+  }
+  if (expiryTimer.current) clearTimeout(expiryTimer.current);
+  clearSession();
+  setAuthToken(null);
+  setUser(null);
+  setView("portal");
+};
+
 
   if (view === "customer" && user)
     return (
