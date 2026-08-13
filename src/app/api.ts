@@ -112,6 +112,11 @@ export interface CreateBookingRequest {
   deliveryNotes?: string;
 }
 
+export interface BookingItemLine {
+  assetName: string;
+  serialNumber: string;
+}
+
 export interface CreateBookingResponse {
   bookingId: number;
   customerName: string;
@@ -119,8 +124,12 @@ export interface CreateBookingResponse {
   endDate: string;
   bookingStatus: string;
   siteAddress: string;
-  assetName: string;
-  serialNumber: string;
+  // Was a flat assetName/serialNumber pair; the real backend's BookingResponse now
+  // carries one row per booked item (dto/BookingItemLine.java, HR-113) — a booking can
+  // cover more than one asset. Reading the old flat fields here was silently undefined
+  // at runtime (TS didn't catch it, nothing enforces the interface against live JSON),
+  // which crashed the admin Bookings search the moment `.toLowerCase()` ran on it.
+  items: BookingItemLine[];
   deliveryNotes: string;
   totalAmount: number;
   depositAmount: number;

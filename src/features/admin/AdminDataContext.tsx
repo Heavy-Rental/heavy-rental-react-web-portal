@@ -176,14 +176,19 @@ function buildBookingRows(
     const dates = `${fmt(b.startDate)} – ${fmt(b.endDate)}`;
 
     if (isApiBookingRecord(b)) {
-      // Flat API-mode shape: customer/asset are already inlined, no joins needed.
+      // API-mode shape: customer is already inlined, no join needed. `items` can cover
+      // more than one asset per booking (dto/BookingItemLine.java, HR-113) — join every
+      // item's name rather than assuming a single flat assetName (that field no longer
+      // exists on the real response; reading it was undefined and crashed the search
+      // filter's `.toLowerCase()` call the moment a booking without a fallback showed up).
       // depot and paidStatus have no real equivalent here — approximated from
       // siteAddress and remainingBalance respectively.
+      const equipment = (b.items ?? []).map((i) => i.assetName).join(", ") || "—";
       return {
         id: `RNT-${String(b.bookingId).padStart(4, "0")}`,
         apiId: b.bookingId,
         customer: b.customerName,
-        equipment: b.assetName,
+        equipment,
         depot: b.siteAddress,
         dates,
         days,
