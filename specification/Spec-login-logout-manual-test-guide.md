@@ -7,7 +7,7 @@
 
 ## Purpose
 
-`Spec-frontend-authentication.md` already contains an "Appendix: Manual Testing" section, but its first step (start the mock server via a command named **"Mock it"**) does not match the command actually registered by the installed Thinker extension (`thinker.mock-server`, v21.2.1). This guide corrects that step and lays out the full local environment setup + walkthrough as a standalone, copy-pasteable procedure — no test framework exists in this repo (`Spec-project-environment.md` FR-012), so this remains manual verification.
+`Spec-frontend-authentication.md` already contains an "Appendix: Manual Testing" section, but its first step (start the mock server via a command named **"Mock it"**) does not match the command actually registered by the installed Thinker extension (`thinker.mock-server`, v21.2.1). This guide corrects that step and lays out the full local environment setup + walkthrough as a standalone, copy-pasteable procedure. Session persist and overlay *render* are also covered by `npm test` (`src/app/auth.test.ts`, `src/components/AuthLoadingOverlay.test.tsx`); this guide is still required for the click-through (including the 500ms overlay).
 
 ## Prerequisites
 
@@ -56,7 +56,7 @@ Open the printed local URL (typically `http://localhost:5173`) in a browser.
 1. Click **"Sign In"** in the top nav.
 2. Enter `alex.tan@example.sg` / `customer123`.
 3. Submit.
-4. ✅ Expect: redirected to the customer view (not the marketing homepage).
+4. ✅ Expect: a full-screen overlay with a centered Material 3 spinner, then the customer view (not the marketing homepage). The overlay must not appear on a later reload of an existing session.
 
 ## Step 4 — Confirm the mock API call and auth header
 

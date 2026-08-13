@@ -35,6 +35,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { CustomerOnboarding } from "./features/browse/CustomerOnboarding";
+import { equipmentImageSrc } from "./features/browse/equipmentImageSrc";
 import { AdminDashboard } from "./features/admin/AdminDashboard";
 import { AssetFormModal } from "./features/admin/assets/AssetFormModal";
 import { SafetyPage } from "./app/SafetyPage";
@@ -77,8 +78,14 @@ import {
   isExpired,
 } from "./app/auth";
 import { mono, display, sans } from "./lib/styles";
-import { daysBetweenISO } from "./lib/dateFormat";
+import { daysBetweenISO, parseISODate, type QuoteDateRange } from "./lib/dateFormat";
 import { DateRangeBar } from "./components/DateRangeBar";
+import {
+  buildQuoteCartItems,
+  shouldPromptDeliveryDetails,
+  toggleEquipmentInPlan,
+} from "./features/checkout/specsPlan";
+import { AuthLoadingOverlay } from "./components/AuthLoadingOverlay";
 import {
   CartProvider,
   useCart,
@@ -231,14 +238,14 @@ function LoginModal({
   onLogin,
   onClose,
 }: {
-  onLogin: (role: Role, name: string, email: string) => void;
+  onLogin: (role: Role, name: string, email: string) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const normalizedEmail = email.toLowerCase().trim();
     const account = ACCOUNTS[normalizedEmail];
@@ -246,7 +253,7 @@ function LoginModal({
       setError("Invalid email or password.");
       return;
     }
-    onLogin(account.role, account.name, normalizedEmail);
+    await onLogin(account.role, account.name, normalizedEmail);
   };
 
   return (
@@ -433,17 +440,41 @@ const equipmentRes = useApiResource(
     }
   };
 
+  const applyQuoteDatesToBar = (quoteDates?: QuoteDateRange) => {
+    if (!quoteDates) return;
+    setSharedStartDate(quoteDates.startDate);
+    setSharedEndDate(quoteDates.endDate);
+    const start = parseISODate(quoteDates.startDate);
+    setSharedMonth(start.getMonth());
+    setSharedYear(start.getFullYear());
+  };
+
+  const applySpecsRecsToPlan = (
+    recs?: EquipmentItem[],
+    quoteDates?: QuoteDateRange,
+  ) => {
+    if (!recs) return;
+    setSpecsRecs(recs);
+    setPendingAutoAdd(null);
+    setCartDateError(null);
+    applyQuoteDatesToBar(quoteDates);
+    if (quoteDates) {
+      setCart(buildQuoteCartItems(recs, quoteDates));
+      setCartOpen(true);
+    } else {
+      setCart([]);
+      setCartOpen(false);
+      setDateBarOpen(true);
+    }
+  };
+
   if (!onboardingMode) {
     return (
       <CustomerOnboarding
         userName={userName}
-        onDone={(mode, recs) => {
+        onDone={(mode, recs, quoteDates) => {
           setOnboardingMode(mode);
-          if (recs) {
-            setSpecsRecs(recs);
-            setPendingAutoAdd(recs);
-            setDateBarOpen(true);
-          }
+          applySpecsRecsToPlan(recs, quoteDates);
         }}
       />
     );
@@ -454,14 +485,10 @@ const equipmentRes = useApiResource(
       <CustomerOnboarding
         userName={userName}
         initialStep="upload"
-        onDone={(mode, recs) => {
+        onDone={(mode, recs, quoteDates) => {
           setSpecUploadOpen(false);
           setOnboardingMode(mode);
-          if (recs) {
-            setSpecsRecs(recs);
-            setPendingAutoAdd(recs);
-            setDateBarOpen(true);
-          }
+          applySpecsRecsToPlan(recs, quoteDates);
         }}
       />
     );
@@ -521,10 +548,39 @@ const equipmentRes = useApiResource(
       item,
     ]);
     setCartOpen(true);
-    if (!siteAddressPrompted) {
+    // After Add All (specs mode), address is collected from the highlighted Add
+    // control — do not pop Delivery Details from equipment-card Select.
+    if (shouldPromptDeliveryDetails(onboardingMode) && !siteAddressPrompted) {
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
+  };
+
+  // Specs-banner toggle: add/remove Rental Plan items without opening Delivery Details.
+  const toggleSpecsRecInPlan = (eq: EquipmentItem) => {
+    if (cart.some((c) => c.equipment.id === eq.id)) {
+      setCart((prev) => toggleEquipmentInPlan(prev, eq, { startDate: "", endDate: "" }));
+      return;
+    }
+    if (!sharedStartDate || !sharedEndDate) return;
+    const other = cart.find((c) => c.equipment.id !== eq.id);
+    if (
+      other &&
+      (other.startDate !== sharedStartDate || other.endDate !== sharedEndDate)
+    ) {
+      setCartDateError(
+        "All equipment in one booking must share the same rental dates. Remove the existing item(s) first, or match their dates.",
+      );
+      return;
+    }
+    setCartDateError(null);
+    setCart((prev) =>
+      toggleEquipmentInPlan(prev, eq, {
+        startDate: sharedStartDate,
+        endDate: sharedEndDate,
+      }),
+    );
+    setCartOpen(true);
   };
 
   const handleChatbotSelect = (eq: EquipmentItem) => {
@@ -1319,7 +1375,9 @@ const equipmentRes = useApiResource(
           </h1>
           <p className="text-muted-foreground mt-2 text-sm">
             {onboardingMode === "specs"
-              ? "Matched from your uploaded specs. Set your dates below, then select any machine to add it to your cart."
+              ? sharedStartDate && sharedEndDate
+                ? "Dates are filled from your quote. Select any machine to add it to your cart."
+                : "Matched from your uploaded specs. Set your dates below, then select any machine to add it to your cart."
               : "Pick your rental dates once below, then select any machine — every item in one booking shares the same dates."}
           </p>
         </div>
@@ -1386,17 +1444,22 @@ const equipmentRes = useApiResource(
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {specsRecs.map((eq, i) => (
+              {specsRecs.map((eq, i) => {
+                const inPlan = cart.some((c) => c.equipment.id === eq.id);
+                const thumb = equipmentImageSrc(eq.img, 120, 120);
+                return (
                 <div
                   key={eq.id}
-                  className={`flex items-center gap-3 p-3 bg-card border ${i === 0 ? "border-primary/50" : "border-border"}`}
+                  className={`flex items-center gap-3 p-3 bg-card border ${inPlan ? "border-primary" : i === 0 ? "border-primary/50" : "border-border"}`}
                 >
                   <div className="w-14 h-14 bg-muted overflow-hidden shrink-0">
-                    <img
-                      src={`https://images.unsplash.com/${eq.img}?w=120&h=120&fit=crop&auto=format`}
-                      alt={eq.name}
-                      className="w-full h-full object-cover opacity-80"
-                    />
+                    {thumb ? (
+                      <img
+                        src={thumb}
+                        alt={eq.name}
+                        className="w-full h-full object-cover opacity-80"
+                      />
+                    ) : null}
                   </div>
                   <div className="flex-1 min-w-0">
                     {i === 0 && (
@@ -1422,26 +1485,21 @@ const equipmentRes = useApiResource(
                   </div>
                   <button
                     disabled={!sharedStartDate || !sharedEndDate}
-                    onClick={() =>
-                      sharedStartDate &&
-                      sharedEndDate &&
-                      addToCart({
-                        equipment: eq,
-                        startDate: sharedStartDate,
-                        endDate: sharedEndDate,
-                      })
-                    }
+                    onClick={() => toggleSpecsRecInPlan(eq)}
                     title={
                       !sharedStartDate || !sharedEndDate
                         ? "Set your dates in the bar above first"
-                        : undefined
+                        : inPlan
+                          ? "Remove from your rental plan"
+                          : undefined
                     }
-                    className="shrink-0 px-3 py-1.5 bg-primary text-primary-foreground text-xs font-bold tracking-wider uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    className={`shrink-0 px-3 py-1.5 text-xs font-bold tracking-wider uppercase transition-all disabled:opacity-40 disabled:cursor-not-allowed ${inPlan ? "bg-secondary text-foreground border border-primary" : "bg-primary text-primary-foreground hover:brightness-110"}`}
                   >
-                    Select
+                    {inPlan ? "Selected" : "Select"}
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -1469,6 +1527,7 @@ const equipmentRes = useApiResource(
               }
               siteAddress={siteAddress}
               onEditAddress={() => setSiteAddressModalOpen(true)}
+              highlightAddAddress={cart.length > 0 && !siteAddress}
               totalCost={totalCost}
               onCheckout={() => {
                 setCartOpen(false);
@@ -2516,6 +2575,7 @@ export default function App() {
   );
   const [user, setUser] = useState<StoredSession | null>(initialSession.user);
   const [showLogin, setShowLogin] = useState(false);
+  const [authOverlay, setAuthOverlay] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState("All");
   const [sessionNotice, setSessionNotice] = useState<string | null>(
@@ -2557,35 +2617,45 @@ export default function App() {
   }, []);
 
   const handleLogin = async (role: Role, name: string, email: string) => {
+    const started = Date.now();
+    setAuthOverlay(true);
     setShowLogin(false);
-    setView(viewForRole(role));
-    let id: number | null = null;
     try {
-      const users = await userApi.list();
-      id = users.find((u) => u.email.toLowerCase() === email)?.id ?? null;
+      let id: number | null = null;
+      try {
+        const users = await userApi.list();
+        id = users.find((u) => u.email.toLowerCase() === email)?.id ?? null;
+      } catch {
+        // no linked account for this email — proceed with id: null (existing behavior)
+      }
+      let session: StoredSession;
+      if (import.meta.env.MODE === "api") {
+        const password = ACCOUNTS[email]?.password;
+        const { accessToken, expiresIn } = await login(email, password);
+        const issuedAt = Date.now();
+        session = {
+          token: accessToken,
+          id,
+          name,
+          role,
+          issuedAt,
+          expiresAt: issuedAt + expiresIn * 1000,
+        };
+      } else {
+        session = issueSession({ id, name, role });
+      }
+      const wait = Math.max(0, 500 - (Date.now() - started));
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      saveSession(session);
+      setAuthToken(session.token);
+      setUser(session);
+      scheduleExpiry(session);
+      setView(viewForRole(role));
     } catch {
-      // no linked account for this email — proceed with id: null (existing behavior)
+      setSessionNotice("Couldn't sign in. Please try again.");
+    } finally {
+      setAuthOverlay(false);
     }
-    let session: StoredSession;
-    if (import.meta.env.MODE === "api") {
-      const password = ACCOUNTS[email]?.password;
-      const { accessToken, expiresIn } = await login(email, password);
-      const issuedAt = Date.now();
-      session = {
-        token: accessToken,
-        id,
-        name,
-        role,
-        issuedAt,
-        expiresAt: issuedAt + expiresIn * 1000,
-      };
-    } else {
-      session = issueSession({ id, name, role });
-    }
-    saveSession(session);
-    setAuthToken(session.token);
-    setUser(session);
-    scheduleExpiry(session);
   };
   const handleLogout = () => {
   if (import.meta.env.MODE === "api") {
@@ -2657,6 +2727,7 @@ export default function App() {
       {showLogin && (
         <LoginModal onLogin={handleLogin} onClose={() => setShowLogin(false)} />
       )}
+      <AuthLoadingOverlay open={authOverlay} />
       {sessionNotice && (
         <div className="fixed top-4 right-4 z-50 bg-card border border-primary/40 px-4 py-3 text-sm text-foreground flex items-center gap-2 shadow-xl">
           <AlertTriangle size={15} className="text-primary shrink-0" />
