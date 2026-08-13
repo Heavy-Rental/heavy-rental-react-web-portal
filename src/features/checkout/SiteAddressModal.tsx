@@ -25,47 +25,49 @@ export function SiteAddressModal({
 }) {
   const [form, setForm] = useState({ address, notes });
   const [error, setError] = useState<string | null>(null);
-  const [lookedUpPostal, setLookedUpPostal] = useState("");
-  const [lookupStatus, setLookupStatus] = useState<
-    "idle" | "loading" | "found" | "miss"
-  >("idle");
+  const [lookup, setLookup] = useState<{
+    query: string;
+    postal: string;
+    status: "loading" | "found" | "miss";
+  } | null>(null);
 
+  const query = form.address.trim();
   const typedPostal = extractPostalCode(form.address);
-  const postalCode = typedPostal || lookedUpPostal;
+  const lookupMatches = lookup !== null && lookup.query === query;
+  const postalCode = typedPostal || (lookupMatches ? lookup.postal : "");
+  const lookupStatus: "idle" | "loading" | "found" | "miss" = typedPostal
+    ? "idle"
+    : query.length < 6
+      ? "idle"
+      : lookupMatches
+        ? lookup.status
+        : "loading";
 
   useEffect(() => {
-    if (typedPostal) {
-      setLookedUpPostal("");
-      setLookupStatus("idle");
-      return;
-    }
-    const q = form.address.trim();
-    if (q.length < 6) {
-      setLookedUpPostal("");
-      setLookupStatus("idle");
-      return;
-    }
+    if (typedPostal || query.length < 6) return;
     const ac = new AbortController();
     const timer = window.setTimeout(() => {
-      setLookupStatus("loading");
-      void lookupSingaporePostal(q, ac.signal)
+      setLookup({ query, postal: "", status: "loading" });
+      void lookupSingaporePostal(query, ac.signal)
         .then((found) => {
           if (ac.signal.aborted) return;
-          setLookedUpPostal(found ?? "");
-          setLookupStatus(found ? "found" : "miss");
+          setLookup({
+            query,
+            postal: found ?? "",
+            status: found ? "found" : "miss",
+          });
         })
         .catch((err: unknown) => {
           if (err instanceof DOMException && err.name === "AbortError") return;
           if (ac.signal.aborted) return;
-          setLookedUpPostal("");
-          setLookupStatus("miss");
+          setLookup({ query, postal: "", status: "miss" });
         });
     }, 400);
     return () => {
       window.clearTimeout(timer);
       ac.abort();
     };
-  }, [form.address, typedPostal]);
+  }, [query, typedPostal]);
 
   const handleSave = () => {
     if (!form.address.trim()) {
