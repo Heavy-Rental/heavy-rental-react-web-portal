@@ -44,6 +44,11 @@ export async function login(email: string, password: string): Promise<{ accessTo
   });
   if (!res.ok) throw new Error("Login failed");
   return res.json();
+
+  
+}
+export function logout(): Promise<void> {
+  return request("/auth/logout", { method: "POST" });
 }
 
 

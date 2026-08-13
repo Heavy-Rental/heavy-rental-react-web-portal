@@ -22,6 +22,7 @@ When these fixes are correct:
 1. `rentalPlanApi` resolves to the same route the real backend's `RentalPlanController` actually serves, in both `dev:mock` and `dev:api` (FIX-01).
 2. Loading the equipment catalog (Asset Records, the customer browse page, the landing page's category tiles) no longer triggers two concurrent multi-megabyte downloads of the same data in development, eliminating the intermittent `net::ERR_INCOMPLETE_CHUNKED_ENCODING` failures this caused (FIX-02).
 3. The Admin Dashboard's Bookings and Users tabs render correctly against the real backend's booking response, instead of crashing the entire dashboard with an uncaught `TypeError` (FIX-03).
+4. Logging out in API mode actually revokes the session token server-side, instead of only discarding it client-side (ADD-01).
 
 ---
 
@@ -70,6 +71,14 @@ When these fixes are correct:
 **THEN** `buildBookingRows` throws `Uncaught TypeError: Cannot read properties of undefined (reading 'map')` trying to call `.map()` on the nonexistent `equipmentIds` field, crashing the entire dashboard (no error boundary exists in this app, so the crash renders as a blank page).
 
 **Fix**: `bookingApi.list()` (`src/app/api.ts`) now declares its honest return type — `(Booking | CreateBookingResponse)[]` — since the same `/bookings` path returns different shapes depending on which backend answers it. `AdminDataContext.tsx` adds a type guard, `isApiBookingRecord()`, keyed on the presence of `bookingId` (only the real shape has it), and both `buildBookingRows` and `buildUserRows` branch per-item on that guard to produce the same `BookingRow`/`UserRow` view-models from either shape. See §4 for the two fields this fix approximates rather than computes exactly.
+
+### ADD-01: Server-side session revocation on logout (API mode)
+
+**GIVEN** `login()` (`api.ts:38-47`) performs a real `getBearerToken` → `login` round-trip against the backend in API mode, issuing a real bearer token
+**AND** `handleLogout` (`App.tsx`, previously) only cleared client-side state (`clearSession()`, `setAuthToken(null)`, `setUser(null)`) and never told the backend the session was ending
+**THEN** a token issued by the real backend was never actually revoked server-side on logout — only forgotten locally.
+
+**Change**: added `logout(): Promise<void>` to `api.ts:50-52`, posting to `/auth/logout` via the shared `request()` helper (which attaches the current `Authorization: Bearer` header automatically). `handleLogout` (`App.tsx:2590-2601`) now calls it, gated to `import.meta.env.MODE === "api"` — matching how `login()` itself is only invoked in that mode, so `dev:mock`'s logout stays purely client-side, unchanged. The call is best-effort: its rejection is caught and ignored, so a failed/unreachable server-side revoke never blocks the local session cleanup that follows it. Implemented directly by the user on this branch; verified here via `npx tsc --noEmit -p tsconfig.app.json` (clean) and a read of the resulting code.
 
 ---
 
@@ -151,3 +160,4 @@ Both fixes are additive/opt-in on `ChartTip` (`unit`/`valueFormatter` both defau
 |---------|------|--------|
 | 0.1.0 | 2026-08-12 | Initial draft, documenting FIX-01 (rentalPlans naming mismatch, committed), FIX-02 (StrictMode duplicate equipment fetch via AbortController), and FIX-03 (Admin Dashboard booking-shape crash) — all found and fixed while validating the admin login/dashboard flow against the real backend on the `122-fix-error-admin-login` branch. |
 | 0.2.0 | 2026-08-13 | Added §8: CHANGE-01 (removed the unused Pricing tab and its `PricingRule` data layer) and CHANGE-02 (fixed two leaked internal `adm-*` chart labels — Utilization and Revenue tooltips on the Overview tab — and confirmed the Fleet Health pie chart wasn't affected). Both made on the `142-fix-admin-login-web-portal-utilization` branch; neither is API-mode specific. |
+| 0.3.0 | 2026-08-13 | Added ADD-01 to §3: a real `logout()` API call (`POST /auth/logout`), wired into `handleLogout` gated to API mode, so a real backend session token is actually revoked server-side on logout instead of only being forgotten client-side. Implemented by the user directly; documented here after review. |
