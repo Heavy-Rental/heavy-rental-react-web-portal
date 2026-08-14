@@ -66,6 +66,8 @@ The response is the same `RentalPlanResponse` shape as §2, just reflecting the 
 
 No shape change from what's live today — still returns `RentalPlanResponse` (§2). What's new: this call now reliably refreshes `updatedAt` as part of succeeding (today it doesn't — see `plan.md` Step 1), so re-quoting a stale plan is exactly how you reset the 24-hour window.
 
+**Pricing source (clarified 2026-08-14):** this route is Spring-only arithmetic — it sums the plan's already-snapshotted line `subtotal`s (`PricingClient`/`DefaultPricingClient`), with no HTTP call to Haystack. `Spec-rental-plan-cart-checkout.md` and `Spec-rest-api-reference.md` §8.1 previously described this as Haystack-backed; that was incorrect and has been corrected in the former (the latter is outside this correction's scope). Don't design any loading/latency UI around Haystack round-trip time for this call.
+
 ## 5. `POST /api/bookings` with `rentalPlanId` — checkout
 
 **Request:**
