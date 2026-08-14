@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useMemo,
   useState,
   type ReactNode,
   type Dispatch,
@@ -28,6 +29,7 @@ import {
 } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
 import { deriveAssetRecord, resolvePhoto, type AssetRecord } from "../../app/assetRecord";
+import { todayISO } from "../../lib/dateFormat";
 import type { DeploymentStatus, LifecycleStatus } from "./adminFormat";
 
 /* eslint-disable react-refresh/only-export-components -- Same rationale as CartContext: the
@@ -106,6 +108,36 @@ function isApiBookingRecord(
   b: ApiBooking | CreateBookingResponse,
 ): b is CreateBookingResponse {
   return "bookingId" in b;
+}
+
+const ACTIVE_BOOKING_STATUSES = new Set(["CONFIRMED", "MOBILISED"]);
+
+// Asset.available is a manually-set admin flag (AssetFormModal's Availability toggle) with
+// no automatic tie to bookings, so it drifts from reality (e.g. an asset can sit "Available"
+// while a confirmed booking has it out today). This cross-references live bookings against
+// today's date instead, for a status the Assets tab can actually trust.
+function buildOnRentAssetIds(
+  apiBookings: (ApiBooking | CreateBookingResponse)[],
+  equipment: Asset[],
+  today: string,
+): Set<number> {
+  const ids = new Set<number>();
+  for (const b of apiBookings) {
+    if (today < b.startDate || today > b.endDate) continue;
+    if (isApiBookingRecord(b)) {
+      if (!ACTIVE_BOOKING_STATUSES.has(b.bookingStatus)) continue;
+      // Real backend booking items carry serialNumber, not assetId (dto/BookingItemLine.java,
+      // HR-113) — join on serial number instead.
+      for (const item of b.items ?? []) {
+        const asset = equipment.find((e) => e.serialno === item.serialNumber);
+        if (asset) ids.add(asset.id);
+      }
+    } else {
+      if (!ACTIVE_BOOKING_STATUSES.has(b.status)) continue;
+      for (const id of b.equipmentIds) ids.add(id);
+    }
+  }
+  return ids;
 }
 
 function buildUserRows(
@@ -427,6 +459,7 @@ interface AdminDataValue {
   setUsers: Dispatch<SetStateAction<UserRow[]>>;
   bookings: BookingRow[];
   setBookings: Dispatch<SetStateAction<BookingRow[]>>;
+  onRentAssetIds: Set<number>;
   fleet: FleetAsset[];
   setFleet: Dispatch<SetStateAction<FleetAsset[]>>;
   lifecycles: RentalLifecycle[];
@@ -447,6 +480,14 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
   const monthlyUtilRes = useApiResource((signal) => monthlyUtilizationApi.list(signal));
   const monthlyUtilization = monthlyUtilRes.data ?? [];
   const categories = Array.from(new Set(equipment.map((e) => e.category)));
+
+  const onRentAssetIds = useMemo(
+    () =>
+      bookingsRes.data && equipmentRes.data
+        ? buildOnRentAssetIds(bookingsRes.data, equipmentRes.data, todayISO())
+        : new Set<number>(),
+    [bookingsRes.data, equipmentRes.data],
+  );
 
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [assetsSeededFrom, setAssetsSeededFrom] =
@@ -541,6 +582,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         setUsers,
         bookings,
         setBookings,
+        onRentAssetIds,
         fleet,
         setFleet,
         lifecycles,

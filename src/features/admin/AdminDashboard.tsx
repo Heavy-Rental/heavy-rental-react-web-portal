@@ -124,6 +124,7 @@ function AdminDashboardContent({
             assets={data.assets}
             setAssets={data.setAssets}
             categories={data.categories}
+            onRentAssetIds={data.onRentAssetIds}
             showToast={data.showToast}
           />
         )}

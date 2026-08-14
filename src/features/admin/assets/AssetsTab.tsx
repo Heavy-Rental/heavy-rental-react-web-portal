@@ -22,11 +22,13 @@ export function AssetsTab({
   assets,
   setAssets,
   categories,
+  onRentAssetIds,
   showToast,
 }: {
   assets: AssetRecord[];
   setAssets: Dispatch<SetStateAction<AssetRecord[]>>;
   categories: string[];
+  onRentAssetIds: Set<number>;
   showToast: (msg: string, type?: "success" | "error") => void;
 }) {
   const [assetForm, setAssetForm] = useState(false);
@@ -159,6 +161,8 @@ export function AssetsTab({
     }
   };
 
+  const isOnRent = (a: AssetRecord) => onRentAssetIds.has(a.id);
+
   const filteredAssets = assets.filter((a) => {
     const q = assetSearch.toLowerCase();
     return (
@@ -221,7 +225,7 @@ export function AssetsTab({
             ASSET RECORDS
           </h1>
           <p className="text-muted-foreground mt-2 text-sm">
-            {assets.length} assets · {assets.filter((a) => a.available).length} available ·{" "}
+            {assets.length} assets · {assets.filter((a) => !isOnRent(a)).length} available ·{" "}
             {assets.filter((a) => a.condition === "NEEDS_REPAIR").length} need service
           </p>
         </div>
@@ -276,12 +280,12 @@ export function AssetsTab({
           { label: "Total Assets", value: assets.length, color: "text-foreground" },
           {
             label: "Available",
-            value: assets.filter((a) => a.available).length,
+            value: assets.filter((a) => !isOnRent(a)).length,
             color: "text-green-400",
           },
           {
             label: "On Rent",
-            value: assets.filter((a) => !a.available).length,
+            value: assets.filter(isOnRent).length,
             color: "text-amber-400",
           },
           {
@@ -359,9 +363,9 @@ export function AssetsTab({
                   </td>
                   <td className="px-4 py-3">
                     <span
-                      className={`px-2 py-0.5 text-xs font-semibold border ${a.available ? "bg-green-500/10 text-green-400 border-green-500/30" : "bg-amber-500/10 text-amber-400 border-amber-500/30"}`}
+                      className={`px-2 py-0.5 text-xs font-semibold border ${!isOnRent(a) ? "bg-green-500/10 text-green-400 border-green-500/30" : "bg-amber-500/10 text-amber-400 border-amber-500/30"}`}
                     >
-                      {a.available ? "Available" : "On Rent"}
+                      {isOnRent(a) ? "On Rent" : "Available"}
                     </span>
                   </td>
                   <td className="px-4 py-3">
