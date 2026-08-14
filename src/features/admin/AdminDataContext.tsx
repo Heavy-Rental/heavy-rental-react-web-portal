@@ -28,9 +28,9 @@ import {
   type CreateBookingResponse,
 } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
-import { deriveAssetRecord, resolvePhoto, type AssetRecord } from "../../app/assetRecord";
+import { deriveAssetRecord, resolvePhoto, formatCondition, type AssetRecord } from "../../app/assetRecord";
 import { todayISO } from "../../lib/dateFormat";
-import type { DeploymentStatus, LifecycleStatus } from "./adminFormat";
+import type { DeploymentStatus } from "./adminFormat";
 
 /* eslint-disable react-refresh/only-export-components -- Same rationale as CartContext: the
    provider, its hook, and the domain types/seed-derivation helpers it exposes are one cohesive
@@ -81,25 +81,6 @@ export interface FleetAsset {
   condition: ConditionType;
 }
 
-export interface LifecycleEvent {
-  id: string;
-  timestamp: string;
-  status: LifecycleStatus;
-  officer: string;
-  notes: string;
-  odometer?: string;
-  condition?: ConditionType | "";
-}
-
-export interface RentalLifecycle {
-  bookingId: string;
-  customer: string;
-  equipment: string;
-  serialno: string;
-  currentStatus: LifecycleStatus;
-  events: LifecycleEvent[];
-}
-
 // Real backend's GET /bookings returns a flat, denormalized shape (no rentalPlanId/
 // depotId/equipmentIds join keys — customer/asset info is inlined instead). This guard
 // lets the builders below branch per-item so both this API-mode shape and the mock's
@@ -138,6 +119,70 @@ function buildOnRentAssetIds(
     }
   }
   return ids;
+}
+
+interface AssetDeployment {
+  status: DeploymentStatus;
+  bookingId: string;
+  customer: string;
+  site: string;
+  note: string;
+}
+
+// Per-asset current deployment, derived from real bookings covering today — mirrors
+// buildOnRentAssetIds's date-window check but also distinguishes CONFIRMED (awaiting
+// dispatch) from MOBILISED (in transit) and carries the booking/customer/site detail
+// the Fleet Board displays alongside the status.
+function buildAssetDeployments(
+  apiBookings: (ApiBooking | CreateBookingResponse)[],
+  equipment: Asset[],
+  rentalPlans: ApiRentalPlan[],
+  apiUsers: ApiUser[],
+  today: string,
+): Map<number, AssetDeployment> {
+  const fmt = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  const map = new Map<number, AssetDeployment>();
+
+  for (const b of apiBookings) {
+    if (today < b.startDate || today > b.endDate) continue;
+    const status = isApiBookingRecord(b) ? b.bookingStatus : b.status;
+    if (!ACTIVE_BOOKING_STATUSES.has(status)) continue;
+
+    const depStatus: DeploymentStatus = status === "MOBILISED" ? "In-Transit" : "Booked";
+    const bookingId = `RNT-${String(isApiBookingRecord(b) ? b.bookingId : b.id).padStart(4, "0")}`;
+    let customer: string;
+    if (isApiBookingRecord(b)) {
+      customer = b.customerName;
+    } else {
+      const plan = rentalPlans.find((p) => p.id === b.rentalPlanId);
+      const user = plan ? apiUsers.find((u) => u.id === plan.userId) : undefined;
+      customer = user?.name ?? "Unknown";
+    }
+    const note =
+      depStatus === "In-Transit"
+        ? `En route — return due ${fmt(b.endDate)}.`
+        : `Confirmed — delivery due ${fmt(b.startDate)}.`;
+
+    const ids: number[] = isApiBookingRecord(b)
+      ? (b.items ?? [])
+          .map((item) => equipment.find((e) => e.serialno === item.serialNumber)?.id)
+          .filter((id): id is number => id !== undefined)
+      : b.equipmentIds;
+
+    for (const id of ids) {
+      const existing = map.get(id);
+      // An asset shouldn't match two bookings on the same day, but if it does, In-Transit
+      // (equipment physically moving) takes priority over Booked (still at depot).
+      if (!existing || (depStatus === "In-Transit" && existing.status !== "In-Transit")) {
+        map.set(id, { status: depStatus, bookingId, customer, site: b.siteAddress, note });
+      }
+    }
+  }
+  return map;
 }
 
 function buildUserRows(
@@ -256,29 +301,53 @@ function buildBookingRows(
   });
 }
 
-const buildFleetAssets = (equipment: Asset[]): FleetAsset[] =>
-  equipment.map((e, i) => {
-    const statuses: DeploymentStatus[] = [
-      "Available",
-      "Booked",
-      "In-Transit",
-      "Maintenance",
-    ];
-    const bookings = ["", "RNT-0001", "RNT-0002", ""];
-    const customers = ["", "Alex Tan", "Mei Lin Goh", ""];
-    const sites = [
-      "Jurong Port Depot",
-      "En route to customer site",
-      "Reserved — Marina South",
-      "Service Center, Tuas",
-    ];
-    const notes = [
-      "Fully serviced. Ready for next rental.",
-      "Booked — delivery scheduled shortly.",
-      "En route to customer site.",
-      "Annual service due.",
-    ];
-    const idx = i % statuses.length;
+// Format matches handleFleetUpdate's manual-edit timestamp (FleetTab.tsx) so seeded and
+// admin-updated rows read consistently.
+const fmtLastUpdated = (iso: string) =>
+  new Date(iso)
+    .toLocaleString("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+    .replace(",", "");
+
+const buildFleetAssets = (
+  equipment: Asset[],
+  apiBookings: (ApiBooking | CreateBookingResponse)[],
+  rentalPlans: ApiRentalPlan[],
+  apiUsers: ApiUser[],
+  today: string,
+): FleetAsset[] => {
+  const deployments = buildAssetDeployments(apiBookings, equipment, rentalPlans, apiUsers, today);
+  return equipment.map((e) => {
+    const condition = e.condition ?? "GOOD";
+    const lastUpdated = e.lastConditionUpdatedAt ? fmtLastUpdated(e.lastConditionUpdatedAt) : "";
+
+    if (condition === "NEEDS_REPAIR") {
+      return {
+        id: e.id,
+        name: e.name,
+        category: e.category,
+        purchaseYear: e.purchaseYear,
+        serialno: e.serialno,
+        location: e.location,
+        photo: resolvePhoto(e.img),
+        deploymentStatus: "Maintenance",
+        assignedBooking: "",
+        assignedCustomer: "",
+        currentSite: `Service Center, ${e.location}`,
+        lastUpdated,
+        updatedBy: "",
+        notes: `Condition: ${formatCondition(condition)} — scheduled for service.`,
+        condition,
+      };
+    }
+
+    const d = deployments.get(e.id);
     return {
       id: e.id,
       name: e.name,
@@ -287,186 +356,17 @@ const buildFleetAssets = (equipment: Asset[]): FleetAsset[] =>
       serialno: e.serialno,
       location: e.location,
       photo: resolvePhoto(e.img),
-      deploymentStatus: statuses[idx],
-      assignedBooking: bookings[idx],
-      assignedCustomer: customers[idx],
-      currentSite: sites[idx],
-      lastUpdated: "2026-08-01 08:30",
-      updatedBy: "Carlos Vega",
-      notes: notes[idx],
-      condition: e.condition ?? "GOOD",
+      deploymentStatus: d?.status ?? "Available",
+      assignedBooking: d?.bookingId ?? "",
+      assignedCustomer: d?.customer ?? "",
+      currentSite: d?.site ?? `${e.location} Depot`,
+      lastUpdated,
+      updatedBy: "",
+      notes: d?.note ?? "",
+      condition,
     };
   });
-
-// Read-only overview feed — no API resource backs rental lifecycle events, so this stays
-// client-local, deterministic seed data (mirrors the shape a future Lifecycle entity would take).
-const INITIAL_LIFECYCLES: RentalLifecycle[] = [
-  {
-    bookingId: "RNT-4821",
-    customer: "Sarah Mitchell",
-    equipment: "CAT 320 Hydraulic Excavator",
-    serialno: "SN-EXC-2022-0001",
-    currentStatus: "Active",
-    events: [
-      {
-        id: "e1",
-        timestamp: "2025-07-13 09:00",
-        status: "Reserved",
-        officer: "System",
-        notes: "Deposit of S$1,869 received. Booking confirmed.",
-        condition: "",
-      },
-      {
-        id: "e2",
-        timestamp: "2025-07-13 14:30",
-        status: "Preparing",
-        officer: "Carlos Vega",
-        notes: "Hydraulic fluid topped. Tracks inspected. Loaded on flatbed.",
-        condition: "EXCELLENT",
-      },
-      {
-        id: "e3",
-        timestamp: "2025-07-14 07:45",
-        status: "Dispatched",
-        officer: "James Tran",
-        notes: "Departed depot. Estimated arrival 10:30.",
-        odometer: "12,440 km",
-      },
-      {
-        id: "e4",
-        timestamp: "2025-07-14 10:55",
-        status: "Active",
-        officer: "James Tran",
-        notes:
-          "Delivered to 4820 Main St site. Customer signed delivery receipt.",
-        condition: "EXCELLENT",
-      },
-    ],
-  },
-  {
-    bookingId: "RNT-3904",
-    customer: "Derek Okafor",
-    equipment: "JLG 1350SJP Telescopic Boom",
-    serialno: "SN-BOO-2023-0002",
-    currentStatus: "Dispatched",
-    events: [
-      {
-        id: "e5",
-        timestamp: "2025-07-17 10:00",
-        status: "Reserved",
-        officer: "System",
-        notes: "Deposit of S$2,160 received.",
-        condition: "",
-      },
-      {
-        id: "e6",
-        timestamp: "2025-07-17 15:00",
-        status: "Preparing",
-        officer: "Carlos Vega",
-        notes:
-          "Boom sections inspected. Outrigger pads checked. Pre-delivery checklist complete.",
-        condition: "GOOD",
-      },
-      {
-        id: "e7",
-        timestamp: "2025-07-18 06:30",
-        status: "Dispatched",
-        officer: "James Tran",
-        notes: "Boom lift departed on flatbed. Route cleared.",
-        odometer: "8,210 km",
-      },
-    ],
-  },
-  {
-    bookingId: "RNT-3602",
-    customer: "Sarah Mitchell",
-    equipment: "Genie GS-1932 Scissors Lift",
-    serialno: "SN-SCI-2024-0003",
-    currentStatus: "Cleared",
-    events: [
-      {
-        id: "e8",
-        timestamp: "2025-06-04 09:00",
-        status: "Reserved",
-        officer: "System",
-        notes: "Deposit of S$900 received.",
-        condition: "",
-      },
-      {
-        id: "e9",
-        timestamp: "2025-06-04 13:00",
-        status: "Preparing",
-        officer: "Carlos Vega",
-        notes: "Blade sharpened, tracks lubricated.",
-        condition: "GOOD",
-      },
-      {
-        id: "e10",
-        timestamp: "2025-06-05 07:00",
-        status: "Dispatched",
-        officer: "James Tran",
-        notes: "Loaded and en route.",
-        odometer: "5,920 km",
-      },
-      {
-        id: "e11",
-        timestamp: "2025-06-05 09:30",
-        status: "Active",
-        officer: "James Tran",
-        notes: "Delivered. Customer confirmed receipt.",
-        condition: "GOOD",
-      },
-      {
-        id: "e12",
-        timestamp: "2025-06-09 16:00",
-        status: "Return Initiated",
-        officer: "System",
-        notes: "Customer submitted return request via portal.",
-      },
-      {
-        id: "e13",
-        timestamp: "2025-06-10 08:00",
-        status: "Returned",
-        officer: "Carlos Vega",
-        notes: "Collected from site. Minor mud build-up noted.",
-        odometer: "5,952 km",
-      },
-      {
-        id: "e14",
-        timestamp: "2025-06-10 11:30",
-        status: "Inspecting",
-        officer: "Carlos Vega",
-        notes: "Full wash. Engine hours logged. No structural damage.",
-        condition: "GOOD",
-      },
-      {
-        id: "e15",
-        timestamp: "2025-06-10 14:00",
-        status: "Cleared",
-        officer: "James Tran",
-        notes: "Cleared for re-rental. Balance S$2,100 collected.",
-        condition: "GOOD",
-      },
-    ],
-  },
-  {
-    bookingId: "RNT-3710",
-    customer: "Priya Nair",
-    equipment: "Toyota 8FBE15 Electric Fork Lift",
-    serialno: "SN-FOR-2023-0004",
-    currentStatus: "Reserved",
-    events: [
-      {
-        id: "e16",
-        timestamp: "2025-07-20 11:00",
-        status: "Reserved",
-        officer: "System",
-        notes: "Deposit of S$576 received. Awaiting preparation.",
-        condition: "",
-      },
-    ],
-  },
-];
+};
 
 interface AdminDataValue {
   dataStatus: "loading" | "success" | "error";
@@ -481,7 +381,6 @@ interface AdminDataValue {
   onRentAssetIds: Set<number>;
   fleet: FleetAsset[];
   setFleet: Dispatch<SetStateAction<FleetAsset[]>>;
-  lifecycles: RentalLifecycle[];
   monthlyUtilization: {
     id: number;
     month: string;
@@ -553,17 +452,25 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
   }
 
   const [fleet, setFleet] = useState<FleetAsset[]>([]);
-  const [fleetSeededFrom, setFleetSeededFrom] =
-    useState<typeof equipmentRes.data>(null);
+  const [fleetSeeded, setFleetSeeded] = useState(false);
   if (
+    !fleetSeeded &&
     equipmentRes.status === "success" &&
-    equipmentRes.data !== fleetSeededFrom
+    bookingsRes.status === "success" &&
+    rentalPlansRes.status === "success" &&
+    usersRes.status === "success"
   ) {
-    setFleetSeededFrom(equipmentRes.data);
-    setFleet(buildFleetAssets(equipmentRes.data));
+    setFleetSeeded(true);
+    setFleet(
+      buildFleetAssets(
+        equipmentRes.data,
+        bookingsRes.data,
+        rentalPlansRes.data,
+        usersRes.data,
+        todayISO(),
+      ),
+    );
   }
-
-  const [lifecycles] = useState<RentalLifecycle[]>(INITIAL_LIFECYCLES);
 
   const [toast, setToast] = useState<{
     msg: string;
@@ -611,7 +518,6 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         onRentAssetIds,
         fleet,
         setFleet,
-        lifecycles,
         monthlyUtilization,
         toast,
         showToast,

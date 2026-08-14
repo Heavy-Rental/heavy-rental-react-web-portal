@@ -9,17 +9,27 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { Truck, Activity, BarChart2, DollarSign, AlertTriangle, CheckCircle } from "lucide-react";
+import { Truck, Activity, BarChart2, DollarSign, AlertTriangle, Trophy } from "lucide-react";
 import type { AssetRecord } from "../../../app/assetRecord";
 import { formatCondition } from "../../../app/assetRecord";
 import { mono, display } from "../../../lib/styles";
 import {
-  BOOKING_STATUSES,
+  BOOKING_STAT_GROUPS,
   formatBookingStatus,
+  bookingStatusColor,
   DEPLOYMENT_META,
-  LIFECYCLE_META,
 } from "../adminFormat";
-import type { AdminTab, FleetAsset, BookingRow, RentalLifecycle } from "../AdminDataContext";
+import type { AdminTab, FleetAsset, BookingRow, UserRow } from "../AdminDataContext";
+
+// Hex equivalents of BookingsTab's semantic Tailwind classes (amber/green/violet/blue/red)
+// for BOOKING_STAT_GROUPS' labels — this panel renders dots via inline style, not classes.
+const BOOKING_STAT_DOT_COLORS: Record<string, string> = {
+  "Pending Payments": "#f5a623",
+  Confirmed: "#4ade80",
+  Mobilised: "#a78bfa",
+  Completed: "#60a5fa",
+  Cancelled: "#f87171",
+};
 
 interface ChartTipPayloadItem {
   name?: string | number;
@@ -58,14 +68,14 @@ export function OverviewTab({
   assets,
   monthlyUtilization,
   bookings,
-  lifecycles,
+  users,
   onNavigate,
 }: {
   fleet: FleetAsset[];
   assets: AssetRecord[];
   monthlyUtilization: { id: number; month: string; utilization: number; revenue: number }[];
   bookings: BookingRow[];
-  lifecycles: RentalLifecycle[];
+  users: UserRow[];
   onNavigate: (tab: AdminTab) => void;
 }) {
   // Derived metrics from live state
@@ -109,77 +119,20 @@ export function OverviewTab({
     status: a.deploymentStatus,
   }));
 
-  const bookingBreakdown = BOOKING_STATUSES.map((s) => ({
-    name: formatBookingStatus(s),
-    value: bookings.filter((b) => b.status === s).length,
-    color: {
-      PENDING: "#f5a623",
-      CONFIRMED: "#4ade80",
-      MOBILISED: "#a78bfa",
-      COMPLETED: "#60a5fa",
-      CANCELLED: "#f87171",
-    }[s],
+  const bookingBreakdown = BOOKING_STAT_GROUPS.map(({ label, statuses }) => ({
+    name: label,
+    value: bookings.filter((b) => statuses.includes(b.status)).length,
+    color: BOOKING_STAT_DOT_COLORS[label],
   }));
 
   const totalDeposits = bookings.reduce((s, b) => s + b.deposit, 0);
   const totalBookingValue = bookings.reduce((s, b) => s + b.total, 0);
 
-  const ALERTS: {
-    level: "critical" | "warning" | "info";
-    msg: string;
-    action: AdminTab;
-  }[] = [
-    ...fleet
-      .filter((a) => a.condition === "NEEDS_REPAIR")
-      .map((a) => ({
-        level: "critical" as const,
-        msg: `${a.name} requires immediate maintenance.`,
-        action: "fleet" as AdminTab,
-      })),
-    ...bookings
-      .filter((b) => b.paidStatus === "UNPAID")
-      .map((b) => ({
-        level: "warning" as const,
-        msg: `Booking ${b.id} (${b.customer}) awaiting deposit.`,
-        action: "bookings" as AdminTab,
-      })),
-    ...fleet
-      .filter((a) => a.deploymentStatus === "In-Transit")
-      .map((a) => ({
-        level: "info" as const,
-        msg: `${a.name} currently in transit — track in Fleet Board.`,
-        action: "fleet" as AdminTab,
-      })),
-  ];
+  const topCustomers = [...users].sort((a, b) => b.spent - a.spent).slice(0, 3);
 
-  const recentEvents = lifecycles
-    .flatMap((lc) =>
-      lc.events.slice(-1).map((e) => ({
-        bookingId: lc.bookingId,
-        equipment: lc.equipment,
-        status: e.status,
-        timestamp: e.timestamp,
-        officer: e.officer,
-      })),
-    )
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-    .slice(0, 5);
-
-  const alertColors = {
-    critical: "border-red-500/40 bg-red-500/5",
-    warning: "border-amber-500/40 bg-amber-500/5",
-    info: "border-blue-500/30 bg-blue-500/5",
-  };
-  const alertDot = {
-    critical: "bg-red-400",
-    warning: "bg-amber-400",
-    info: "bg-blue-400",
-  };
-  const alertText = {
-    critical: "text-red-400",
-    warning: "text-amber-400",
-    info: "text-blue-400",
-  };
+  // Booking ids are server-assigned and increase with creation, so id order is a
+  // reasonable "most recent first" proxy — bookings carry no createdAt timestamp.
+  const recentActivity = [...bookings].sort((a, b) => b.apiId - a.apiId).slice(0, 5);
 
   return (
     <>
@@ -483,60 +436,65 @@ export function OverviewTab({
         </div>
       </div>
 
-      {/* Row 4: alerts + recent activity */}
+      {/* Row 4: top customers + recent activity */}
       <div className="grid lg:grid-cols-2 gap-4 mb-4">
-        {/* Alerts */}
+        {/* Top customers by spending */}
         <div className="bg-card border border-border">
           <div className="px-5 py-4 border-b border-border flex items-center justify-between">
             <div>
               <p className="text-xs text-muted-foreground mb-0.5" style={mono}>
-                REQUIRES ATTENTION
+                BY TOTAL SPEND
               </p>
               <h3 className="text-xl font-black text-foreground" style={display}>
-                ALERTS
+                TOP CUSTOMERS
               </h3>
             </div>
-            {pendingActions > 0 && (
-              <span className="w-6 h-6 bg-red-500 text-white text-xs font-black flex items-center justify-center">
-                {pendingActions}
-              </span>
-            )}
+            <button
+              onClick={() => onNavigate("users")}
+              className="text-xs text-primary hover:text-primary/80 transition-colors font-semibold"
+            >
+              View all →
+            </button>
           </div>
-          {ALERTS.length === 0 ? (
+          {topCustomers.length === 0 || topCustomers[0].spent === 0 ? (
             <div className="p-8 text-center">
-              <CheckCircle size={24} className="text-green-400 mx-auto mb-2" />
-              <p className="text-sm text-foreground font-semibold">All clear</p>
-              <p className="text-xs text-muted-foreground mt-1">No alerts at this time.</p>
+              <Trophy size={24} className="text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-foreground font-semibold">No spending recorded yet</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Top customers will appear here once bookings are paid.
+              </p>
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {ALERTS.map((alert, i) => (
-                <div
-                  key={i}
-                  className={`px-5 py-3 flex items-start gap-3 border-l-2 ${alertColors[alert.level]} ${alert.level === "critical" ? "border-l-red-500" : alert.level === "warning" ? "border-l-amber-400" : "border-l-blue-400"}`}
-                >
-                  <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${alertDot[alert.level]}`} />
+              {topCustomers.map((u, i) => (
+                <div key={u.id} className="px-5 py-3 flex items-center gap-3">
+                  <span
+                    className="w-6 h-6 shrink-0 flex items-center justify-center text-xs font-bold bg-secondary text-muted-foreground"
+                    style={mono}
+                  >
+                    {i + 1}
+                  </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">{alert.msg}</p>
-                    <button
-                      onClick={() => onNavigate(alert.action)}
-                      className={`text-xs font-semibold mt-0.5 hover:underline ${alertText[alert.level]}`}
-                    >
-                      Go to {alert.action} →
-                    </button>
+                    <p className="text-sm text-foreground font-semibold truncate">{u.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {u.rentals} {u.rentals === 1 ? "rental" : "rentals"}
+                    </p>
                   </div>
+                  <span className="text-sm font-semibold text-foreground shrink-0" style={mono}>
+                    {u.spent > 0 ? `S$${u.spent.toLocaleString()}` : "—"}
+                  </span>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* Recent lifecycle events */}
+        {/* Recent bookings */}
         <div className="bg-card border border-border">
           <div className="px-5 py-4 border-b border-border flex items-center justify-between">
             <div>
               <p className="text-xs text-muted-foreground mb-0.5" style={mono}>
-                LATEST TRANSITIONS
+                LATEST BOOKINGS
               </p>
               <h3 className="text-xl font-black text-foreground" style={display}>
                 RECENT ACTIVITY
@@ -550,23 +508,20 @@ export function OverviewTab({
             </button>
           </div>
           <div className="divide-y divide-border">
-            {recentEvents.map((ev, i) => {
-              const m = LIFECYCLE_META[ev.status];
+            {recentActivity.map((b) => {
               return (
-                <div key={i} className="px-5 py-3 flex items-center gap-3">
-                  <span className={`px-2 py-0.5 text-xs font-bold border shrink-0 ${m.color} ${m.bg} ${m.border}`}>
-                    {ev.status}
+                <div key={b.apiId} className="px-5 py-3 flex items-center gap-3">
+                  <span className={`px-2 py-0.5 text-xs font-bold border shrink-0 ${bookingStatusColor(b.status)}`}>
+                    {formatBookingStatus(b.status)}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground truncate">
-                      {ev.equipment.split(" ").slice(0, 3).join(" ")}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {ev.bookingId} · {ev.officer}
+                    <p className="text-sm text-foreground truncate">{b.customer}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {b.id} · {b.equipment}
                     </p>
                   </div>
                   <span className="text-xs text-muted-foreground shrink-0" style={mono}>
-                    {ev.timestamp.split(" ")[0]}
+                    {b.dates.split(" – ")[0]}
                   </span>
                 </div>
               );

@@ -115,7 +115,7 @@ function AdminDashboardContent({
             assets={data.assets}
             monthlyUtilization={data.monthlyUtilization}
             bookings={data.bookings}
-            lifecycles={data.lifecycles}
+            users={data.users}
             onNavigate={setActiveTab}
           />
         )}
