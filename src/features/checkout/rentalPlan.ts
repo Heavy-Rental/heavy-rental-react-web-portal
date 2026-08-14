@@ -1,4 +1,4 @@
-import type { Equipment, RentalPlan as ApiRentalPlan } from "../../app/types";
+import type { Asset, RentalPlan as ApiRentalPlan } from "../../app/types";
 import { calcDeposit } from "../../app/api";
 import { daysBetweenISO } from "../../lib/dateFormat";
 
@@ -23,7 +23,7 @@ export interface RentalPlan {
 
 export function buildRentalPlanViews(
   apiPlans: ApiRentalPlan[],
-  equipment: Equipment[],
+  equipment: Asset[],
   userId: number,
 ): RentalPlan[] {
   return apiPlans

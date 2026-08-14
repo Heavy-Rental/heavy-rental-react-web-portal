@@ -1,13 +1,14 @@
 import {
   createContext,
   useContext,
+  useMemo,
   useState,
   type ReactNode,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import type {
-  Equipment,
+  Asset,
   User as ApiUser,
   RentalPlan as ApiRentalPlan,
   Booking as ApiBooking,
@@ -18,7 +19,7 @@ import type {
   ConditionType,
 } from "../../app/types";
 import {
-  equipmentApi,
+  assetApi,
   depotApi,
   userApi,
   rentalPlanApi,
@@ -27,7 +28,8 @@ import {
   type CreateBookingResponse,
 } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
-import { deriveAssetRecord, type AssetRecord } from "../../app/assetRecord";
+import { deriveAssetRecord, resolvePhoto, type AssetRecord } from "../../app/assetRecord";
+import { todayISO } from "../../lib/dateFormat";
 import type { DeploymentStatus, LifecycleStatus } from "./adminFormat";
 
 /* eslint-disable react-refresh/only-export-components -- Same rationale as CartContext: the
@@ -108,6 +110,36 @@ function isApiBookingRecord(
   return "bookingId" in b;
 }
 
+const ACTIVE_BOOKING_STATUSES = new Set(["CONFIRMED", "MOBILISED"]);
+
+// Asset.available is a manually-set admin flag (AssetFormModal's Availability toggle) with
+// no automatic tie to bookings, so it drifts from reality (e.g. an asset can sit "Available"
+// while a confirmed booking has it out today). This cross-references live bookings against
+// today's date instead, for a status the Assets tab can actually trust.
+function buildOnRentAssetIds(
+  apiBookings: (ApiBooking | CreateBookingResponse)[],
+  equipment: Asset[],
+  today: string,
+): Set<number> {
+  const ids = new Set<number>();
+  for (const b of apiBookings) {
+    if (today < b.startDate || today > b.endDate) continue;
+    if (isApiBookingRecord(b)) {
+      if (!ACTIVE_BOOKING_STATUSES.has(b.bookingStatus)) continue;
+      // Real backend booking items carry serialNumber, not assetId (dto/BookingItemLine.java,
+      // HR-113) — join on serial number instead.
+      for (const item of b.items ?? []) {
+        const asset = equipment.find((e) => e.serialno === item.serialNumber);
+        if (asset) ids.add(asset.id);
+      }
+    } else {
+      if (!ACTIVE_BOOKING_STATUSES.has(b.status)) continue;
+      for (const id of b.equipmentIds) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 function buildUserRows(
   apiUsers: ApiUser[],
   rentalPlans: ApiRentalPlan[],
@@ -155,7 +187,7 @@ function buildBookingRows(
   apiBookings: (ApiBooking | CreateBookingResponse)[],
   rentalPlans: ApiRentalPlan[],
   apiUsers: ApiUser[],
-  equipment: Equipment[],
+  equipment: Asset[],
   depots: Depot[],
 ): BookingRow[] {
   const fmt = (iso: string) =>
@@ -224,7 +256,7 @@ function buildBookingRows(
   });
 }
 
-const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
+const buildFleetAssets = (equipment: Asset[]): FleetAsset[] =>
   equipment.map((e, i) => {
     const statuses: DeploymentStatus[] = [
       "Available",
@@ -252,9 +284,9 @@ const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
       name: e.name,
       category: e.category,
       purchaseYear: e.purchaseYear,
-      serialno: `SN-${e.category.slice(0, 3).toUpperCase()}-${e.purchaseYear}-${String(e.id).padStart(4, "0")}`,
+      serialno: e.serialno,
       location: e.location,
-      photo: `https://images.unsplash.com/photo-${e.img}?w=400&q=80`,
+      photo: resolvePhoto(e.img),
       deploymentStatus: statuses[idx],
       assignedBooking: bookings[idx],
       assignedCustomer: customers[idx],
@@ -262,9 +294,7 @@ const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
       lastUpdated: "2026-08-01 08:30",
       updatedBy: "Carlos Vega",
       notes: notes[idx],
-      condition: ["EXCELLENT", "GOOD", "FAIR", "NEEDS_REPAIR"][
-        idx
-      ] as ConditionType,
+      condition: e.condition ?? "GOOD",
     };
   });
 
@@ -448,6 +478,7 @@ interface AdminDataValue {
   setUsers: Dispatch<SetStateAction<UserRow[]>>;
   bookings: BookingRow[];
   setBookings: Dispatch<SetStateAction<BookingRow[]>>;
+  onRentAssetIds: Set<number>;
   fleet: FleetAsset[];
   setFleet: Dispatch<SetStateAction<FleetAsset[]>>;
   lifecycles: RentalLifecycle[];
@@ -464,9 +495,7 @@ interface AdminDataValue {
 const AdminDataContext = createContext<AdminDataValue | null>(null);
 
 export function AdminDataProvider({ children }: { children: ReactNode }) {
-  const equipmentRes = useApiResource((signal) =>
-    equipmentApi.list(undefined, signal),
-  );
+  const equipmentRes = useApiResource((signal) => assetApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
   const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const usersRes = useApiResource((signal) => userApi.list(signal));
@@ -477,6 +506,14 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
   );
   const monthlyUtilization = monthlyUtilRes.data ?? [];
   const categories = Array.from(new Set(equipment.map((e) => e.category)));
+
+  const onRentAssetIds = useMemo(
+    () =>
+      bookingsRes.data && equipmentRes.data
+        ? buildOnRentAssetIds(bookingsRes.data, equipmentRes.data, todayISO())
+        : new Set<number>(),
+    [bookingsRes.data, equipmentRes.data],
+  );
 
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [assetsSeededFrom, setAssetsSeededFrom] =
@@ -571,6 +608,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         setUsers,
         bookings,
         setBookings,
+        onRentAssetIds,
         fleet,
         setFleet,
         lifecycles,

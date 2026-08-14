@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { Search, ArrowRight, Wrench, CheckCircle, ChevronLeft, ChevronRight, Sparkles, Gauge, Info } from "lucide-react";
-import type { Equipment as EquipmentItem, OnboardingMode } from "../../app/types";
+import type { Asset as EquipmentItem, OnboardingMode } from "../../app/types";
 import {
   recommendationApi,
   type CreateProjectSpecResponse,
@@ -27,6 +27,9 @@ function toEquipment(eq: ProjectSpecEquipment): EquipmentItem {
     revenue: 0,
     hoursThisMonth: 0,
     idealFor: [],
+    serialno: "",
+    condition: null,
+    lastConditionUpdatedAt: null,
     ...eq,
     weekly: eq.weekly ?? 0,
     tags: eq.tags ?? [],

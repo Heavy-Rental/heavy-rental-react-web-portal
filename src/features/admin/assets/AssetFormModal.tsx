@@ -12,6 +12,11 @@ import { CONDITIONS } from "../adminFormat";
 const CATEGORIES_LIST = ["Boom Lift", "Scissors Lift", "Fork Lift", "Excavator"];
 const LOCATIONS_LIST = ["Jurong Port", "Pioneer", "Tuas", "Marina South"];
 
+// SPEC-equipment-browse-api.md §7.6 (paraphrased in TASKS-frontend-admin-asset-records.md):
+// the upload endpoint 413s past ~7,000,000 base64 characters — reject client-side so a save
+// never half-succeeds (asset record saved, photo silently dropped).
+const MAX_PHOTO_DATA_URI_LENGTH = 7_000_000;
+
 const EMPTY_ASSET: Omit<AssetRecord, "id"> = {
   name: "",
   category: "Excavator",
@@ -76,10 +81,12 @@ export function AssetFormModal({
   asset,
   onSave,
   onClose,
+  nameError,
 }: {
   asset: AssetRecord | null;
   onSave: (a: AssetRecord) => void;
   onClose: () => void;
+  nameError?: string | null;
 }) {
   const isNew = !asset;
   const [form, setForm] = useState<Omit<AssetRecord, "id">>(
@@ -87,6 +94,7 @@ export function AssetFormModal({
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dragOver, setDragOver] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const set = <K extends keyof Omit<AssetRecord, "id">>(
@@ -97,7 +105,15 @@ export function AssetFormModal({
   const handlePhotoFile = (file: File) => {
     if (!file.type.startsWith("image/")) return;
     const reader = new FileReader();
-    reader.onload = (e) => set("photo", e.target?.result as string);
+    reader.onload = (e) => {
+      const dataUri = e.target?.result as string;
+      if (dataUri.length > MAX_PHOTO_DATA_URI_LENGTH) {
+        setPhotoError("Image too large — please use a smaller photo.");
+        return;
+      }
+      setPhotoError(null);
+      set("photo", dataUri);
+    };
     reader.readAsDataURL(file);
   };
 
@@ -132,14 +148,7 @@ export function AssetFormModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
-    const conditionChanged = !asset || asset.condition !== form.condition;
-    onSave({
-      ...form,
-      id: asset?.id ?? Date.now(),
-      lastConditionUpdatedAt: conditionChanged
-        ? new Date().toISOString()
-        : form.lastConditionUpdatedAt,
-    });
+    onSave({ ...form, id: asset?.id ?? Date.now() });
   };
 
   return (
@@ -258,6 +267,7 @@ export function AssetFormModal({
                 </div>
               </div>
             )}
+            {photoError && <p className="text-xs text-red-400 mt-1.5">{photoError}</p>}
           </div>
 
           {/* Basic Info */}
@@ -275,7 +285,7 @@ export function AssetFormModal({
                   placeholder="e.g. CAT 320 Hydraulic Excavator"
                   required
                   value={form.name}
-                  error={errors.name}
+                  error={errors.name ?? nameError ?? undefined}
                   onChange={(v) => set("name", String(v))}
                 />
               </div>
