@@ -1,9 +1,9 @@
-import type { Equipment, OnboardingMode } from "../../app/types";
+import type { Asset, OnboardingMode } from "../../app/types";
 import type { QuoteDateRange } from "../../lib/dateFormat";
 import type { CartItem } from "../cart/CartContext";
 
 export function buildQuoteCartItems(
-  recs: Equipment[],
+  recs: Asset[],
   dates: QuoteDateRange,
 ): CartItem[] {
   return recs.map((eq) => ({
@@ -21,7 +21,7 @@ export function shouldPromptDeliveryDetails(
 
 export function toggleEquipmentInPlan(
   cart: CartItem[],
-  eq: Equipment,
+  eq: Asset,
   dates: QuoteDateRange,
 ): CartItem[] {
   if (cart.some((c) => c.equipment.id === eq.id)) {

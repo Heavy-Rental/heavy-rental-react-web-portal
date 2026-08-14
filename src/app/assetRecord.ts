@@ -1,4 +1,4 @@
-import type { ConditionType, Equipment } from "./types";
+import type { Asset, ConditionType } from "./types";
 
 export type { ConditionType };
 
@@ -33,13 +33,20 @@ export interface AssetRecord {
   photo: string | null;
 }
 
-export function deriveAssetRecord(e: Equipment): AssetRecord {
+// Asset.img is overloaded: an Unsplash photo-id fragment until an admin uploads a real
+// photo (Task 3, PUT /api/assets/{id}/image), after which the backend returns a data: URI in
+// the same field — branch on the prefix to tell the two apart.
+export function resolvePhoto(img: string): string {
+  return img.startsWith("data:") ? img : `https://images.unsplash.com/photo-${img}?w=400&q=80`;
+}
+
+export function deriveAssetRecord(e: Asset): AssetRecord {
   return {
     ...e,
     tags: e.tags.join(", "),
-    serialno: `SN-${e.category.slice(0, 3).toUpperCase()}-${e.purchaseYear}-${String(e.id).padStart(4, "0")}`,
-    condition: (["EXCELLENT", "GOOD", "GOOD", "FAIR"][e.id % 4]) as ConditionType,
-    lastConditionUpdatedAt: "2025-08-01T09:00:00+08:00",
-    photo: `https://images.unsplash.com/photo-${e.img}?w=400&q=80`,
+    serialno: e.serialno,
+    condition: e.condition ?? "GOOD",
+    lastConditionUpdatedAt: e.lastConditionUpdatedAt ?? "",
+    photo: resolvePhoto(e.img),
   };
 }

@@ -2,10 +2,10 @@
    cart-derivation helpers that operate on the same CartItem shape are kept together deliberately;
    splitting them wouldn't change runtime behavior, only Fast Refresh granularity in this one file. */
 import { createContext, useContext, useState, type ReactNode } from "react";
-import type { Equipment, Depot } from "../../app/types";
+import type { Asset, Depot } from "../../app/types";
 
 export interface CartItem {
-  equipment: Equipment;
+  equipment: Asset;
   startDate: string; // ISO YYYY-MM-DD
   endDate: string; // ISO YYYY-MM-DD
 }

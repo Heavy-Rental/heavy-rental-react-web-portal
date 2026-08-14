@@ -42,14 +42,14 @@ import { SafetyPage } from "./app/SafetyPage";
 import { AboutPage } from "./app/AboutPage";
 import { ProjectsPage } from "./app/ProjectsPage";
 import type {
-  Equipment as EquipmentItem,
+  Asset as EquipmentItem,
   Role,
   View,
   OnboardingMode,
   StoredSession,
 } from "./app/types";
 import {
-  equipmentApi,
+  assetApi,
   depotApi,
   userApi,
   rentalPlanApi,
@@ -391,7 +391,7 @@ function CustomerPortal({
   const [siteAddressPrompted, setSiteAddressPrompted] = useState(false);
 
 const equipmentRes = useApiResource(
-  (signal) => equipmentApi.list(sharedStartDate && sharedEndDate ? { startDate: sharedStartDate, endDate: sharedEndDate } : undefined, signal),
+  (signal) => assetApi.list(sharedStartDate && sharedEndDate ? { startDate: sharedStartDate, endDate: sharedEndDate } : undefined, signal),
   [sharedStartDate, sharedEndDate],
 );
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
@@ -1673,7 +1673,7 @@ function EmployeeDashboard({
   onHome: () => void;
 }) {
   const [tab, setTab] = useState<"dashboard" | "assets">("dashboard");
-  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
+  const equipmentRes = useApiResource((signal) => assetApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
   const monthlyUtilRes = useApiResource((signal) => monthlyUtilizationApi.list(signal));
   const monthlyUtilization = monthlyUtilRes.data ?? [];
@@ -2582,7 +2582,7 @@ export default function App() {
     initialSession.notice,
   );
   const expiryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
+  const equipmentRes = useApiResource((signal) => assetApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
 
   const scheduleExpiry = (session: StoredSession) => {

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { MessageCircle, Send, User, Bot, X } from "lucide-react";
-import type { Equipment } from "../../app/types";
+import type { Asset } from "../../app/types";
 import { display, sans } from "../../lib/styles";
 
 interface ChatMessage {
@@ -21,12 +21,12 @@ interface ChatState {
 function getBotResponse(
   state: ChatState,
   userInput: string,
-  equipment: Equipment[],
+  equipment: Asset[],
 ): {
   reply: string;
   nextState: ChatState;
   suggestions?: string[];
-  recommended?: Equipment[];
+  recommended?: Asset[];
 } {
   if (state.step === "greeting") {
     return {
@@ -100,8 +100,8 @@ export function Chatbot({
   onSelectEquipment,
   equipment,
 }: {
-  onSelectEquipment: (e: Equipment) => void;
-  equipment: Equipment[];
+  onSelectEquipment: (e: Asset) => void;
+  equipment: Asset[];
 }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -120,7 +120,7 @@ export function Chatbot({
   const [suggestions, setSuggestions] = useState<string[]>([
     "Yes, help me find equipment!",
   ]);
-  const [recommended, setRecommended] = useState<Equipment[]>([]);
+  const [recommended, setRecommended] = useState<Asset[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

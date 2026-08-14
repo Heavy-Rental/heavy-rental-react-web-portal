@@ -1,6 +1,6 @@
-import type { Equipment } from "../app/types";
+import type { Asset } from "../app/types";
 
-export function stubEquipment(overrides: Partial<Equipment> = {}): Equipment {
+export function stubEquipment(overrides: Partial<Asset> = {}): Asset {
   return {
     id: 1,
     name: "JLG 1350SJP Telescopic Boom",
@@ -23,6 +23,9 @@ export function stubEquipment(overrides: Partial<Equipment> = {}): Equipment {
     hoursThisMonth: 0,
     desc: "",
     idealFor: [],
+    serialno: "SN-1350SJP",
+    condition: "GOOD",
+    lastConditionUpdatedAt: null,
     ...overrides,
   };
 }
