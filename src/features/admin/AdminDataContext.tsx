@@ -34,7 +34,7 @@ import type { DeploymentStatus, LifecycleStatus } from "./adminFormat";
    provider, its hook, and the domain types/seed-derivation helpers it exposes are one cohesive
    admin data-layer module; splitting them wouldn't change behavior, only Fast Refresh granularity. */
 
-export type AdminTab = "overview" | "assets" | "fleet" | "users" | "bookings" | "pricing";
+export type AdminTab = "overview" | "assets" | "fleet" | "users" | "bookings";
 
 // User/booking view-models joined from the normalized API resources, for display.
 export interface UserRow {
@@ -98,24 +98,6 @@ export interface RentalLifecycle {
   events: LifecycleEvent[];
 }
 
-export interface PricingRule {
-  id: number;
-  name: string;
-  category: string;
-  currentDaily: number;
-  currentWeekly: number;
-  floorDaily: number;
-  ceilDaily: number;
-  floorWeekly: number;
-  ceilWeekly: number;
-  mlRecommendedDaily: number;
-  mlRecommendedWeekly: number;
-  mlConfidence: number;
-  demandSignal: "High" | "Medium" | "Low";
-  utilization: number;
-  locked: boolean;
-}
-
 // Real backend's GET /bookings returns a flat, denormalized shape (no rentalPlanId/
 // depotId/equipmentIds join keys — customer/asset info is inlined instead). This guard
 // lets the builders below branch per-item so both this API-mode shape and the mock's
@@ -176,14 +158,19 @@ function buildBookingRows(
     const dates = `${fmt(b.startDate)} – ${fmt(b.endDate)}`;
 
     if (isApiBookingRecord(b)) {
-      // Flat API-mode shape: customer/asset are already inlined, no joins needed.
+      // API-mode shape: customer is already inlined, no join needed. `items` can cover
+      // more than one asset per booking (dto/BookingItemLine.java, HR-113) — join every
+      // item's name rather than assuming a single flat assetName (that field no longer
+      // exists on the real response; reading it was undefined and crashed the search
+      // filter's `.toLowerCase()` call the moment a booking without a fallback showed up).
       // depot and paidStatus have no real equivalent here — approximated from
       // siteAddress and remainingBalance respectively.
+      const equipment = (b.items ?? []).map((i) => i.assetName).join(", ") || "—";
       return {
         id: `RNT-${String(b.bookingId).padStart(4, "0")}`,
         apiId: b.bookingId,
         customer: b.customerName,
-        equipment: b.assetName,
+        equipment,
         depot: b.siteAddress,
         dates,
         days,
@@ -436,8 +423,6 @@ interface AdminDataValue {
   categories: string[];
   assets: AssetRecord[];
   setAssets: Dispatch<SetStateAction<AssetRecord[]>>;
-  pricingRules: PricingRule[];
-  setPricingRules: Dispatch<SetStateAction<PricingRule[]>>;
   users: UserRow[];
   setUsers: Dispatch<SetStateAction<UserRow[]>>;
   bookings: BookingRow[];
@@ -464,7 +449,6 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
   const categories = Array.from(new Set(equipment.map((e) => e.category)));
 
   const [assets, setAssets] = useState<AssetRecord[]>([]);
-  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [assetsSeededFrom, setAssetsSeededFrom] =
     useState<typeof equipmentRes.data>(null);
   if (
@@ -472,41 +456,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     equipmentRes.data !== assetsSeededFrom
   ) {
     setAssetsSeededFrom(equipmentRes.data);
-    const derived = equipmentRes.data.map(deriveAssetRecord);
-    setAssets(derived);
-    setPricingRules(
-      derived.map((a) => {
-        const util = a.utilization;
-        const demandSignal: PricingRule["demandSignal"] =
-          util >= 80 ? "High" : util >= 55 ? "Medium" : "Low";
-        const demandMultiplier = util >= 80 ? 1.18 : util >= 55 ? 1.05 : 0.92;
-        // Bounds now come straight off the asset (Asset.minDailyRate/maxDailyRate, admin-set
-        // via the Add/Edit Asset form) instead of being derived from baseDailyRate on every render.
-        const floor = a.minDailyRate;
-        const ceil = a.maxDailyRate;
-        const rawML = Math.round((a.baseDailyRate * demandMultiplier) / 5) * 5;
-        const mlRec = Math.min(ceil, Math.max(floor, rawML));
-        return {
-          id: a.id,
-          name: a.name,
-          category: a.category,
-          currentDaily: a.baseDailyRate,
-          currentWeekly: a.weekly,
-          floorDaily: floor,
-          ceilDaily: ceil,
-          // Weekly bounds stay a client-computed heuristic — Asset has no weekly-rate column to seed from.
-          floorWeekly: Math.round((a.weekly * 0.7) / 10) * 10,
-          ceilWeekly: Math.round((a.weekly * 1.4) / 10) * 10,
-          mlRecommendedDaily: mlRec,
-          mlRecommendedWeekly:
-            Math.round((a.weekly * demandMultiplier) / 10) * 10,
-          mlConfidence: Math.round(60 + util * 0.35),
-          demandSignal,
-          utilization: util,
-          locked: false,
-        };
-      }),
-    );
+    setAssets(equipmentRes.data.map(deriveAssetRecord));
   }
 
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -587,8 +537,6 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         categories,
         assets,
         setAssets,
-        pricingRules,
-        setPricingRules,
         users,
         setUsers,
         bookings,

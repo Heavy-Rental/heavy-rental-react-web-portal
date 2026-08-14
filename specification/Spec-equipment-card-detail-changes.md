@@ -61,12 +61,12 @@ In practice this means the badge is **hidden until the user picks a rental date 
 
 The three spots:
 - `EquipmentGrid.tsx:105` — catalog card badge, gated on `typeof item.available === "boolean"`.
-- `App.tsx:945` — detail page hero badge, gated on `typeof liveAvailable === "boolean"`.
-- `App.tsx:845` — the `SPEC_ROWS` "Availability" row: `typeof liveAvailable === "boolean" ? (liveAvailable ? "Available Now" : "Currently On Rent") : "—"`.
+- `App.tsx:995` — detail page hero badge, gated on `typeof liveAvailable === "boolean"`.
+- `App.tsx:876` — the `SPEC_ROWS` "Availability" row: `typeof liveAvailable === "boolean" ? (liveAvailable ? "Available Now" : "Currently On Rent") : "—"`.
 
-`liveAvailable` (`App.tsx:836`) is a detail-page-only derived value: `equipment.find((e) => e.id === detailItem.id)?.available ?? detailItem.available` — it looks up the same item in the freshly date-fetched `equipment` list (so the detail page reflects the same per-date availability as the grid it was opened from), falling back to `detailItem.available` if the item isn't in that list.
+`liveAvailable` (`App.tsx:872`) is a detail-page-only derived value: `equipment.find((e) => e.id === detailItem.id)?.available ?? detailItem.available` — it looks up the same item in the freshly date-fetched `equipment` list (so the detail page reflects the same per-date availability as the grid it was opened from), falling back to `detailItem.available` if the item isn't in that list.
 
-There's also a related helper at `App.tsx:1169`: when `liveAvailable === false` (a real, known "not available", not just "unknown"), the detail page shows `"This machine is currently on rent. Check back soon."` beneath the Select button.
+There's also a related helper at `App.tsx:1229`: when `liveAvailable === false` (a real, known "not available", not just "unknown"), the detail page shows `"This machine is currently on rent. Check back soon."` beneath the Select button.
 
 ### 3.6 Missing-field crash fixes
 
@@ -96,6 +96,7 @@ Some equipment fields the UI expects can come back missing/`undefined`/`null` de
 - 2026-08-08: Added the missing-field crash-fix table; corrected 3.5 to explain the availability badge is effectively hidden until a date range is picked. Also removed a leftover `console.log("DEBUG availability:", ...)` debug statement from `App.tsx`'s catalog card `.map()`.
 - 2026-08-08: Expanded 3.5 to document all 3 availability-badge spots (`EquipmentGrid.tsx` card badge, `App.tsx` detail hero badge, `App.tsx` `SPEC_ROWS` Availability row), the `liveAvailable` derivation on the detail page, and the "currently on rent" helper text shown when `liveAvailable === false`.
 - 2026-08-08: Removed the REST API integration section (`login()`, date-aware `equipmentApi.list()`, mode-aware `handleLogin`) and related checklist items — that belongs to `Spec-frontend-api-integration.md`, not this doc, which is scoped to card/detail display behavior only.
+- 2026-08-13: Corrected the §3.5 `App.tsx` line references (945→995, 845→876, 836→872, 1169→1229), which had drifted after an unrelated reformat of `App.tsx` on `HR-116-site-address-postal-code-validation`. No behavioral change.
 
 ## 6. Notes for Future Updates
 

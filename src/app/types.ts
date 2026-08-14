@@ -76,7 +76,7 @@ export interface RentalPlan {
   createdAt: string;
 }
 
-export type BookingStatus = "PENDING" | "CONFIRMED" | "MOBILISED" | "COMPLETED" | "CANCELLED";
+export type BookingStatus = "PENDING_DEPOSIT" | "PENDING_CONFIRMED" | "CONFIRMED" | "MOBILISED" | "COMPLETED" | "CANCELLED";
 export type PaidStatus = "UNPAID" | "DEPOSIT" | "FULL";
 
 export interface Booking {

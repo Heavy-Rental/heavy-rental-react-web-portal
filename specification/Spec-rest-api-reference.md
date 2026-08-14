@@ -36,6 +36,7 @@ Scope is **this web portal's perspective only**: routes owned by the mobile/driv
 | ⚠️ Frontend calls it, backend doesn't have it | This portal's code (unconditionally, not mode-gated) targets a path/method the real backend does not implement — see §5 |
 | ⏳ Backend live, frontend not wired | Real backend route is implemented but this portal has no code calling it yet — see §7 |
 | — | Not applicable to this portal (mobile/driver-only) — see §4 |
+| 🚫 Not planned | This portal's code doesn't call it and isn't expected to — distinct from §5's gaps, which the frontend *does* call and *does* need the backend to add |
 
 ## 2. Endpoint index — routes this portal uses or depends on
 
@@ -88,7 +89,8 @@ There is one login flow, no web-vs-mobile distinction at the backend level (no `
 | `GET` | `/api/bookings` | ⏳ Backend live, frontend not wired | Real route exists; this portal's "My Rental Plans" / admin bookings views still read from the mock server only in API mode's current scope (`Spec-stripe-payment-checkout.md` Out of Scope). Relevant if API-mode parity is extended later. |
 | `GET` | `/api/bookings/{id}` | ⏳ Backend live, frontend not wired | Same. |
 | `PUT` | `/api/bookings/{id}` | ⏳ Backend live, frontend not wired | Same — note this is a full-replace endpoint on the real backend, not a partial merge. |
-| `PATCH` / `DELETE` | `/api/bookings/{id}` | ⚠️ Frontend calls it, backend doesn't have it | Admin `BookingsTab` calls `bookingApi.update()` (PATCH) for status changes; `bookingApi.remove()` (DELETE) also has no backend route. See §5. |
+| `PATCH` | `/api/bookings/{id}/status` | ✅ Backend live, frontend wired | `bookingApi.updateStatus()` — admin `BookingsTab`'s status dropdown. Real route, `{ "bookingStatus": "..." }` body, any of the 6 `BookingStatus` values accepted with no transition restriction. Previously called the generic `bookingApi.update()` against plain `/api/bookings/{id}` (PATCH), which 405'd — see `Spec-admin-dashboard-api-mode-fixes.md`. |
+| `DELETE` | `/api/bookings/{id}` | 🚫 Not planned | `CANCELLED` is a real `BookingStatus` value, reachable via the status route above, and covers the "remove a booking" use case without a hard delete. `bookingApi.remove()` exists on the generic resource client but the admin UI never calls it for bookings. |
 
 ### 2.6 Analytics
 
@@ -107,7 +109,7 @@ There is one login flow, no web-vs-mobile distinction at the backend level (no `
 
 | Method | Path | Status | Notes |
 |---|---|---|---|
-| `POST` | `/api/recommendations/project-spec` | ⏳ Backend live, frontend not wired | Implemented backend-side (Call 1 → Call 2 orchestration). `CustomerOnboarding.tsx` currently simulates this client-side. See §7. |
+| `POST` | `/api/recommendations/project-spec` | ✅ Backend live, frontend wired | JSON (`recommendationApi.createFromProjectSpec`) or multipart (`createFromProjectSpecMultipart`). `CustomerOnboarding` Generate Instant Quote. Same path under `dev:mock` and `dev:api`. |
 | `POST` | `/api/recommendations/{id}/knowledge-query` | ⏳ Backend live, frontend not wired | Backs the project chatbot (Call 3). `Chatbot.tsx` currently simulates replies client-side. See §7. |
 | `GET` | `/api/recommendations/{id}` | ⏳ Backend live, frontend not wired | Session read-back; no frontend caller yet. |
 
@@ -136,7 +138,6 @@ These are treated as backend work still owed, not frontend bugs to fix — the f
 - **`/api/users`** — no route exists at all. Needed for: resolving a login's numeric `userId` (`handleLogin`, silently falls back to `id: null` today via try/catch), and the admin Users tab's full CRUD.
 - **`/api/depots` write routes** (`POST`/`PUT`/`PATCH`/`DELETE`) — real backend has GET-only stub, no `Depot` entity. Needed if depot management is ever exercised in API mode (currently only read via the stub, so no visible breakage yet — but any write path would fail).
 - **`/api/rentalPlans/{id}`** generic `PUT`/`PATCH`/`DELETE` — real backend only has item- and quote-scoped mutations (§2.4).
-- **`/api/bookings/{id}` `PATCH`/`DELETE`** — real backend only has `PUT` (full replace). Admin `BookingsTab`'s status-change call assumes PATCH.
 - **`/api/status-distribution`** — no real-backend equivalent at all; mock-only today.
 
 ## 6. Open item — `POST /api/auth/logout`
@@ -150,52 +151,26 @@ Whoever owns the backend's auth design should confirm which, since that determin
 
 ## 7. Frontend work owed — recommender wiring
 
-`/api/recommendations/project-spec`, `.../knowledge-query`, and `.../{id}` (§2.8) are implemented and "As-built" on the real backend, but this portal has no `recommendationApi` in `src/app/api.ts` and no call site — `CustomerOnboarding.tsx`'s recommendation cards and `Chatbot.tsx`'s replies are both fully client-simulated. Tracked here as a planned future feature: this portal intends to replace that simulation with real calls to these endpoints.
+`POST /api/recommendations/project-spec` is wired (`recommendationApi` + `CustomerOnboarding`). Still owed: `POST /api/recommendations/{id}/knowledge-query` (`Chatbot.tsx` is still client-simulated) and `GET /api/recommendations/{id}` (no caller).
 
-### 7.1 `POST /api/recommendations/project-spec` — proposed request/response contract
+### 7.1 `POST /api/recommendations/project-spec` — as-built contract
 
-**Status: proposed, not confirmed against the backend.** The authoritative contract is supposed to live in `SPEC-haystack-recommender-client.md` §5.1, which isn't in this repo — only a one-line gloss of it reached this portal via a temporary backend index (since removed). This is this portal's own recommendation for what that contract should look like, derived from: the entity field names the frontend already anticipates (`AIRecommendation.confidence_score`, `RecommendationItem.rank_order`/`match_score` — see comments in `CustomerOnboarding.tsx`), the `quoteRef`/`items` naming already hinted upstream, and reuse of the existing `POST /api/rentalPlans/{id}/quote` pricing engine (`Spec-rental-plan-quote.md`, backend-side) instead of a second pricing path. Must be confirmed against the real backend contract before implementation.
+**Status: wired.** JSON body is Spring `SubmitProjectSpecRequest`. Multipart uses camelCase form parts plus optional `file`. Response is the Instant Quotation DTO (`CreateProjectSpecResponse`). Orchestration: Web → Spring → Haystack Call 1 + Call 2; Haystack session id stays server-side.
 
-Orchestration this assumes: Web → Spring (this route) → Haystack Call 1 (`submitprojectspecification`) → Haystack Call 2 (`project-knowledge/getassetrecommendations`) → Spring composes the response below. Call 1's output (a Haystack session id) is never exposed to the web client — Spring persists it server-side against the `AIRecommendation` row so Call 3 (`knowledge-query`) can reference it later; only Call 2's asset recommendations feed the response.
-
-**Request:**
+**JSON request:**
 
 ```json
 {
-  "description": "6-storey building, 8T load, 18m reach, 3 weeks of facade work",
-  "attachmentFileNames": ["site-plan.pdf", "scope.docx"],
-  "startDate": "2026-09-01",
-  "endDate": "2026-09-21"
+  "projectText": "6-storey building, 8T load, 18m reach, 3 weeks of facade work",
+  "userName": "Alex Tan"
 }
 ```
 
-- `description` — free-text specs; required if `attachmentFileNames` is empty (mirrors the UI's existing `specsText.length >= 20 || uploaded.length > 0` gate).
-- `attachmentFileNames` — filenames only, not file content — matches current frontend behavior, which never reads uploaded file bytes. Sending real file content is a v2 concern (multipart), not proposed here.
-- `startDate`/`endDate` — the field `HR-111-include-date-selection-field-for-web-recommender` was created for and never built (branch has zero commits beyond `develop`). Shaped like `POST /api/bookings`'s date pair for consistency, not a `rentalDays` count.
-- No `userId` — resolved from the JWT, same as `POST /api/bookings`.
+Optional: `startDate`, `endDate`, `query`, `topK`. JWT supplies user identity. File uploads use the multipart hop instead (`file`, `projectText`, `userName`, …).
 
-**Response:**
+**Response:** Instant Quotation DTO — `recommendationId`, `ingestId`, `quoteRef` (string), `confidenceScore`, `days`, `estimatedTotal`, `specSummary`, `rationale`, `items[]` with nested `equipment`, plus session fields (`needsSummary`, `expectedBudget`, `warnings`, `correlationId`, `tentativeStartDate`, `tentativeEndDate`).
 
-```json
-{
-  "recommendationId": 123,
-  "confidenceScore": 0.87,
-  "quoteRef": { "rentalPlanId": 55 },
-  "items": [
-    {
-      "rankOrder": 1,
-      "assetId": 4,
-      "matchScore": 0.95,
-      "reason": "Elevated access or working-at-height requirement identified"
-    }
-  ]
-}
-```
-
-- `recommendationId` — the `AIRecommendation` row's id; the one handle the web client keeps, since `GET /api/recommendations/{id}` and `POST /api/recommendations/{id}/knowledge-query` (Call 3 chatbot) both key off it.
-- `confidenceScore` — `AIRecommendation.confidence_score`.
-- `items[]` — one per `RecommendationItem` (`rankOrder`, `matchScore`, `reason`); `assetId` only, not a full equipment object — the client already has `GET /api/equipment/{id}` for that, avoiding two copies of price/capacity going stale relative to each other.
-- `quoteRef.rentalPlanId` — Spring creates a draft `RentalPlan` from the Call 2 asset list server-side and returns its id here, rather than computing pricing inside this endpoint. The web client then calls the existing `POST /api/rentalPlans/{rentalPlanId}/quote` for actual priced numbers — reusing the already-built quote engine instead of a second one.
+**Frontend date-bar binding:** After Add All to Rental Plan, the portal seeds the catalog `DateRangeBar` from `tentativeStartDate` / `tentativeEndDate`, falling back to `days` when a bound is missing (`resolveQuoteDates` in `src/lib/dateFormat.ts`). Know / Browse do not send dates. Locked by `src/lib/dateFormat.test.ts` (`npm test`).
 
 ## 8. Pricing calls — quote (Haystack) vs. estimate (Spring-only)
 
@@ -250,3 +225,7 @@ Same three fields `POST /api/bookings`'s response already carries — no new sha
 - 2026-08-13: Initial reference written, consolidating the real backend's REST surface as relevant to this portal (auth, equipment, depots, rental plans, bookings, payments, analytics, users, recommendations), scoped to routes this portal uses, is documented to use, or plans to use. Excludes mobile/driver-only routes with no web-portal feature (§4). Records backend implementation gaps (§5) and two explicitly undecided items — the unused `/api/auth/logout` route (§6) and the unwired recommender endpoints (§7) — as open/owed rather than resolving them.
 - 2026-08-13: Added §7.1 — a proposed (unconfirmed) request/response contract for `POST /api/recommendations/project-spec`, since the authoritative contract isn't available in this repo. Covers the `description`/`attachmentFileNames`/`startDate`/`endDate` request shape and a `recommendationId`/`confidenceScore`/`quoteRef`/`items` response that reuses the existing `POST /api/rentalPlans/{id}/quote` engine for pricing rather than duplicating it.
 - 2026-08-13: Added §8 — clarified this portal needs two distinct pricing paths: `POST /api/rentalPlans/{id}/quote` (§8.1, corrected to reach Haystack for AI-informed pricing, reversing this document's earlier speculation that it was Spring-only) and a new, proposed `POST /api/pricing/estimate` (§8.2, Spring-only, never reaches Haystack, reuses `POST /api/bookings`'s pricing formula and request/response shape). §2.4's quote row note updated to cross-reference §8.1.
+- 2026-08-13: §2.5/§5 updated — the `PATCH /api/bookings/{id}` gap is resolved: the backend added `PATCH /api/bookings/{id}/status` (not the same path — a dedicated sub-resource, `{ "bookingStatus": "..." }` body, no transition restriction) and the frontend's admin `BookingsTab` now calls it via a new `bookingApi.updateStatus()`. Added a new 🚫 Not planned status to the legend and reclassified `DELETE /api/bookings/{id}` under it — no longer listed as a gap, since `CANCELLED` (a real status, reachable via the new route) covers the same need without a hard delete.
+- 2026-08-13: Marked `POST /api/recommendations/project-spec` as frontend-wired (`recommendationApi` + Instant Quote in `CustomerOnboarding`). §7 now only tracks `knowledge-query` and `GET /{id}`. Vite `/api` proxy timeout set to 180s so `dev:api` can wait out Spring’s Haystack saga.
+- 2026-08-13: Documented `tentativeStartDate` / `tentativeEndDate` on the Instant Quotation DTO and the frontend binding that seeds DateRangeBar from those fields (or `days`) after Add All to Rental Plan.
+- 2026-08-13: `resolveQuoteDates` field rules are locked by `src/lib/dateFormat.test.ts` (`npm test`).

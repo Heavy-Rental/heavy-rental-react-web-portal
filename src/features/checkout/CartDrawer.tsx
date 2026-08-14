@@ -9,8 +9,8 @@ export function CartDrawer({
   cart,
   onRemoveItem,
   siteAddress,
-  sitePostalCode,
   onEditAddress,
+  highlightAddAddress,
   totalCost,
   onCheckout,
   onClose,
@@ -18,12 +18,13 @@ export function CartDrawer({
   cart: CartItem[];
   onRemoveItem: (equipmentId: number) => void;
   siteAddress: string;
-  sitePostalCode: string;
   onEditAddress: () => void;
+  highlightAddAddress?: boolean;
   totalCost: number;
   onCheckout: () => void;
   onClose: () => void;
 }) {
+  const canCheckout = siteAddress.trim().length > 0;
   return (
     <div className="w-72 shrink-0 bg-card border border-border sticky top-20">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
@@ -83,16 +84,15 @@ export function CartDrawer({
                 Delivery site
               </span>
               <button
+                type="button"
                 onClick={onEditAddress}
-                className="text-xs text-primary hover:text-primary/80 underline underline-offset-2"
+                className={`text-xs text-primary hover:text-primary/80 underline underline-offset-2 px-1.5 py-0.5 ${highlightAddAddress ? "border border-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.25)] animate-pulse rounded-sm" : ""}`}
               >
                 {siteAddress ? "Edit" : "Add"}
               </button>
             </div>
             <p className="text-xs text-foreground mb-3 leading-relaxed">
-              {siteAddress
-                ? `${siteAddress}, ${sitePostalCode}`
-                : "No delivery address set yet."}
+              {siteAddress || "No delivery address set yet."}
             </p>
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-muted-foreground">
@@ -103,8 +103,15 @@ export function CartDrawer({
               </span>
             </div>
             <button
+              type="button"
+              disabled={!canCheckout}
               onClick={onCheckout}
-              className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all"
+              title={
+                canCheckout
+                  ? undefined
+                  : "Add a delivery address before proceeding to deposit"
+              }
+              className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
             >
               Proceed to Deposit
             </button>

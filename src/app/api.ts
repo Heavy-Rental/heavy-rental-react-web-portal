@@ -65,6 +65,11 @@ export async function login(email: string, password: string): Promise<{ accessTo
   });
   if (!res.ok) throw new Error("Login failed");
   return res.json();
+
+  
+}
+export function logout(): Promise<void> {
+  return request("/auth/logout", { method: "POST" });
 }
 
 
@@ -123,6 +128,16 @@ export const bookingApi = {
   // Real backend's GET /bookings returns the flat CreateBookingResponse shape (defined
   // below), not the mock's normalized Booking shape — callers must narrow per-item.
   list: (signal?: AbortSignal) => request<(Booking | CreateBookingResponse)[]>("/bookings", { signal }),
+  // The generic resource().update() above PATCHes /bookings/{id} with an arbitrary
+  // partial body — there's no backend route for that (405). Status changes go through
+  // the real PATCH /bookings/{id}/status endpoint instead, matching how
+  // deliveries/returns already do status updates, with the field name (bookingStatus,
+  // not status) the backend's StatusUpdateRequest actually expects.
+  updateStatus: (id: number, status: string) =>
+    request<Booking | CreateBookingResponse>(`/bookings/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ bookingStatus: status }),
+    }),
 };
 export const monthlyUtilizationApi = readOnlyResource<MonthlyUtilization>("/monthly-utilization");
 export const statusDistributionApi = readOnlyResource<StatusDistribution>("/status-distribution");
@@ -140,6 +155,11 @@ export interface CreateBookingRequest {
   deliveryNotes?: string;
 }
 
+export interface BookingItemLine {
+  assetName: string;
+  serialNumber: string;
+}
+
 export interface CreateBookingResponse {
   bookingId: number;
   customerName: string;
@@ -147,8 +167,12 @@ export interface CreateBookingResponse {
   endDate: string;
   bookingStatus: string;
   siteAddress: string;
-  assetName: string;
-  serialNumber: string;
+  // Was a flat assetName/serialNumber pair; the real backend's BookingResponse now
+  // carries one row per booked item (dto/BookingItemLine.java, HR-113) — a booking can
+  // cover more than one asset. Reading the old flat fields here was silently undefined
+  // at runtime (TS didn't catch it, nothing enforces the interface against live JSON),
+  // which crashed the admin Bookings search the moment `.toLowerCase()` ran on it.
+  items: BookingItemLine[];
   deliveryNotes: string;
   totalAmount: number;
   depositAmount: number;
@@ -173,6 +197,142 @@ export const paymentApi = {
       method: "POST",
       body: JSON.stringify({ bookingId }),
     }),
+};
+
+// ─── Project-spec recommendations ──────────────────────────────────────────
+// POST /api/recommendations/project-spec (Call 1). Two hops on the same path:
+//   JSON  — camelCase body matching Spring SubmitProjectSpecRequest
+//   multipart — camelCase form parts + optional file
+// Response is the Instant Quotation DTO (quote + ranked equipment items).
+
+export interface CreateProjectSpecRequest {
+  projectText: string;
+  startDate?: string;
+  endDate?: string;
+  userName?: string;
+  query?: string;
+  topK?: number;
+}
+
+export interface ProjectSpecNeed {
+  needId: string;
+  description: string;
+  equipmentHints: string[];
+  quantity: number;
+}
+
+export interface ProjectSpecBudget {
+  amount: number;
+  currency: string;
+  source: string;
+}
+
+// Nested fleet card on each recommendation item — the fields Instant Quotation
+// returns, not the full Asset catalog record (min/max rates, ratings, etc.).
+// Live Spring omits / nulls weekly and may send a non-URL img placeholder.
+export type ProjectSpecEquipment = Omit<
+  Pick<
+    Asset,
+    | "id"
+    | "name"
+    | "category"
+    | "baseDailyRate"
+    | "weekly"
+    | "capacity"
+    | "platformHeight"
+    | "purchaseYear"
+    | "location"
+    | "available"
+    | "img"
+    | "desc"
+    | "tags"
+  >,
+  "weekly"
+> & {
+  weekly?: number | null;
+};
+
+export interface ProjectSpecRecommendationItem {
+  rankOrder: number;
+  matchScore: number;
+  reason: string;
+  lineTotal: number;
+  quantity: number;
+  equipment: ProjectSpecEquipment;
+}
+
+export interface CreateProjectSpecResponse {
+  recommendationId: number;
+  ingestId: string;
+  userRequirementSummary: string;
+  tentativeStartDate?: string | null;
+  tentativeEndDate?: string | null;
+  needsSummary: ProjectSpecNeed[];
+  expectedBudget?: ProjectSpecBudget | null;
+  warnings: string[];
+  correlationId: string;
+  quoteRef: string;
+  confidenceScore: number;
+  days?: number | null;
+  estimatedTotal: number;
+  specSummary: string;
+  rationale: string;
+  items: ProjectSpecRecommendationItem[];
+}
+
+export interface CreateProjectSpecMultipartRequest {
+  file?: File;
+  projectText?: string;
+  startDate?: string;
+  endDate?: string;
+  userName?: string;
+  query?: string;
+  topK?: number;
+  correlationId?: string;
+}
+
+// Multipart hop of the same POST /recommendations/project-spec path.
+// Must not go through request() — that helper forces Content-Type: application/json
+// and would break the FormData boundary. Omit Content-Type so the browser sets it.
+async function postProjectSpecMultipart(
+  req: CreateProjectSpecMultipartRequest,
+  signal?: AbortSignal,
+): Promise<CreateProjectSpecResponse> {
+  const form = new FormData();
+  if (req.file) form.append("file", req.file);
+  if (req.projectText != null) form.append("projectText", req.projectText);
+  if (req.startDate != null) form.append("startDate", req.startDate);
+  if (req.endDate != null) form.append("endDate", req.endDate);
+  if (req.userName != null) form.append("userName", req.userName);
+  if (req.query != null) form.append("query", req.query);
+  if (req.topK != null) form.append("topK", String(req.topK));
+
+  const res = await fetch(`${BASE}/recommendations/project-spec`, {
+    method: "POST",
+    headers: {
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      "X-Correlation-Id": req.correlationId ?? crypto.randomUUID(),
+    },
+    body: form,
+    signal,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`POST /recommendations/project-spec failed: ${res.status}${detail ? ` — ${detail}` : ""}`);
+  }
+  const payload = (await res.json()) as CreateProjectSpecResponse | [CreateProjectSpecResponse];
+  return unwrapCreateResponse(payload);
+}
+
+export const recommendationApi = {
+  createFromProjectSpec: (req: CreateProjectSpecRequest, signal?: AbortSignal) =>
+    request<CreateProjectSpecResponse | [CreateProjectSpecResponse]>("/recommendations/project-spec", {
+      method: "POST",
+      body: JSON.stringify(req),
+      signal,
+    }).then(unwrapCreateResponse),
+  createFromProjectSpecMultipart: (req: CreateProjectSpecMultipartRequest, signal?: AbortSignal) =>
+    postProjectSpecMultipart(req, signal),
 };
 
 // ─── BUSINESS RULES (Spec-ui-heavy-machinery-portal.md §4.4, Spec-mock-api-server.md FR-007/FR-008) ─

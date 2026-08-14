@@ -190,5 +190,120 @@
     { "id": 2, "name": "Available", "value": 22, "color": "#4ade80" },
     { "id": 3, "name": "Maintenance", "value": 7, "color": "#f87171" },
     { "id": 4, "name": "In Transit", "value": 3, "color": "#60a5fa" }
-  ]
+  ],
+  "/recommendations/project-spec": {
+    "_config": true,
+    "description": "POST Instant Quotation (JSON or multipart). Static Instant Quotation DTO using the Singapore catalog.",
+    "mock": {
+      "recommendationId": 1,
+      "ingestId": "ing_mock_001",
+      "userRequirementSummary": "Elevated facade access, site preparation, and compact indoor fit-out",
+      "tentativeStartDate": "2026-09-01",
+      "tentativeEndDate": "2026-09-21",
+      "needsSummary": [
+        {
+          "needId": "need-1",
+          "description": "Elevated access for facade work",
+          "equipmentHints": ["boom lift", "135ft", "4WD"],
+          "quantity": 1
+        },
+        {
+          "needId": "need-2",
+          "description": "Foundation prep and site clearing",
+          "equipmentHints": ["excavator", "earthmoving"],
+          "quantity": 1
+        },
+        {
+          "needId": "need-3",
+          "description": "Compact indoor access",
+          "equipmentHints": ["scissors lift", "indoor"],
+          "quantity": 1
+        }
+      ],
+      "expectedBudget": {
+        "amount": 39690,
+        "currency": "SGD",
+        "source": "mock"
+      },
+      "warnings": [
+        "Quote valid for 48 hours",
+        "Delivery window depends on site access"
+      ],
+      "correlationId": "corr-mock-001",
+      "quoteRef": "QUO-MOCK-1",
+      "confidenceScore": 0.91,
+      "days": 21,
+      "estimatedTotal": 39690,
+      "specSummary": "6-storey building · 8T load · 18m reach · 3 weeks",
+      "rationale": "This bundle covers elevated facade access via the telescopic boom, site preparation via the hydraulic excavator, and compact indoor access via the scissors lift.",
+      "items": [
+        {
+          "rankOrder": 1,
+          "matchScore": 0.95,
+          "reason": "135ft reach covers the elevation requirement; 4WD suits uneven site terrain.",
+          "lineTotal": 12180,
+          "quantity": 1,
+          "equipment": {
+            "id": 1,
+            "name": "JLG 1350SJP Telescopic Boom",
+            "category": "Boom Lift",
+            "baseDailyRate": 580,
+            "weekly": 2600,
+            "capacity": 1,
+            "platformHeight": 135,
+            "purchaseYear": 2023,
+            "location": "Jurong Port",
+            "available": true,
+            "img": "photo-1780054984720-20ccf265317f",
+            "desc": "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
+            "tags": ["135ft Reach", "4WD"]
+          }
+        },
+        {
+          "rankOrder": 2,
+          "matchScore": 0.9,
+          "reason": "Foundation prep and site clearing needed before elevated work begins.",
+          "lineTotal": 18690,
+          "quantity": 1,
+          "equipment": {
+            "id": 4,
+            "name": "CAT 320 Hydraulic Excavator",
+            "category": "Excavator",
+            "baseDailyRate": 890,
+            "weekly": 4200,
+            "capacity": 20,
+            "platformHeight": null,
+            "purchaseYear": 2022,
+            "location": "Marina South",
+            "available": true,
+            "img": "photo-1630288214173-a119cf823388",
+            "desc": "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
+            "tags": ["GPS Tracked", "Operator Available"]
+          }
+        },
+        {
+          "rankOrder": 3,
+          "matchScore": 0.88,
+          "reason": "Compact indoor access for facade and finishing work in tighter areas.",
+          "lineTotal": 8820,
+          "quantity": 1,
+          "equipment": {
+            "id": 2,
+            "name": "Genie GS-1932 Scissors Lift",
+            "category": "Scissors Lift",
+            "baseDailyRate": 420,
+            "weekly": 1900,
+            "capacity": 1,
+            "platformHeight": 19,
+            "purchaseYear": 2024,
+            "location": "Pioneer",
+            "available": true,
+            "img": "photo-1664312616511-81fe2e745cb3",
+            "desc": "Compact scissors lift suited for indoor and outdoor elevated access on construction and facility sites.",
+            "tags": ["Compact", "Indoor Ready"]
+          }
+        }
+      ]
+    }
+  }
 }

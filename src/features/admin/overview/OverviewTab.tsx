@@ -31,10 +31,14 @@ function ChartTip({
   active,
   payload,
   label,
+  unit,
+  valueFormatter,
 }: {
   active?: boolean;
   payload?: readonly ChartTipPayloadItem[];
   label?: string | number;
+  unit?: string;
+  valueFormatter?: (value: number | string) => string;
 }) {
   if (!active || !payload?.length) return null;
   return (
@@ -42,7 +46,7 @@ function ChartTip({
       <p className="text-foreground font-semibold mb-1">{label}</p>
       {payload.map((p, i) => (
         <p key={String(p.name ?? i)} style={{ color: p.color ?? "#f5a623" }}>
-          {p.name}: {p.value}
+          {p.name}: {valueFormatter ? valueFormatter(p.value ?? "") : `${p.value}${unit ?? ""}`}
         </p>
       ))}
     </div>
@@ -101,7 +105,7 @@ export function OverviewTab({
 
   const utilizationByAsset = fleet.map((a) => ({
     name: a.name.split(" ").slice(0, 2).join(" "),
-    utilization: assets.find((x) => x.id === a.id)?.utilization ?? 0,
+    utilization: Math.round(assets.find((x) => x.id === a.id)?.utilization ?? 0),
     status: a.deploymentStatus,
   }));
 
@@ -306,11 +310,12 @@ export function OverviewTab({
                         ? p.label
                         : undefined
                     }
+                    unit="%"
                   />
                 )}
                 cursor={{ fill: "rgba(255,255,255,0.03)" }}
               />
-              <Bar key="adm-ua-bar" dataKey="utilization" radius={[2, 2, 0, 0]} name="adm-util-asset">
+              <Bar key="adm-ua-bar" dataKey="utilization" radius={[2, 2, 0, 0]} name="Utilization">
                 {utilizationByAsset.map((entry, i) => (
                   <Cell
                     key={`adm-ua-${i}`}
@@ -426,6 +431,7 @@ export function OverviewTab({
                         ? p.label
                         : undefined
                     }
+                    valueFormatter={(v) => `S$${Number(v).toLocaleString()}`}
                   />
                 )}
               />
@@ -434,7 +440,7 @@ export function OverviewTab({
                 dataKey="revenue"
                 fill="#f5a623"
                 radius={[2, 2, 0, 0]}
-                name="adm-revenue-trend"
+                name="Revenue"
               />
             </BarChart>
           </ResponsiveContainer>

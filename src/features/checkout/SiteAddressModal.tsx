@@ -1,39 +1,87 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { mono, display, sans } from "../../lib/styles";
+import {
+  extractPostalCode,
+  isSingaporePostal,
+  lookupSingaporePostal,
+} from "../../lib/sgPostal";
 
 // ─── SITE ADDRESS MODAL ─────────────────────────────────────────────────────────
-// Captured once per cart, right after the first successful "Select" (Spec-frontend-ui-changes.md
-// Screen 6) — maps to Booking.siteAddress/sitePostalCode/deliveryNotes.
+// Captured once per cart — maps to Booking.siteAddress/sitePostalCode/deliveryNotes.
+// Postal code: use a 6-digit code already in the address, otherwise look it up
+// from OneMap as the user types a Singapore street address.
 
 export function SiteAddressModal({
   address,
-  postalCode,
   notes,
   onClose,
   onSave,
 }: {
   address: string;
-  postalCode: string;
   notes: string;
   onClose: () => void;
   onSave: (address: string, postalCode: string, notes: string) => void;
 }) {
-  const [form, setForm] = useState({ address, postalCode, notes });
+  const [form, setForm] = useState({ address, notes });
   const [error, setError] = useState<string | null>(null);
-  const postalRe = /^\d{6}$/;
+  const [lookup, setLookup] = useState<{
+    query: string;
+    postal: string;
+    status: "loading" | "found" | "miss";
+  } | null>(null);
+
+  const query = form.address.trim();
+  const typedPostal = extractPostalCode(form.address);
+  const lookupMatches = lookup !== null && lookup.query === query;
+  const postalCode = typedPostal || (lookupMatches ? lookup.postal : "");
+  const lookupStatus: "idle" | "loading" | "found" | "miss" = typedPostal
+    ? "idle"
+    : query.length < 6
+      ? "idle"
+      : lookupMatches
+        ? lookup.status
+        : "loading";
+
+  useEffect(() => {
+    if (typedPostal || query.length < 6) return;
+    const ac = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLookup({ query, postal: "", status: "loading" });
+      void lookupSingaporePostal(query, ac.signal)
+        .then((found) => {
+          if (ac.signal.aborted) return;
+          setLookup({
+            query,
+            postal: found ?? "",
+            status: found ? "found" : "miss",
+          });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          if (ac.signal.aborted) return;
+          setLookup({ query, postal: "", status: "miss" });
+        });
+    }, 400);
+    return () => {
+      window.clearTimeout(timer);
+      ac.abort();
+    };
+  }, [query, typedPostal]);
 
   const handleSave = () => {
     if (!form.address.trim()) {
       setError("Site address is required.");
       return;
     }
-    if (!postalRe.test(form.postalCode.trim())) {
-      setError("Postal code must be a 6-digit number, e.g. 619094.");
+    if (!isSingaporePostal(postalCode)) {
+      setError(
+        "Couldn't find a Singapore postal code for this address. Try a more specific street or building, or include the 6-digit postal code.",
+      );
       return;
     }
     setError(null);
-    onSave(form.address.trim(), form.postalCode.trim(), form.notes.trim());
+    onSave(form.address.trim(), postalCode, form.notes.trim());
   };
 
   return (
@@ -64,13 +112,18 @@ export function SiteAddressModal({
         <div className="p-6 flex flex-col gap-4">
           <p className="text-xs text-muted-foreground -mt-1">
             Where should this booking's equipment be delivered? One address
-            covers the whole booking.
+            covers the whole booking. Type a Singapore street or building —
+            we'll look up the postal code.
           </p>
           <div>
-            <label className="text-xs text-muted-foreground mb-1.5 block">
+            <label
+              htmlFor="site-address"
+              className="text-xs text-muted-foreground mb-1.5 block"
+            >
               Address<span className="text-primary ml-0.5">*</span>
             </label>
             <input
+              id="site-address"
               value={form.address}
               onChange={(e) =>
                 setForm((f) => ({ ...f, address: e.target.value }))
@@ -80,16 +133,33 @@ export function SiteAddressModal({
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground mb-1.5 block">
-              Postal Code<span className="text-primary ml-0.5">*</span>
+            <label
+              htmlFor="site-postal"
+              className="text-xs text-muted-foreground mb-1.5 block"
+            >
+              Postal Code{" "}
+              <span className="normal-case font-normal text-muted-foreground/60">
+                {typedPostal
+                  ? "(from address)"
+                  : lookupStatus === "loading"
+                    ? "(looking up…)"
+                    : lookupStatus === "found"
+                      ? "(from Singapore OneMap)"
+                      : "(auto-detected from address)"}
+              </span>
             </label>
             <input
-              value={form.postalCode}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, postalCode: e.target.value }))
+              id="site-postal"
+              value={postalCode}
+              readOnly
+              placeholder={
+                lookupStatus === "loading"
+                  ? "Looking up postal code…"
+                  : lookupStatus === "miss"
+                    ? "No match — try a more specific address"
+                    : "Appears after you type a Singapore address"
               }
-              placeholder="619094"
-              className="w-full bg-secondary/50 border border-border px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors"
+              className="w-full bg-secondary/30 border border-border px-3 py-2.5 text-sm text-muted-foreground placeholder-muted-foreground outline-none cursor-not-allowed"
               style={mono}
             />
           </div>

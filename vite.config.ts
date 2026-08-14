@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -19,11 +20,20 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, './src'),
       },
     },
+    test: {
+      environment: "jsdom",
+      setupFiles: "./src/test/setup.ts",
+      exclude: ["**/node_modules/**", "**/e2e/**"],
+    },
     server: {
       proxy: {
         '/api': {
           target: env.VITE_API_TARGET,
           changeOrigin: true,
+          // Spring Instant Quote orchestrates Haystack Call 1 + Call 2 in one
+          // request; the default http-proxy timeout cuts that off under dev:api.
+          timeout: 180_000,
+          proxyTimeout: 180_000,
         },
       },
     },
