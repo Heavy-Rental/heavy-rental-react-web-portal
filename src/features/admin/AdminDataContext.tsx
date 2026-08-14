@@ -121,68 +121,31 @@ function buildOnRentAssetIds(
   return ids;
 }
 
-interface AssetDeployment {
-  status: DeploymentStatus;
-  bookingId: string;
-  customer: string;
-  site: string;
+// Deployment status is derived from real data, not stored anywhere — DEPLOYMENT_META's
+// own descriptions (adminFormat.ts) document the intended mapping: Booked tracks an active
+// Booking.status === CONFIRMED, In-Transit tracks MOBILISED, and Maintenance tracks
+// Asset.condition === NEEDS_REPAIR independent of any booking. Only the free-text notes
+// and the lastUpdated/updatedBy audit trail have no backing API resource and stay
+// client-local (see FleetTab's handleFleetUpdate). Only bookings covering *today* count —
+// a CONFIRMED booking for a date range that's already over or not yet started shouldn't
+// hold an asset "Booked" forever, same date-window check buildOnRentAssetIds uses.
+const ACTIVE_DEPLOYMENT_STATUSES: Record<string, DeploymentStatus> = {
+  CONFIRMED: "Booked",
+  MOBILISED: "In-Transit",
+};
+const DEPLOYMENT_RANK: Record<DeploymentStatus, number> = {
+  Available: 0,
+  Booked: 1,
+  "In-Transit": 2,
+  Maintenance: 3,
+};
+
+interface FleetBookingLink {
+  deploymentStatus: DeploymentStatus;
+  assignedBooking: string;
+  assignedCustomer: string;
+  currentSite: string;
   note: string;
-}
-
-// Per-asset current deployment, derived from real bookings covering today — mirrors
-// buildOnRentAssetIds's date-window check but also distinguishes CONFIRMED (awaiting
-// dispatch) from MOBILISED (in transit) and carries the booking/customer/site detail
-// the Fleet Board displays alongside the status.
-function buildAssetDeployments(
-  apiBookings: (ApiBooking | CreateBookingResponse)[],
-  equipment: Asset[],
-  rentalPlans: ApiRentalPlan[],
-  apiUsers: ApiUser[],
-  today: string,
-): Map<number, AssetDeployment> {
-  const fmt = (iso: string) =>
-    new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-  const map = new Map<number, AssetDeployment>();
-
-  for (const b of apiBookings) {
-    if (today < b.startDate || today > b.endDate) continue;
-    const status = isApiBookingRecord(b) ? b.bookingStatus : b.status;
-    if (!ACTIVE_BOOKING_STATUSES.has(status)) continue;
-
-    const depStatus: DeploymentStatus = status === "MOBILISED" ? "In-Transit" : "Booked";
-    const bookingId = `RNT-${String(isApiBookingRecord(b) ? b.bookingId : b.id).padStart(4, "0")}`;
-    let customer: string;
-    if (isApiBookingRecord(b)) {
-      customer = b.customerName;
-    } else {
-      const plan = rentalPlans.find((p) => p.id === b.rentalPlanId);
-      const user = plan ? apiUsers.find((u) => u.id === plan.userId) : undefined;
-      customer = user?.name ?? "Unknown";
-    }
-    const note =
-      depStatus === "In-Transit"
-        ? `En route — return due ${fmt(b.endDate)}.`
-        : `Confirmed — delivery due ${fmt(b.startDate)}.`;
-
-    const ids: number[] = isApiBookingRecord(b)
-      ? (b.items ?? [])
-          .map((item) => equipment.find((e) => e.serialno === item.serialNumber)?.id)
-          .filter((id): id is number => id !== undefined)
-      : b.equipmentIds;
-
-    for (const id of ids) {
-      const existing = map.get(id);
-      // An asset shouldn't match two bookings on the same day, but if it does, In-Transit
-      // (equipment physically moving) takes priority over Booked (still at depot).
-      if (!existing || (depStatus === "In-Transit" && existing.status !== "In-Transit")) {
-        map.set(id, { status: depStatus, bookingId, customer, site: b.siteAddress, note });
-      }
-    }
-  }
-  return map;
 }
 
 function buildUserRows(
@@ -301,53 +264,85 @@ function buildBookingRows(
   });
 }
 
-// Format matches handleFleetUpdate's manual-edit timestamp (FleetTab.tsx) so seeded and
-// admin-updated rows read consistently.
-const fmtLastUpdated = (iso: string) =>
-  new Date(iso)
-    .toLocaleString("en-US", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-    .replace(",", "");
-
-const buildFleetAssets = (
+// Format matches handleFleetUpdate's manual-edit timestamp (FleetTab.tsx); formatTimestamp()
+// (adminFormat.ts) renders both the seeded and admin-updated forms consistently.
+function buildFleetAssets(
   equipment: Asset[],
   apiBookings: (ApiBooking | CreateBookingResponse)[],
   rentalPlans: ApiRentalPlan[],
   apiUsers: ApiUser[],
+  depots: Depot[],
   today: string,
-): FleetAsset[] => {
-  const deployments = buildAssetDeployments(apiBookings, equipment, rentalPlans, apiUsers, today);
-  return equipment.map((e) => {
-    const condition = e.condition ?? "GOOD";
-    const lastUpdated = e.lastConditionUpdatedAt ? fmtLastUpdated(e.lastConditionUpdatedAt) : "";
+): FleetAsset[] {
+  const fmt = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
 
-    if (condition === "NEEDS_REPAIR") {
-      return {
-        id: e.id,
-        name: e.name,
-        category: e.category,
-        purchaseYear: e.purchaseYear,
-        serialno: e.serialno,
-        location: e.location,
-        photo: resolvePhoto(e.img),
-        deploymentStatus: "Maintenance",
-        assignedBooking: "",
-        assignedCustomer: "",
-        currentSite: `Service Center, ${e.location}`,
-        lastUpdated,
-        updatedBy: "",
-        notes: `Condition: ${formatCondition(condition)} — scheduled for service.`,
-        condition,
-      };
+  const links = new Map<number, FleetBookingLink>();
+  const consider = (
+    assetId: number,
+    status: string,
+    bookingRef: string,
+    customer: string,
+    site: string,
+    startDate: string,
+    endDate: string,
+  ) => {
+    const deploymentStatus = ACTIVE_DEPLOYMENT_STATUSES[status];
+    if (!deploymentStatus) return;
+    const existing = links.get(assetId);
+    if (existing && DEPLOYMENT_RANK[existing.deploymentStatus] >= DEPLOYMENT_RANK[deploymentStatus]) {
+      return;
     }
+    const note =
+      deploymentStatus === "In-Transit"
+        ? `En route — return due ${fmt(endDate)}.`
+        : `Confirmed — delivery due ${fmt(startDate)}.`;
+    links.set(assetId, { deploymentStatus, assignedBooking: bookingRef, assignedCustomer: customer, currentSite: site, note });
+  };
 
-    const d = deployments.get(e.id);
+  for (const b of apiBookings) {
+    if (today < b.startDate || today > b.endDate) continue;
+    if (isApiBookingRecord(b)) {
+      // Real backend shape — items carry serialNumber, not assetId (same join used by
+      // buildOnRentAssetIds above).
+      for (const item of b.items ?? []) {
+        const asset = equipment.find((e) => e.serialno === item.serialNumber);
+        if (asset) {
+          consider(
+            asset.id,
+            b.bookingStatus,
+            `RNT-${String(b.bookingId).padStart(4, "0")}`,
+            b.customerName,
+            b.siteAddress,
+            b.startDate,
+            b.endDate,
+          );
+        }
+      }
+    } else {
+      const plan = rentalPlans.find((p) => p.id === b.rentalPlanId);
+      const user = plan ? apiUsers.find((u) => u.id === plan.userId) : undefined;
+      const depot = depots.find((d) => d.id === b.depotId);
+      for (const id of b.equipmentIds) {
+        consider(
+          id,
+          b.status,
+          `RNT-${String(b.id).padStart(4, "0")}`,
+          user?.name ?? "Unknown",
+          depot?.name ?? `Depot #${b.depotId}`,
+          b.startDate,
+          b.endDate,
+        );
+      }
+    }
+  }
+
+  return equipment.map((e) => {
+    const link = links.get(e.id);
+    const inMaintenance = e.condition === "NEEDS_REPAIR";
     return {
       id: e.id,
       name: e.name,
@@ -356,17 +351,19 @@ const buildFleetAssets = (
       serialno: e.serialno,
       location: e.location,
       photo: resolvePhoto(e.img),
-      deploymentStatus: d?.status ?? "Available",
-      assignedBooking: d?.bookingId ?? "",
-      assignedCustomer: d?.customer ?? "",
-      currentSite: d?.site ?? `${e.location} Depot`,
-      lastUpdated,
-      updatedBy: "",
-      notes: d?.note ?? "",
-      condition,
+      deploymentStatus: inMaintenance ? "Maintenance" : (link?.deploymentStatus ?? "Available"),
+      assignedBooking: inMaintenance ? "" : (link?.assignedBooking ?? ""),
+      assignedCustomer: inMaintenance ? "" : (link?.assignedCustomer ?? ""),
+      currentSite: inMaintenance ? e.location : (link?.currentSite ?? e.location),
+      lastUpdated: e.lastConditionUpdatedAt || "—",
+      updatedBy: "—",
+      notes: inMaintenance
+        ? `Condition: ${formatCondition(e.condition ?? "GOOD")} — scheduled for service.`
+        : (link?.note ?? ""),
+      condition: e.condition ?? "GOOD",
     };
   });
-};
+}
 
 interface AdminDataValue {
   dataStatus: "loading" | "success" | "error";
@@ -458,7 +455,8 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     equipmentRes.status === "success" &&
     bookingsRes.status === "success" &&
     rentalPlansRes.status === "success" &&
-    usersRes.status === "success"
+    usersRes.status === "success" &&
+    depotsRes.status === "success"
   ) {
     setFleetSeeded(true);
     setFleet(
@@ -467,6 +465,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         bookingsRes.data,
         rentalPlansRes.data,
         usersRes.data,
+        depotsRes.data,
         todayISO(),
       ),
     );

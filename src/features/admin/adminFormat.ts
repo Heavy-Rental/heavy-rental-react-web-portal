@@ -44,6 +44,36 @@ export function bookingStatusColor(s: BookingStatus): string {
   }[s];
 }
 
+// lastUpdated values arrive either as raw API timestamps (ISO 8601) or as the
+// locale string FleetTab writes on local edits — both parse fine via `new Date`.
+function parseTimestamp(value: string): Date | null {
+  if (!value || value === "—") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatTimestamp(value: string): string {
+  const date = parseTimestamp(value);
+  if (!date) return value || "—";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function formatDateOnly(value: string): string {
+  const date = parseTimestamp(value);
+  if (!date) return value || "—";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export const PAID_STATUSES: PaidStatus[] = ["UNPAID", "DEPOSIT", "FULL"];
 export function formatPaidStatus(s: PaidStatus): string {
   return s[0] + s.slice(1).toLowerCase();
@@ -56,7 +86,11 @@ export const CONDITIONS: ConditionType[] = [
   "NEEDS_REPAIR",
 ];
 
-export type DeploymentStatus = "Available" | "Booked" | "In-Transit" | "Maintenance";
+export type DeploymentStatus =
+  | "Available"
+  | "Booked"
+  | "In-Transit"
+  | "Maintenance";
 
 export const DEPLOYMENT_META: Record<
   DeploymentStatus,
@@ -74,14 +108,14 @@ export const DEPLOYMENT_META: Record<
     bg: "bg-primary/10",
     border: "border-primary/30",
     dot: "bg-primary",
-    desc: "Reserved — booking confirmed, awaiting dispatch (Booking.status = CONFIRMED)",
+    desc: "Reserved — booking confirmed, awaiting dispatch",
   },
   "In-Transit": {
     color: "text-violet-400",
     bg: "bg-violet-500/10",
     border: "border-violet-500/30",
     dot: "bg-violet-400",
-    desc: "En route to or from customer site (Booking.status = MOBILISED)",
+    desc: "En route to or from customer site",
   },
   Maintenance: {
     color: "text-red-400",

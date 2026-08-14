@@ -12,6 +12,7 @@ export function CartDrawer({
   onEditAddress,
   highlightAddAddress,
   totalCost,
+  onCancelPlan,
   onCheckout,
   onClose,
 }: {
@@ -21,6 +22,9 @@ export function CartDrawer({
   onEditAddress: () => void;
   highlightAddAddress?: boolean;
   totalCost: number;
+  // Present only in API mode once a plan exists — omitted in mock mode, where there's no
+  // persisted RentalPlan to cancel (api-contract-for-frontend.md §5.5).
+  onCancelPlan?: () => void;
   onCheckout: () => void;
   onClose: () => void;
 }) {
@@ -118,6 +122,14 @@ export function CartDrawer({
             <p className="text-xs text-muted-foreground text-center mt-2">
               30% deposit required to hold your reservation.
             </p>
+            {onCancelPlan && (
+              <button
+                onClick={onCancelPlan}
+                className="w-full mt-3 text-xs text-muted-foreground hover:text-red-400 underline underline-offset-2 transition-colors"
+              >
+                Cancel rental plan
+              </button>
+            )}
           </div>
         </>
       )}

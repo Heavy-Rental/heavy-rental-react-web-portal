@@ -53,6 +53,7 @@ import {
   depotApi,
   userApi,
   rentalPlanApi,
+  rentalPlanCartApi,
   bookingApi,
   monthlyUtilizationApi,
   statusDistributionApi,
@@ -78,7 +79,12 @@ import {
   isExpired,
 } from "./app/auth";
 import { mono, display, sans } from "./lib/styles";
-import { daysBetweenISO, parseISODate, type QuoteDateRange } from "./lib/dateFormat";
+import {
+  daysBetweenISO,
+  formatDateRange,
+  parseISODate,
+  type QuoteDateRange,
+} from "./lib/dateFormat";
 import { DateRangeBar } from "./components/DateRangeBar";
 import {
   buildQuoteCartItems,
@@ -91,6 +97,8 @@ import {
   useCart,
   cartDateRange,
   resolveCartDepotId,
+  cartFromRentalPlan,
+  findActiveRentalPlan,
   type CartItem,
 } from "./features/cart/CartContext";
 import { Chatbot } from "./features/browse/Chatbot";
@@ -346,6 +354,12 @@ function CustomerPortal({
     null,
   );
   const { cart, setCart, cartOpen, setCartOpen } = useCart();
+  const isApiMode = import.meta.env.MODE === "api";
+  // API mode only: the persisted RentalPlan backing `cart`, and a lookup from
+  // assetId → RentalPlanItem id (needed for DELETE .../items/{itemId}, which the
+  // real backend keys by item id, not asset id). Mock mode never touches these.
+  const [planId, setPlanId] = useState<number | null>(null);
+  const [planItemIds, setPlanItemIds] = useState<Record<number, number>>({});
   const [activeFilter, setActiveFilter] = useState("All");
   const [detailItem, setDetailItem] = useState<EquipmentItem | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -409,6 +423,77 @@ const equipmentRes = useApiResource(
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [specUploadOpen, setSpecUploadOpen] = useState(false);
 
+  // API mode only: hydrate the cart from the customer's persisted RentalPlan on mount
+  // (Spec-rental-plan-cart-checkout.md — fixes the cart being lost on reload/navigation,
+  // since it now lives server-side, not in this component's local state). Waits on the
+  // catalog since RentalPlanItem only carries assetId — resolving it to a display-ready
+  // CartItem needs the already-fetched Equipment record.
+  useEffect(() => {
+    if (!isApiMode || equipmentRes.status !== "success") return;
+    let cancelled = false;
+    rentalPlanCartApi
+      .list()
+      .then((plans) => {
+        if (cancelled) return;
+        const active = findActiveRentalPlan(plans);
+        if (!active) return;
+        const { cart: hydrated, itemIds } = cartFromRentalPlan(
+          active,
+          equipmentRes.data,
+        );
+        setCart(hydrated);
+        setPlanItemIds(itemIds);
+        setPlanId(active.id);
+      })
+      .catch(() => {
+        // Non-fatal — the cart just starts empty, same as a customer with no plan yet.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isApiMode, equipmentRes.status]);
+
+  // API mode only: ensures a RentalPlan exists for the given date range, reusing the
+  // caller's one active (non-CONVERTED, non-CANCELLED) plan if it already matches (B9 — no server-side
+  // filter, so this always fetches the list and filters client-side; the backend itself
+  // 409s a second create() while one exists, so checking first also avoids that). Returns
+  // null (and sets cartDateError) if an active plan exists with a *different* range — the
+  // plan's date range is fixed at creation (B11), so that's a real conflict, not a stale read.
+  const ensureApiRentalPlanId = async (
+    startDate: string,
+    endDate: string,
+  ): Promise<number | null> => {
+    if (planId !== null) return planId;
+    const plans = await rentalPlanCartApi.list();
+    const active = findActiveRentalPlan(plans);
+    if (active) {
+      if (active.startDate !== startDate || active.endDate !== endDate) {
+        setCartDateError(
+          `Your active rental plan is already set for ${formatDateRange(active.startDate, active.endDate)}. Remove all items first to change dates.`,
+        );
+        return null;
+      }
+      return active.id;
+    }
+    // siteAddress is required to create a plan (RentalPlanCreateRequest.siteAddress is
+    // @NotBlank + must end in a 6-digit postal code) — block and prompt for it rather
+    // than sending a blank value the server would reject as validation_failed.
+    if (!siteAddress.trim()) {
+      setSiteAddressModalOpen(true);
+      setCartDateError(
+        "Add a delivery address before adding equipment to your rental plan.",
+      );
+      return null;
+    }
+    const created = await rentalPlanCartApi.create({
+      startDate,
+      endDate,
+      siteAddress,
+    });
+    return created.id;
+  };
+
   // Auto-add AI-recommended equipment ("Add All to Rental Plan") to the cart the moment both
   // shared dates are available. Wraps setSharedEndDate (the only setter that can complete a
   // range) so the flush happens synchronously in the same click that finalizes the end date,
@@ -421,16 +506,7 @@ const equipmentRes = useApiResource(
     if (!d || !sharedStartDate || !pendingAutoAdd) return;
     const startDate = sharedStartDate,
       endDate = d;
-    setCart((prev) => {
-      const merged = [...prev];
-      for (const eq of pendingAutoAdd) {
-        const idx = merged.findIndex((c) => c.equipment.id === eq.id);
-        const item: CartItem = { equipment: eq, startDate, endDate };
-        if (idx >= 0) merged[idx] = item;
-        else merged.push(item);
-      }
-      return merged;
-    });
+    const toAdd = pendingAutoAdd;
     setCartOpen(true);
     setCartDateError(null);
     setPendingAutoAdd(null);
@@ -438,6 +514,44 @@ const equipmentRes = useApiResource(
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
+    if (!isApiMode) {
+      setCart((prev) => {
+        const merged = [...prev];
+        for (const eq of toAdd) {
+          const idx = merged.findIndex((c) => c.equipment.id === eq.id);
+          const item: CartItem = { equipment: eq, startDate, endDate };
+          if (idx >= 0) merged[idx] = item;
+          else merged.push(item);
+        }
+        return merged;
+      });
+      return;
+    }
+    void (async () => {
+      try {
+        const id = await ensureApiRentalPlanId(startDate, endDate);
+        if (id === null) return;
+        let plan = null;
+        for (const eq of toAdd) {
+          if (cart.some((c) => c.equipment.id === eq.id)) continue;
+          plan = await rentalPlanCartApi.addItem(id, eq.id);
+        }
+        if (plan) {
+          const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
+          setCart(synced);
+          setPlanItemIds(itemIds);
+          setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
+        } else {
+          setPlanId(id);
+        }
+      } catch (err) {
+        setCartDateError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't add those items to your rental plan.",
+        );
+      }
+    })();
   };
 
   const applyQuoteDatesToBar = (quoteDates?: QuoteDateRange) => {
@@ -543,10 +657,6 @@ const equipmentRes = useApiResource(
       return;
     }
     setCartDateError(null);
-    setCart((prev) => [
-      ...prev.filter((c) => c.equipment.id !== item.equipment.id),
-      item,
-    ]);
     setCartOpen(true);
     // After Add All (specs mode), address is collected from the highlighted Add
     // control — do not pop Delivery Details from equipment-card Select.
@@ -554,6 +664,76 @@ const equipmentRes = useApiResource(
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
+    if (!isApiMode) {
+      setCart((prev) => [
+        ...prev.filter((c) => c.equipment.id !== item.equipment.id),
+        item,
+      ]);
+      return;
+    }
+    void (async () => {
+      try {
+        const id = await ensureApiRentalPlanId(item.startDate, item.endDate);
+        if (id === null) return;
+        const plan = await rentalPlanCartApi.addItem(id, item.equipment.id);
+        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
+        setCart(synced);
+        setPlanItemIds(itemIds);
+        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
+      } catch (err) {
+        setCartDateError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't add this item to your rental plan.",
+        );
+      }
+    })();
+  };
+
+  // API mode only: remove an item via DELETE .../items/{itemId} (keyed by RentalPlanItem
+  // id, not assetId — planItemIds tracks that mapping since RentalPlanItemResponse is the
+  // only place it's exposed). Response reflects the new status/items, so `cart` is set
+  // from it directly rather than issuing a follow-up GET.
+  const removeFromCartApi = (equipmentId: number) => {
+    const itemId = planItemIds[equipmentId];
+    if (planId === null || itemId === undefined) return;
+    rentalPlanCartApi
+      .removeItem(planId, itemId)
+      .then((plan) => {
+        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
+        setCart(synced);
+        setPlanItemIds(itemIds);
+        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
+      })
+      .catch((err) => {
+        setCartDateError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't remove this item from your rental plan.",
+        );
+      });
+  };
+
+  // API mode only: abandon the current plan (api-contract-for-frontend.md §5.5). Minimal
+  // wiring for manual verification of PR 4 — trusts the response over local state, same as
+  // addItem/removeItem above, and clears the cart since a cancelled plan is no longer "mine".
+  const cancelPlanApi = () => {
+    if (planId === null) return;
+    if (!window.confirm("Cancel your current rental plan? This can't be undone.")) return;
+    rentalPlanCartApi
+      .cancel(planId)
+      .then(() => {
+        setCart([]);
+        setPlanItemIds({});
+        setPlanId(null);
+      })
+      .catch((err) => {
+        setCartDateError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't cancel your rental plan.",
+        );
+      });
   };
 
   // Specs-banner toggle: add/remove Rental Plan items without opening Delivery Details.
@@ -1521,14 +1701,17 @@ const equipmentRes = useApiResource(
             <CartDrawer
               cart={cart}
               onRemoveItem={(equipmentId) =>
-                setCart((prev) =>
-                  prev.filter((x) => x.equipment.id !== equipmentId),
-                )
+                isApiMode
+                  ? removeFromCartApi(equipmentId)
+                  : setCart((prev) =>
+                      prev.filter((x) => x.equipment.id !== equipmentId),
+                    )
               }
               siteAddress={siteAddress}
               onEditAddress={() => setSiteAddressModalOpen(true)}
               highlightAddAddress={cart.length > 0 && !siteAddress}
               totalCost={totalCost}
+              onCancelPlan={isApiMode && planId !== null ? cancelPlanApi : undefined}
               onCheckout={() => {
                 setCartOpen(false);
                 setCheckoutOpen(true);

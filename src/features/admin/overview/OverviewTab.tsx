@@ -18,6 +18,7 @@ import {
   formatBookingStatus,
   bookingStatusColor,
   DEPLOYMENT_META,
+  formatTimestamp,
 } from "../adminFormat";
 import type { AdminTab, FleetAsset, BookingRow, UserRow } from "../AdminDataContext";
 
@@ -613,7 +614,7 @@ export function OverviewTab({
                     </td>
                     <td className="px-5 py-3 text-sm text-muted-foreground">{a.currentSite}</td>
                     <td className="px-5 py-3 text-xs text-muted-foreground" style={mono}>
-                      {a.lastUpdated}
+                      {formatTimestamp(a.lastUpdated)}
                     </td>
                   </tr>
                 );

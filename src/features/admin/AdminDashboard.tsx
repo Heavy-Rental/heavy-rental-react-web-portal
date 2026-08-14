@@ -132,6 +132,8 @@ function AdminDashboardContent({
           <FleetTab
             fleet={data.fleet}
             setFleet={data.setFleet}
+            assets={data.assets}
+            setAssets={data.setAssets}
             userName={userName}
             showToast={data.showToast}
           />

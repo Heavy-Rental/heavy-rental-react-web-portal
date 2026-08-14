@@ -4,6 +4,7 @@ import type {
   Depot,
   MonthlyUtilization,
   RentalPlan,
+  RentalPlanResponse,
   StatusDistribution,
   User,
 } from "./types";
@@ -159,6 +160,52 @@ export const statusDistributionApi = readOnlyResource<StatusDistribution>("/stat
 // STRIPE_INTEGRATION_HANDOFF.md §2/§5 — a different contract against the same
 // `/api/bookings` path than the mock resource above (mock and real backend are
 // never targeted in the same MODE, so the two never collide at runtime).
+
+// ─── REAL BACKEND: RentalPlan cart persistence (api-contract-for-frontend.md §1-3, 5.5, 7;
+// RentalPlanController.java, RentalPlanService.java, RentalPlanCreateRequest.java) ──
+// Distinct from `rentalPlanApi` above (generic CRUD over the mock's `RentalPlan` shape) —
+// these hit the same `/rentalPlans` routes but speak the real backend's response shape
+// (`RentalPlanResponse`) and its item-level mutation endpoints, which the mock server
+// doesn't implement. There's no server-side "active plan" filter (§7) — `list()` +
+// client-side filtering for `status` not in `("CONVERTED", "CANCELLED")` is the only way
+// to find the caller's one active plan (the backend itself 409s a second `create()` while
+// one exists; cancelling, like converting, frees the slot again).
+
+export interface CreateRentalPlanRequest {
+  startDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
+  endDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
+  // Required — RentalPlanCreateRequest.siteAddress is @NotBlank + must end in a
+  // 6-digit postal code; a blank/missing value 400s as validation_failed.
+  siteAddress: string;
+}
+
+export const rentalPlanCartApi = {
+  list: (signal?: AbortSignal) =>
+    request<RentalPlanResponse[]>("/rentalPlans", { signal }),
+  create: (body: CreateRentalPlanRequest) =>
+    request<RentalPlanResponse>("/rentalPlans", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  // Response reflects the updated status/totalAmount/items/updatedAt in the same call —
+  // no follow-up GET needed (§3: this also succeeds, reverting a QUOTED plan to DRAFT,
+  // instead of the 409 it returns today).
+  addItem: (planId: number, assetId: number) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}/items`, {
+      method: "POST",
+      body: JSON.stringify({ assetId }),
+    }),
+  removeItem: (planId: number, itemId: number) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}/items/${itemId}`, {
+      method: "DELETE",
+    }),
+  // Allowed from DRAFT/SAVED/QUOTED; 409 already_converted on a CONVERTED plan,
+  // 409 already_cancelled if already cancelled (api-contract-for-frontend.md §5.5).
+  cancel: (planId: number) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}/cancel`, {
+      method: "POST",
+    }),
+};
 
 export interface CreateBookingRequest {
   items: { assetId: number }[];
