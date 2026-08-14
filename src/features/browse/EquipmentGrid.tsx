@@ -1,5 +1,5 @@
 import { Search } from "lucide-react";
-import type { Equipment } from "../../app/types";
+import type { Asset } from "../../app/types";
 import type { CartItem } from "../cart/CartContext";
 import { mono, display } from "../../lib/styles";
 
@@ -16,14 +16,14 @@ export function EquipmentGrid({
   onSelectDetail,
   onAddToCart,
 }: {
-  equipment: Equipment[];
+  equipment: Asset[];
   activeFilter: string;
   onFilterChange: (f: string) => void;
   highlightId: number | null;
   cart: CartItem[];
   sharedStartDate: string | null;
   sharedEndDate: string | null;
-  onSelectDetail: (item: Equipment) => void;
+  onSelectDetail: (item: Asset) => void;
   onAddToCart: (item: CartItem) => void;
 }) {
   const filters = [

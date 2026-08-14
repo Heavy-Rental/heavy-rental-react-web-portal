@@ -1,13 +1,14 @@
 import {
   createContext,
   useContext,
+  useMemo,
   useState,
   type ReactNode,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import type {
-  Equipment,
+  Asset,
   User as ApiUser,
   RentalPlan as ApiRentalPlan,
   Booking as ApiBooking,
@@ -18,7 +19,7 @@ import type {
   ConditionType,
 } from "../../app/types";
 import {
-  equipmentApi,
+  assetApi,
   depotApi,
   userApi,
   rentalPlanApi,
@@ -27,14 +28,15 @@ import {
   type CreateBookingResponse,
 } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
-import { deriveAssetRecord, type AssetRecord } from "../../app/assetRecord";
+import { deriveAssetRecord, resolvePhoto, type AssetRecord } from "../../app/assetRecord";
+import { todayISO } from "../../lib/dateFormat";
 import type { DeploymentStatus, LifecycleStatus } from "./adminFormat";
 
 /* eslint-disable react-refresh/only-export-components -- Same rationale as CartContext: the
    provider, its hook, and the domain types/seed-derivation helpers it exposes are one cohesive
    admin data-layer module; splitting them wouldn't change behavior, only Fast Refresh granularity. */
 
-export type AdminTab = "overview" | "assets" | "fleet" | "users" | "bookings" | "pricing";
+export type AdminTab = "overview" | "assets" | "fleet" | "users" | "bookings";
 
 // User/booking view-models joined from the normalized API resources, for display.
 export interface UserRow {
@@ -98,24 +100,6 @@ export interface RentalLifecycle {
   events: LifecycleEvent[];
 }
 
-export interface PricingRule {
-  id: number;
-  name: string;
-  category: string;
-  currentDaily: number;
-  currentWeekly: number;
-  floorDaily: number;
-  ceilDaily: number;
-  floorWeekly: number;
-  ceilWeekly: number;
-  mlRecommendedDaily: number;
-  mlRecommendedWeekly: number;
-  mlConfidence: number;
-  demandSignal: "High" | "Medium" | "Low";
-  utilization: number;
-  locked: boolean;
-}
-
 // Real backend's GET /bookings returns a flat, denormalized shape (no rentalPlanId/
 // depotId/equipmentIds join keys — customer/asset info is inlined instead). This guard
 // lets the builders below branch per-item so both this API-mode shape and the mock's
@@ -124,6 +108,36 @@ function isApiBookingRecord(
   b: ApiBooking | CreateBookingResponse,
 ): b is CreateBookingResponse {
   return "bookingId" in b;
+}
+
+const ACTIVE_BOOKING_STATUSES = new Set(["CONFIRMED", "MOBILISED"]);
+
+// Asset.available is a manually-set admin flag (AssetFormModal's Availability toggle) with
+// no automatic tie to bookings, so it drifts from reality (e.g. an asset can sit "Available"
+// while a confirmed booking has it out today). This cross-references live bookings against
+// today's date instead, for a status the Assets tab can actually trust.
+function buildOnRentAssetIds(
+  apiBookings: (ApiBooking | CreateBookingResponse)[],
+  equipment: Asset[],
+  today: string,
+): Set<number> {
+  const ids = new Set<number>();
+  for (const b of apiBookings) {
+    if (today < b.startDate || today > b.endDate) continue;
+    if (isApiBookingRecord(b)) {
+      if (!ACTIVE_BOOKING_STATUSES.has(b.bookingStatus)) continue;
+      // Real backend booking items carry serialNumber, not assetId (dto/BookingItemLine.java,
+      // HR-113) — join on serial number instead.
+      for (const item of b.items ?? []) {
+        const asset = equipment.find((e) => e.serialno === item.serialNumber);
+        if (asset) ids.add(asset.id);
+      }
+    } else {
+      if (!ACTIVE_BOOKING_STATUSES.has(b.status)) continue;
+      for (const id of b.equipmentIds) ids.add(id);
+    }
+  }
+  return ids;
 }
 
 function buildUserRows(
@@ -139,10 +153,23 @@ function buildUserRows(
     // customerName === user.name instead (fragile on duplicate display names, but
     // it's the only link the real backend's booking response actually carries).
     const userBookings = bookings.filter((b) =>
-      isApiBookingRecord(b) ? b.customerName === u.name : planIds.has(b.rentalPlanId),
+      isApiBookingRecord(b)
+        ? b.customerName === u.name
+        : planIds.has(b.rentalPlanId),
     );
-    const hasActivePlan = rentalPlans.some(
-      (p) => p.userId === u.id && p.status === "active",
+    // "Active" means the customer has a booking currently in progress (CONFIRMED
+    // or MOBILISED — i.e. not yet COMPLETED/CANCELLED, and not just a pending deposit).
+    // Previously checked rentalPlan.status === "active", a mock-server-only value; the
+    // real backend's RentalPlan.status is DRAFT/SAVED/QUOTED/CONVERTED and never matched,
+    // so every user always showed Inactive.
+    const inProgressBookingStatuses = new Set<BookingStatus>([
+      "CONFIRMED",
+      "MOBILISED",
+    ]);
+    const hasInProgressBooking = userBookings.some((b) =>
+      inProgressBookingStatuses.has(
+        (isApiBookingRecord(b) ? b.bookingStatus : b.status) as BookingStatus,
+      ),
     );
     return {
       id: u.id,
@@ -151,7 +178,7 @@ function buildUserRows(
       role: u.role,
       rentals: userBookings.length,
       spent: userBookings.reduce((s, b) => s + b.totalAmount, 0),
-      status: hasActivePlan ? "Active" : "Inactive",
+      status: hasInProgressBooking ? "Active" : "Inactive",
     };
   });
 }
@@ -160,7 +187,7 @@ function buildBookingRows(
   apiBookings: (ApiBooking | CreateBookingResponse)[],
   rentalPlans: ApiRentalPlan[],
   apiUsers: ApiUser[],
-  equipment: Equipment[],
+  equipment: Asset[],
   depots: Depot[],
 ): BookingRow[] {
   const fmt = (iso: string) =>
@@ -176,21 +203,32 @@ function buildBookingRows(
     const dates = `${fmt(b.startDate)} – ${fmt(b.endDate)}`;
 
     if (isApiBookingRecord(b)) {
-      // Flat API-mode shape: customer/asset are already inlined, no joins needed.
+      // API-mode shape: customer is already inlined, no join needed. `items` can cover
+      // more than one asset per booking (dto/BookingItemLine.java, HR-113) — join every
+      // item's name rather than assuming a single flat assetName (that field no longer
+      // exists on the real response; reading it was undefined and crashed the search
+      // filter's `.toLowerCase()` call the moment a booking without a fallback showed up).
       // depot and paidStatus have no real equivalent here — approximated from
       // siteAddress and remainingBalance respectively.
+      const equipment =
+        (b.items ?? []).map((i) => i.assetName).join(", ") || "—";
       return {
         id: `RNT-${String(b.bookingId).padStart(4, "0")}`,
         apiId: b.bookingId,
         customer: b.customerName,
-        equipment: b.assetName,
+        equipment,
         depot: b.siteAddress,
         dates,
         days,
         total: b.totalAmount,
         deposit: b.depositAmount,
         status: b.bookingStatus as BookingStatus,
-        paidStatus: b.remainingBalance === 0 ? "FULL" : b.depositAmount > 0 ? "DEPOSIT" : "UNPAID",
+        paidStatus:
+          b.remainingBalance === 0
+            ? "FULL"
+            : b.depositAmount > 0
+              ? "DEPOSIT"
+              : "UNPAID",
       };
     }
 
@@ -218,7 +256,7 @@ function buildBookingRows(
   });
 }
 
-const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
+const buildFleetAssets = (equipment: Asset[]): FleetAsset[] =>
   equipment.map((e, i) => {
     const statuses: DeploymentStatus[] = [
       "Available",
@@ -246,9 +284,9 @@ const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
       name: e.name,
       category: e.category,
       purchaseYear: e.purchaseYear,
-      serialno: `SN-${e.category.slice(0, 3).toUpperCase()}-${e.purchaseYear}-${String(e.id).padStart(4, "0")}`,
+      serialno: e.serialno,
       location: e.location,
-      photo: `https://images.unsplash.com/photo-${e.img}?w=400&q=80`,
+      photo: resolvePhoto(e.img),
       deploymentStatus: statuses[idx],
       assignedBooking: bookings[idx],
       assignedCustomer: customers[idx],
@@ -256,9 +294,7 @@ const buildFleetAssets = (equipment: Equipment[]): FleetAsset[] =>
       lastUpdated: "2026-08-01 08:30",
       updatedBy: "Carlos Vega",
       notes: notes[idx],
-      condition: ["EXCELLENT", "GOOD", "FAIR", "NEEDS_REPAIR"][
-        idx
-      ] as ConditionType,
+      condition: e.condition ?? "GOOD",
     };
   });
 
@@ -438,16 +474,20 @@ interface AdminDataValue {
   categories: string[];
   assets: AssetRecord[];
   setAssets: Dispatch<SetStateAction<AssetRecord[]>>;
-  pricingRules: PricingRule[];
-  setPricingRules: Dispatch<SetStateAction<PricingRule[]>>;
   users: UserRow[];
   setUsers: Dispatch<SetStateAction<UserRow[]>>;
   bookings: BookingRow[];
   setBookings: Dispatch<SetStateAction<BookingRow[]>>;
+  onRentAssetIds: Set<number>;
   fleet: FleetAsset[];
   setFleet: Dispatch<SetStateAction<FleetAsset[]>>;
   lifecycles: RentalLifecycle[];
-  monthlyUtilization: { id: number; month: string; utilization: number; revenue: number }[];
+  monthlyUtilization: {
+    id: number;
+    month: string;
+    utilization: number;
+    revenue: number;
+  }[];
   toast: { msg: string; type?: "success" | "error" } | null;
   showToast: (msg: string, type?: "success" | "error") => void;
 }
@@ -455,18 +495,27 @@ interface AdminDataValue {
 const AdminDataContext = createContext<AdminDataValue | null>(null);
 
 export function AdminDataProvider({ children }: { children: ReactNode }) {
-  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
+  const equipmentRes = useApiResource((signal) => assetApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
   const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const usersRes = useApiResource((signal) => userApi.list(signal));
   const bookingsRes = useApiResource((signal) => bookingApi.list(signal));
   const rentalPlansRes = useApiResource((signal) => rentalPlanApi.list(signal));
-  const monthlyUtilRes = useApiResource((signal) => monthlyUtilizationApi.list(signal));
+  const monthlyUtilRes = useApiResource((signal) =>
+    monthlyUtilizationApi.list(signal),
+  );
   const monthlyUtilization = monthlyUtilRes.data ?? [];
   const categories = Array.from(new Set(equipment.map((e) => e.category)));
 
+  const onRentAssetIds = useMemo(
+    () =>
+      bookingsRes.data && equipmentRes.data
+        ? buildOnRentAssetIds(bookingsRes.data, equipmentRes.data, todayISO())
+        : new Set<number>(),
+    [bookingsRes.data, equipmentRes.data],
+  );
+
   const [assets, setAssets] = useState<AssetRecord[]>([]);
-  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [assetsSeededFrom, setAssetsSeededFrom] =
     useState<typeof equipmentRes.data>(null);
   if (
@@ -474,41 +523,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     equipmentRes.data !== assetsSeededFrom
   ) {
     setAssetsSeededFrom(equipmentRes.data);
-    const derived = equipmentRes.data.map(deriveAssetRecord);
-    setAssets(derived);
-    setPricingRules(
-      derived.map((a) => {
-        const util = a.utilization;
-        const demandSignal: PricingRule["demandSignal"] =
-          util >= 80 ? "High" : util >= 55 ? "Medium" : "Low";
-        const demandMultiplier = util >= 80 ? 1.18 : util >= 55 ? 1.05 : 0.92;
-        // Bounds now come straight off the asset (Asset.minDailyRate/maxDailyRate, admin-set
-        // via the Add/Edit Asset form) instead of being derived from baseDailyRate on every render.
-        const floor = a.minDailyRate;
-        const ceil = a.maxDailyRate;
-        const rawML = Math.round((a.baseDailyRate * demandMultiplier) / 5) * 5;
-        const mlRec = Math.min(ceil, Math.max(floor, rawML));
-        return {
-          id: a.id,
-          name: a.name,
-          category: a.category,
-          currentDaily: a.baseDailyRate,
-          currentWeekly: a.weekly,
-          floorDaily: floor,
-          ceilDaily: ceil,
-          // Weekly bounds stay a client-computed heuristic — Asset has no weekly-rate column to seed from.
-          floorWeekly: Math.round((a.weekly * 0.7) / 10) * 10,
-          ceilWeekly: Math.round((a.weekly * 1.4) / 10) * 10,
-          mlRecommendedDaily: mlRec,
-          mlRecommendedWeekly:
-            Math.round((a.weekly * demandMultiplier) / 10) * 10,
-          mlConfidence: Math.round(60 + util * 0.35),
-          demandSignal,
-          utilization: util,
-          locked: false,
-        };
-      }),
-    );
+    setAssets(equipmentRes.data.map(deriveAssetRecord));
   }
 
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -589,12 +604,11 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         categories,
         assets,
         setAssets,
-        pricingRules,
-        setPricingRules,
         users,
         setUsers,
         bookings,
         setBookings,
+        onRentAssetIds,
         fleet,
         setFleet,
         lifecycles,
@@ -610,6 +624,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
 
 export function useAdminData(): AdminDataValue {
   const ctx = useContext(AdminDataContext);
-  if (!ctx) throw new Error("useAdminData must be used within an AdminDataProvider");
+  if (!ctx)
+    throw new Error("useAdminData must be used within an AdminDataProvider");
   return ctx;
 }

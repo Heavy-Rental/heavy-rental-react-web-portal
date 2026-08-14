@@ -1,32 +1,44 @@
 import { useState, useRef } from "react";
 import { Search, ArrowRight, Wrench, CheckCircle, ChevronLeft, ChevronRight, Sparkles, Gauge, Info } from "lucide-react";
-import type { Equipment as EquipmentItem, OnboardingMode } from "../../app/types";
-import { equipmentApi } from "../../app/api";
-import { useApiResource } from "../../app/useApiResource";
-
-interface QuoteLine {
-  equipment: EquipmentItem; recommendedDays: number; reason: string;
-  matchedKeywords: string[]; matchScore: number; costTip: string;
-  priority: "Essential" | "Recommended" | "Optional";
-  weeklyAdvised: boolean; savingVsDaily: number;
-}
+import type { Asset as EquipmentItem, OnboardingMode } from "../../app/types";
+import {
+  recommendationApi,
+  type CreateProjectSpecResponse,
+  type ProjectSpecEquipment,
+} from "../../app/api";
+import {
+  resolveQuoteDates,
+  type QuoteDateRange,
+} from "../../lib/dateFormat";
+import { equipmentImageSrc } from "./equipmentImageSrc";
 
 // Styles
 const mono = { fontFamily: "'DM Mono', monospace" } as const;
 const display = { fontFamily: "'Barlow Condensed', sans-serif" } as const;
 const sans = { fontFamily: "'DM Sans', sans-serif" } as const;
 
-// Cryptographically secure 4-digit id (avoids CodeQL insecure-randomness on refs/tokens)
-function secureFourDigit(): number {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return 1000 + (buf[0] % 9000);
+function toEquipment(eq: ProjectSpecEquipment): EquipmentItem {
+  return {
+    minDailyRate: eq.baseDailyRate,
+    maxDailyRate: eq.baseDailyRate,
+    rating: 0,
+    reviews: 0,
+    utilization: 0,
+    revenue: 0,
+    hoursThisMonth: 0,
+    idealFor: [],
+    serialno: "",
+    condition: null,
+    lastConditionUpdatedAt: null,
+    ...eq,
+    weekly: eq.weekly ?? 0,
+    tags: eq.tags ?? [],
+    img: eq.img ?? "",
+  };
 }
 
 // ─── Quote Result Screen ───────────────────────────────────────────────────
-// Client-local — no AIRecommendation/RecommendationItem backend exists yet (only User
-// has a wired-up REST controller, SPEC-entity-repository.md §3.2) — but field names/scale
-// mirror those real entities so a future integration is a data-source swap, not a UI rewrite.
+// Bound to POST /api/recommendations/project-spec Instant Quotation DTO.
 
 interface RecItem {
   eq: EquipmentItem;
@@ -46,7 +58,7 @@ function matchScoreColor(score: number): string {
 
 function QuoteResultScreen({
   quoteRef, userName, recItems, days, confidenceScore,
-  specSummary, onRefine, onAddAll,
+  specSummary, rationale, onRefine, onAddAll,
 }: {
   quoteRef: string;
   userName: string;
@@ -55,17 +67,17 @@ function QuoteResultScreen({
   days: number;
   confidenceScore: number; // AIRecommendation.confidence_score — 0–1 decimal, e.g. 0.91 = 91%
   specSummary: string;
+  rationale: string;
   onRefine: () => void;
-  onAddAll: () => void;
+  onAddAll: (equipment: EquipmentItem[]) => void;
 }) {
   const [checked, setChecked] = useState<boolean[]>(recItems.map(() => true));
   const [previewEq, setPreviewEq] = useState<EquipmentItem | null>(null);
 
   // Quantities are fixed at 1 — AI-recommended bundles aren't user-adjustable on this step
   // (Spec-frontend-ui-changes.md: disable quantity modifier on recommendation cards).
-  const checkedTotal = recItems.reduce((sum, r, i) => {
-    return checked[i] ? sum + Math.round(r.lineTotal) : sum;
-  }, 0);
+  const checkedItems = recItems.filter((_, i) => checked[i]);
+  const checkedTotal = checkedItems.reduce((sum, r) => sum + Math.round(r.lineTotal), 0);
 
   return (
     <div className="min-h-screen bg-background text-foreground" style={sans}>
@@ -122,10 +134,10 @@ function QuoteResultScreen({
         </div>
 
         {/* 2 — Collapsed spec summary */}
-        <div className="bg-card border border-border px-4 py-3 flex items-center justify-between gap-3 mb-6">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="text-xs font-semibold text-muted-foreground tracking-widest uppercase shrink-0" style={mono}>Your Project Spec</span>
-            <span className="text-sm text-foreground truncate">{specSummary}</span>
+        <div className="bg-card border border-border px-4 py-3 flex items-start justify-between gap-3 mb-6">
+          <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+            <span className="text-xs font-semibold text-muted-foreground tracking-widest uppercase" style={mono}>Your Project Spec</span>
+            <span className="text-sm text-foreground whitespace-pre-wrap break-words">{specSummary}</span>
           </div>
           <button onClick={onRefine}
             className="shrink-0 flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-semibold">
@@ -149,11 +161,13 @@ function QuoteResultScreen({
                     className="flex items-center gap-3 flex-1 min-w-0 px-4 py-4 text-left hover:bg-muted/20 transition-colors group border-r border-border">
                     {/* Thumbnail */}
                     <div className="w-16 h-12 bg-muted shrink-0 overflow-hidden">
-                      <img
-                        src={`https://images.unsplash.com/${r.eq.img}?w=128&h=96&fit=crop&auto=format`}
-                        alt={r.eq.name}
-                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                      />
+                      {equipmentImageSrc(r.eq.img, 128, 96) ? (
+                        <img
+                          src={equipmentImageSrc(r.eq.img, 128, 96)!}
+                          alt={r.eq.name}
+                          className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                        />
+                      ) : null}
                     </div>
                     {/* Name + reason */}
                     <div className="flex-1 min-w-0">
@@ -213,23 +227,22 @@ function QuoteResultScreen({
         <div className="bg-card border border-border px-5 py-4 flex gap-3 mb-6">
           <Sparkles size={16} className="text-primary shrink-0 mt-0.5" />
           <p className="text-sm text-muted-foreground leading-relaxed">
-            This bundle was chosen to cover all phases of your {days}-day project: elevated facade access via the
-            telescopic boom, site preparation via the hydraulic excavator, and compact indoor access via the scissors
-            lift. Together they address your reach, ground-prep, and confined-space constraints without requiring
-            crane mobilisation.
+            {rationale || `This bundle was chosen to cover the requirements of your ${days}-day project.`}
           </p>
         </div>
 
         {/* 5 — Total bar */}
         <div className="flex items-center justify-between bg-card border border-border px-5 py-4 mb-6">
-          <p className="text-sm text-muted-foreground">Estimated total <span className="text-xs">({days} days · {checked.filter(Boolean).length} items selected)</span></p>
+          <p className="text-sm text-muted-foreground">Estimated total <span className="text-xs">({days} days · {checkedItems.length} items selected)</span></p>
           <p className="text-2xl font-black text-foreground" style={display}>S${checkedTotal.toLocaleString()}</p>
         </div>
 
-        {/* 6 — Primary CTA */}
+        {/* 6 — Primary CTA — pass selected quote equipment into the rental plan */}
         <button
-          onClick={onAddAll}
-          className="w-full py-4 bg-primary text-primary-foreground text-sm font-black tracking-widest uppercase hover:brightness-110 transition-all mb-3">
+          type="button"
+          disabled={checkedItems.length === 0}
+          onClick={() => onAddAll(checkedItems.map((r) => r.eq))}
+          className="w-full py-4 bg-primary text-primary-foreground text-sm font-black tracking-widest uppercase hover:brightness-110 transition-all mb-3 disabled:opacity-40 disabled:cursor-not-allowed">
           Add All to Rental Plan
         </button>
 
@@ -264,11 +277,13 @@ function QuoteResultScreen({
 
             {/* Photo */}
             <div className="w-full h-52 bg-muted overflow-hidden">
-              <img
-                src={`https://images.unsplash.com/${previewEq.img}?w=600&h=400&fit=crop&auto=format`}
-                alt={previewEq.name}
-                className="w-full h-full object-cover opacity-85"
-              />
+              {equipmentImageSrc(previewEq.img, 600, 400) ? (
+                <img
+                  src={equipmentImageSrc(previewEq.img, 600, 400)!}
+                  alt={previewEq.name}
+                  className="w-full h-full object-cover opacity-85"
+                />
+              ) : null}
             </div>
 
             <div className="px-5 py-5 flex flex-col gap-5">
@@ -279,7 +294,7 @@ function QuoteResultScreen({
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { label: "Base Daily Rate",   value: `S$${previewEq.baseDailyRate.toLocaleString()}/day` },
-                  { label: "Weekly Rate",  value: `S$${previewEq.weekly.toLocaleString()}/week` },
+                  { label: "Weekly Rate",  value: previewEq.weekly ? `S$${previewEq.weekly.toLocaleString()}/week` : "—" },
                   { label: "Capacity",     value: `${previewEq.capacity}t` },
                   { label: "Year",         value: previewEq.purchaseYear.toString() },
                   { label: "Location",     value: previewEq.location },
@@ -326,16 +341,14 @@ function QuoteResultScreen({
 
 // ─── Main Onboarding Flow ──────────────────────────────────────────────────
 
-function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { userName: string; onDone: (mode: OnboardingMode, recs?: EquipmentItem[]) => void; initialStep?: "choose" | "upload" }) {
+function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { userName: string; onDone: (mode: OnboardingMode, recs?: EquipmentItem[], quoteDates?: QuoteDateRange) => void; initialStep?: "choose" | "upload" }) {
   const [step, setStep] = useState<"choose" | "upload" | "analysing" | "quote">(initialStep);
   const [uploaded, setUploaded] = useState<File[]>([]);
   const [specsText, setSpecsText] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  const [rentalDays, setRentalDays] = useState(7);
-  const [quoteRef] = useState(() => `QUO-${secureFourDigit()}`);
+  const [quote, setQuote] = useState<CreateProjectSpecResponse | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const equipmentRes = useApiResource(() => equipmentApi.list());
-  const equipment = equipmentRes.data ?? [];
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) setUploaded(Array.from(e.target.files));
@@ -347,130 +360,27 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
     if (files.length) setUploaded(files);
   };
 
-  const runAnalysis = () => {
+  const runAnalysis = async () => {
+    setSubmitError(null);
     setStep("analysing");
-    setTimeout(() => {
-      const lower = specsText.toLowerCase();
-      const allText = lower + " " + uploaded.map(f => f.name.toLowerCase()).join(" ");
-
-      // ── Duration hint extraction ──────────────────────────────────────────
-      const durationHints: Record<string, number> = {
-        "1 week": 7, "one week": 7, "two weeks": 14, "2 weeks": 14,
-        "three weeks": 21, "3 weeks": 21, "1 month": 30, "one month": 30,
-        "2 months": 60, "two months": 60, "daily": 1, "day": 1, "overnight": 1,
-      };
-      let detectedDays = rentalDays;
-      for (const [hint, days] of Object.entries(durationHints)) {
-        if (allText.includes(hint)) { detectedDays = days; break; }
-      }
-      setRentalDays(detectedDays);
-
-      // ── Categorised intent signals — keyed to the 4 approved equipment
-      // categories (Spec-ui-heavy-machinery-portal.md §2.1), not specific models,
-      // so this stays correct if the catalog's exact machines ever change. ───
-      const SIGNALS: { label: string; keywords: string[]; categories: string[]; reason: string }[] = [
-        {
-          label: "excavation",
-          keywords: ["excavat", "dig", "trench", "foundation", "earthwork", "cut", "soil removal", "demolition", "earthmoving"],
-          categories: ["Excavator"],
-          reason: "Excavation, trenching, or earthmoving identified in your project scope",
-        },
-        {
-          label: "elevated access",
-          keywords: ["height", "elevated", "facade", "roof", "mep", "ceiling", "aerial", "boom", "man lift", "access platform", "painting", "electrical"],
-          categories: ["Boom Lift"],
-          reason: "Elevated access or working-at-height requirement found",
-        },
-        {
-          label: "indoor / compact access",
-          keywords: ["indoor access", "compact", "fit-out", "fit out", "scissor", "confined", "low ceiling"],
-          categories: ["Scissors Lift"],
-          reason: "Compact indoor access work in scope",
-        },
-        {
-          label: "material handling",
-          keywords: ["forklift", "pallet", "load", "unload", "warehouse", "indoor", "material handl", "storage"],
-          categories: ["Fork Lift"],
-          reason: "Material handling or logistics requirement identified",
-        },
-      ];
-
-      // ── Keyword matching per equipment ────────────────────────────────────
-      interface ScoredItem {
-        eq: EquipmentItem;
-        score: number;
-        matchedKeywords: string[];
-        primaryReason: string;
-      }
-
-      const scored: ScoredItem[] = equipment.map(eq => {
-        let score = eq.available ? 2 : 0;
-        const matchedKeywords: string[] = [];
-        let primaryReason = "Matched to your project requirements";
-
-        for (const sig of SIGNALS) {
-          const hitKws = sig.keywords.filter(kw => allText.includes(kw));
-          if (hitKws.length > 0 && sig.categories.includes(eq.category)) {
-            score += hitKws.length * 5;
-            hitKws.forEach(kw => { if (!matchedKeywords.includes(kw)) matchedKeywords.push(kw); });
-            primaryReason = sig.reason;
-          }
-        }
-
-        // idealFor keyword overlap
-        eq.idealFor.forEach(tag => {
-          if (allText.includes(tag.toLowerCase())) {
-            score += 3;
-            if (!matchedKeywords.includes(tag)) matchedKeywords.push(tag);
-          }
-        });
-
-        // Capacity bonus — if tonnage mentioned and machine is appropriate size
-        const tonMatch = allText.match(/(\d+)\s*(t|ton|tonne)/);
-        if (tonMatch) {
-          const reqTons = parseInt(tonMatch[1]);
-          if (eq.capacity >= reqTons * 0.8 && eq.capacity <= reqTons * 2) score += 4;
-        }
-
-        return { eq, score, matchedKeywords, primaryReason };
-      }).sort((a, b) => b.score - a.score);
-
-      // ── Cost-efficiency calculation per line ──────────────────────────────
-      const lines: QuoteLine[] = scored
-        .filter(s => s.score > 2)
-        .slice(0, Math.min(scored.filter(s => s.score > 2).length, 5))
-        .map(({ eq, score, matchedKeywords, primaryReason }, i) => {
-          const dailyTotal = eq.baseDailyRate * detectedDays;
-          const weeklyCost =
-            Math.floor(detectedDays / 7) * eq.weekly +
-            (detectedDays % 7) * eq.baseDailyRate;
-          const weeklyAdvised = detectedDays >= 7 && weeklyCost < dailyTotal;
-          const savingVsDaily = weeklyAdvised ? dailyTotal - weeklyCost : 0;
-
-          const costTip = weeklyAdvised
-            ? `Weekly rate saves you S$${savingVsDaily.toLocaleString()} vs billing daily`
-            : detectedDays < 7
-            ? "Short-term rental — daily rate applies; extend to 7+ days for weekly savings"
-            : `Book for ${detectedDays} days at daily rate — no weekly discount applies`;
-
-          return {
-            equipment: eq,
-            recommendedDays: detectedDays,
-            reason: primaryReason,
-            matchedKeywords: matchedKeywords.slice(0, 4),
-            matchScore: Math.min(100, Math.round((score / 25) * 100)),
-            priority: (i === 0 ? "Essential" : i <= 2 ? "Recommended" : "Optional") as QuoteLine["priority"],
-            weeklyAdvised,
-            savingVsDaily,
-            costTip,
-          };
-        });
-
-      // Quote lines computed for future dynamic quote UI; screen currently uses catalog recs.
-      void lines;
-
+    const projectText = specsText.trim();
+    try {
+      const result = uploaded.length > 0
+        ? await recommendationApi.createFromProjectSpecMultipart({
+            file: uploaded[0],
+            projectText: projectText || undefined,
+            userName,
+          })
+        : await recommendationApi.createFromProjectSpec({
+            projectText,
+            userName,
+          });
+      setQuote(result);
       setStep("quote");
-    }, 2800);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : String(err));
+      setStep("upload");
+    }
   };
 
   // ── Analysing screen ──────────────────────────────────────────────────────
@@ -504,65 +414,34 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
   }
 
   // ── Quotation result screen ───────────────────────────────────────────────
-  if (step === "quote") {
-    const DAYS = 21;
-    // Real catalog items matched to an elevated-access + site-prep project,
-    // looked up by category (not array index) so this stays correct if the
-    // catalog's specific machines ever change — only the 4 approved
-    // categories are guaranteed to exist.
-    const findByCategory = (category: string) => equipment.find(e => e.category === category);
-    // matchScore mirrors RecommendationItem.match_score (0–1 decimal); rankOrder is assigned
-    // after filtering so it reflects final list position, not pre-filter category order.
-    const REC_ITEMS: RecItem[] = ([
-      findByCategory("Boom Lift") && {
-        eq: findByCategory("Boom Lift")!,
-        reason: "135ft reach covers the elevation requirement; 4WD suits uneven site terrain.",
-        lineTotal: findByCategory("Boom Lift")!.baseDailyRate * DAYS,
-        matchScore: 0.95,
-      },
-      findByCategory("Excavator") && {
-        eq: findByCategory("Excavator")!,
-        reason: "Foundation prep and site clearing needed before elevated work begins.",
-        lineTotal: findByCategory("Excavator")!.baseDailyRate * DAYS,
-        matchScore: 0.90,
-      },
-      findByCategory("Scissors Lift") && {
-        eq: findByCategory("Scissors Lift")!,
-        reason: "Compact indoor access for facade and finishing work in tighter areas.",
-        lineTotal: findByCategory("Scissors Lift")!.baseDailyRate * DAYS,
-        matchScore: 0.88,
-      },
-    ] as (Omit<RecItem, "rankOrder"> | false)[])
-      .filter((r): r is Omit<RecItem, "rankOrder"> => Boolean(r))
-      .map((r, i) => ({ ...r, rankOrder: i + 1 }));
-    const ESTIMATED_TOTAL = REC_ITEMS.reduce((s, r) => s + r.lineTotal, 0);
-    // AIRecommendation.confidence_score — averaged across this bundle's per-item match scores.
-    const CONFIDENCE_SCORE = REC_ITEMS.length
-      ? REC_ITEMS.reduce((s, r) => s + r.matchScore, 0) / REC_ITEMS.length
-      : 0;
+  if (step === "quote" && quote) {
+    const recItems: RecItem[] = quote.items.map((item) => ({
+      eq: toEquipment(item.equipment),
+      reason: item.reason,
+      lineTotal: item.lineTotal,
+      rankOrder: item.rankOrder,
+      matchScore: item.matchScore,
+    }));
 
     return (
       <QuoteResultScreen
-        quoteRef={quoteRef}
+        quoteRef={quote.quoteRef}
         userName={userName}
-        recItems={REC_ITEMS}
-        estimatedTotal={ESTIMATED_TOTAL}
-        days={DAYS}
-        confidenceScore={CONFIDENCE_SCORE}
-        specSummary={
-          uploaded.length > 0
-            ? uploaded.map(f => f.name).join(", ")
-            : specsText.trim().slice(0, 60) || "6-storey building · 8T load · 18m reach · 3 weeks"
-        }
+        recItems={recItems}
+        estimatedTotal={quote.estimatedTotal}
+        days={quote.days ?? 1}
+        confidenceScore={quote.confidenceScore}
+        specSummary={quote.specSummary}
+        rationale={quote.rationale}
         onRefine={() => setStep("upload")}
-        onAddAll={() => onDone("specs", REC_ITEMS.map(r => r.eq))}
+        onAddAll={(eqs) => onDone("specs", eqs, resolveQuoteDates(quote) ?? undefined)}
       />
     );
   }
 
   // ── Upload / paste specs screen ───────────────────────────────────────────
   if (step === "upload") {
-    const canSubmit = (uploaded.length > 0 || specsText.trim().length >= 20) && equipmentRes.status === "success";
+    const canSubmit = uploaded.length > 0 || specsText.trim().length >= 20;
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6" style={sans}>
         <div className="w-full max-w-xl">
@@ -625,7 +504,10 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
             className="w-full bg-secondary/50 border border-border px-4 py-3 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/60 transition-colors resize-none mb-1" />
           <p className="text-xs text-muted-foreground mb-5">{specsText.trim().length < 20 && specsText.length > 0 ? `${20 - specsText.trim().length} more characters needed` : `${specsText.trim().length} characters`}</p>
 
-          <button onClick={runAnalysis} disabled={!canSubmit}
+          {submitError && (
+            <p className="text-xs text-red-400 mb-3" role="alert">{submitError}</p>
+          )}
+          <button onClick={() => void runAnalysis()} disabled={!canSubmit}
             className="w-full py-4 bg-primary text-primary-foreground font-black text-sm tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             Generate Instant Quote →
           </button>

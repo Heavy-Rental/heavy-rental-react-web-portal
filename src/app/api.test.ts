@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { rentalPlanCartApi, setAuthToken, type CreateRentalPlanRequest } from "./api";
+import { ApiError, rentalPlanCartApi, setAuthToken, type CreateRentalPlanRequest } from "./api";
 import type { RentalPlanResponse } from "./types";
 
 const samplePlan: RentalPlanResponse = {
@@ -114,11 +114,13 @@ describe("rentalPlanCartApi", () => {
     expect(headers.Authorization).toBe("Bearer test-token");
   });
 
-  it("rejects with an Error carrying the status when the backend returns a non-2xx response", async () => {
+  it("rejects with a typed ApiError carrying the backend's error code and message", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ error: "already_converted", message: "Plan already converted" }, 409),
     );
 
-    await expect(rentalPlanCartApi.cancel(55)).rejects.toThrow(/409/);
+    await expect(rentalPlanCartApi.cancel(55)).rejects.toMatchObject(
+      new ApiError("already_converted", "Plan already converted"),
+    );
   });
 });

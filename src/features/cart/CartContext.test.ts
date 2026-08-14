@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { cartFromRentalPlan, findActiveRentalPlan, cartDateRange } from "./CartContext";
-import type { Equipment, RentalPlanResponse } from "../../app/types";
+import type { Asset, RentalPlanResponse } from "../../app/types";
 
-function makeEquipment(overrides: Partial<Equipment> = {}): Equipment {
+function makeEquipment(overrides: Partial<Asset> = {}): Asset {
   return {
     id: 1,
     name: "CAT 320 Excavator",
@@ -25,6 +25,9 @@ function makeEquipment(overrides: Partial<Equipment> = {}): Equipment {
     hoursThisMonth: 0,
     desc: "",
     idealFor: [],
+    serialno: "SN-0001",
+    condition: "GOOD",
+    lastConditionUpdatedAt: null,
     ...overrides,
   };
 }

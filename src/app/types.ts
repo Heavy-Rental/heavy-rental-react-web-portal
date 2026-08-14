@@ -19,7 +19,7 @@ export interface StoredSession {
 
 export type ConditionType = "EXCELLENT" | "GOOD" | "FAIR" | "NEEDS_REPAIR";
 
-export interface Equipment {
+export interface Asset {
   id: number;
   name: string;
   category: string;
@@ -41,6 +41,9 @@ export interface Equipment {
   hoursThisMonth: number;
   desc: string;
   idealFor: string[];
+  serialno: string;
+  condition: ConditionType | null;
+  lastConditionUpdatedAt: string | null;
 }
 
 export interface Depot {
@@ -73,7 +76,7 @@ export interface RentalPlan {
   createdAt: string;
 }
 
-export type BookingStatus = "PENDING" | "CONFIRMED" | "MOBILISED" | "COMPLETED" | "CANCELLED";
+export type BookingStatus = "PENDING_DEPOSIT" | "PENDING_CONFIRMED" | "CONFIRMED" | "MOBILISED" | "COMPLETED" | "CANCELLED";
 export type PaidStatus = "UNPAID" | "DEPOSIT" | "FULL";
 
 export interface Booking {

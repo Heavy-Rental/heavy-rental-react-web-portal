@@ -2,10 +2,10 @@
    cart-derivation helpers that operate on the same CartItem shape are kept together deliberately;
    splitting them wouldn't change runtime behavior, only Fast Refresh granularity in this one file. */
 import { createContext, useContext, useState, type ReactNode } from "react";
-import type { Equipment, Depot, RentalPlanResponse } from "../../app/types";
+import type { Asset, Depot, RentalPlanResponse } from "../../app/types";
 
 export interface CartItem {
-  equipment: Equipment;
+  equipment: Asset;
   startDate: string; // ISO YYYY-MM-DD
   endDate: string; // ISO YYYY-MM-DD
 }
@@ -23,7 +23,7 @@ export interface CartItem {
 // by the shared date-range availability query) are dropped rather than shown broken.
 export function cartFromRentalPlan(
   plan: RentalPlanResponse,
-  equipment: Equipment[],
+  equipment: Asset[],
 ): { cart: CartItem[]; itemIds: Record<number, number> } {
   const cart: CartItem[] = [];
   const itemIds: Record<number, number> = {};
