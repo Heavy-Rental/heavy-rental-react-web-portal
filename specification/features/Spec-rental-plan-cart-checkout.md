@@ -2,7 +2,7 @@
 
 **Feature Area**: heavy-rental-react-web-portal
 **Created**: 2026-08-13
-**Status**: Planned — not started
+**Status**: In progress — PR 1 shipped (2026-08-13); PR 2, PR 3, PR 4 not started
 **Input**: A design conversation establishing that the current real-backend checkout (`createDepositBooking()` booking directly from ephemeral client cart state) should be replaced with a persisted `RentalPlan` lifecycle: `DRAFT` → `QUOTED` → `CONVERTED` (or → `CANCELLED` at any point before conversion), with a client-side estimate shown during cart-building and a Haystack-backed `quote` shown at checkout.
 
 **Revised 2026-08-13** against `api-contract-for-frontend.md` (this folder), the authoritative contract handed off from the Spring Boot side. That document explicitly states it wins over this one wherever they disagree — several assumptions below have been corrected accordingly rather than left as "unconfirmed." See inline notes and the Change Log.
@@ -63,23 +63,26 @@ This feature replaces that with a persisted cart: adding an item to cart creates
 
 - **B6** — `Booking.status → PENDING_CONFIRMED` on successful deposit payment. **Corrected 2026-08-13: already fixed by the backend, long before this conversation.** `Spec-stripe-payment-checkout.md`'s known-gaps list is stale on this point and needs its own correction (flagged, not done here). Nothing in PR 3 needs to wait on this.
 
+### Resolved by implementation (not formally confirmed by Spring Boot)
+
+- **B11** — Answered in code, not by a Spring Boot confirmation: PR 1 ([App.tsx:613-625](../../src/App.tsx#L613-L625)) hard-enforces a single shared date range across the whole cart client-side, and treats the plan's date range as fixed at creation ([App.tsx:449](../../src/App.tsx#L449) comment). No update route exists in the contract to change it later, so this was the lower-risk assumption to build against. Worth a one-line confirmation from Spring Boot at some point, but not blocking — nothing left in PR 1 depends on the answer being otherwise.
+
 ### Still open
 
-- **B11** (new) — *Not* whether rental dates live at the plan level (confirmed above, in Clarifications) — only how/when that date range gets set: fixed at `POST /api/rentalPlans` creation and immutable thereafter (no update route exists anywhere in this contract), or changeable some other way. Matters directly for PR 1: if immutable-after-creation, the customer's *first* "add to cart" action pins the rental date range for everything subsequently added to that plan — a real UX change from today's cart, where each item can carry its own date range until checkout normalizes them.
 - **B12** (new, minor) — `POST /api/bookings`'s checkout request separately carries `siteAddress` even when `rentalPlanId` is given, and the plan's own `RentalPlanResponse` also carries `siteAddress`. Unclear whether checkout's value overrides the plan's, must match it, or the plan's is simply unused at conversion time. Low priority; worth a one-line confirmation.
 
 ## 3. Execution plan — three web-portal PRs
 
-Recommended over one combined PR: PR 1 no longer has *any* new-backend dependency (B5 turned out to not exist — pricing is pure client-side math) and otherwise uses backend routes that are already live today (`Spec-rest-api-reference.md` §2.4) — it can ship and be tested independently of Spring Boot's PR, pending only B11's answer. PRs 2 and 3 are both tightly coupled to that backend PR and to each other (quote-validity and conversion are two halves of one mechanism), so they stay together as sequential-but-linked units rather than being split further.
+Recommended over one combined PR: PR 1 no longer has *any* new-backend dependency (B5 turned out to not exist — pricing is pure client-side math) and otherwise uses backend routes that are already live today (`Spec-rest-api-reference.md` §2.4) — it shipped and was tested independently of Spring Boot's PR (B11 resolved in-code, see above). PRs 2 and 3 are both tightly coupled to that backend PR and to each other (quote-validity and conversion are two halves of one mechanism), so they stay together as sequential-but-linked units rather than being split further.
 
-### PR 1 — Cart persistence + client-side estimate pricing
+### PR 1 — Cart persistence + client-side estimate pricing — **Done (2026-08-13)**
 
-- Add `rentalPlanApi.get()`, `.addItem()`, `.removeItem()` to `src/app/api.ts`, wiring the already-live `POST /api/rentalPlans`, `POST /api/rentalPlans/{id}/items`, `DELETE /api/rentalPlans/{id}/items/{itemId}` routes (currently unwired per §2.4 of `Spec-rest-api-reference.md`).
-- **No new API client method for pricing** — compute `baseDailyRate × daysBetweenISO(startDate, endDate)` client-side, reusing the existing helper. Display as explicitly non-authoritative.
-- Rework "add to cart": fetch `GET /api/rentalPlans`, filter client-side for the caller's plan with `status` not in `("CONVERTED", "CANCELLED")` (B9); create one if none exists; add the item via the items endpoint; use that call's own response (which already reflects updated `status`/`totalAmount`/`items`, per B10) rather than issuing a follow-up `GET`.
-- Rework "remove from cart" the same way, via the item-delete endpoint.
-- Replace (or significantly rework) `CartContext`'s pure in-memory model, since the source of truth for cart contents becomes the persisted `RentalPlan`.
-- **Blocked on B11** before finalizing: whether the cart can still offer per-item dates (collapsing to one shared range only at the moment the plan is first created) or must ask for one shared date range up front, before the first item can be added at all.
+- `rentalPlanCartApi.list()`, `.create()`, `.addItem()`, `.removeItem()` added to `src/app/api.ts` ([api.ts:125-152](../../src/app/api.ts#L125-L152)), wiring the already-live `POST /api/rentalPlans`, `POST /api/rentalPlans/{id}/items`, `DELETE /api/rentalPlans/{id}/items/{itemId}` routes. Shipped as `list()` rather than the originally-planned `get()` — there's no server-side active-plan filter (B9), so finding the caller's plan needs the full list, not a lookup by a not-yet-known id.
+- **No new API client method for pricing** — `baseDailyRate × daysBetweenISO(startDate, endDate)` computed client-side ([App.tsx:606-609](../../src/App.tsx#L606-L609)), reusing the existing `daysBetweenISO()` helper. Shown as explicitly non-authoritative.
+- "Add to cart" reworked ([App.tsx:612-656](../../src/App.tsx#L612-L656)): `ensureApiRentalPlanId()` fetches `GET /api/rentalPlans`, filters client-side for the caller's plan with `status` not in `("CONVERTED", "CANCELLED")` (B9, `findActiveRentalPlan()` in `CartContext.tsx`), creates one if none exists, then adds the item; `cart` is set straight from that response (already reflecting updated `status`/`totalAmount`/`items`, per B10) with no follow-up `GET`.
+- "Remove from cart" reworked the same way via `removeFromCartApi()` ([App.tsx:662-680](../../src/App.tsx#L662-L680)), keyed off `planItemIds` (assetId → RentalPlanItem id, since removal needs the item id, not the asset id).
+- `CartContext`'s in-memory model reworked: `cartFromRentalPlan()` derives `CartItem[]` from a `RentalPlanResponse` in API mode ([CartContext.tsx:24-45](../../src/features/cart/CartContext.tsx#L24-L45)); mock mode keeps the old pure-local-state path unchanged, since the two never run in the same `MODE`.
+- **Tests added** (2026-08-13, `npm run test`, Vitest): `src/features/cart/CartContext.test.ts` (`cartFromRentalPlan`, `findActiveRentalPlan`, `cartDateRange`), `src/app/api.test.ts` (`rentalPlanCartApi`'s five methods against a mocked `fetch` — URL/method/body per call, auth header attachment, non-2xx → rejected `Error`), `src/lib/dateFormat.test.ts` (`daysBetweenISO` inclusive-count regression, incl. the contract §8 worked example). No prior test tooling existed in this project — `vitest` + `vitest.config.ts` + `npm run test`/`test:watch` added as part of this work.
 
 ### PR 2 — "Get Quote" wiring
 
@@ -120,6 +123,7 @@ Recommended over one combined PR: PR 1 no longer has *any* new-backend dependenc
 
 ## Change Log
 
+- 2026-08-13: **PR 1 marked done.** Confirmed against the actual codebase: `rentalPlanCartApi` (list/create/addItem/removeItem), `ensureApiRentalPlanId()`, `findActiveRentalPlan()`, and `cartFromRentalPlan()` are all implemented and wired ([api.ts](../../src/app/api.ts), [App.tsx](../../src/App.tsx), [CartContext.tsx](../../src/features/cart/CartContext.tsx)). B11 resolved in-code (one shared date range, fixed at plan creation) rather than by a Spring Boot confirmation — moved out of "Still open." Added this project's first test tooling (`vitest`) and unit tests covering PR 1's cart-persistence helpers and API client. Top-level **Status** updated from "Planned — not started" to reflect PR 1 shipped.
 - 2026-08-13: **Added rental plan cancellation.** Spring Boot has landed `POST /api/rentalPlans/{id}/cancel` (as-built — `rental-plan-quote/spec.md` FR-RP-010, `rental-plan-quote/contracts/checkout.md`), adding a new `CANCELLED` terminal status alongside `CONVERTED`. New B13; new PR 4 (independent of PR 2/3, only needs PR 1's already-implemented cart persistence). Updated B9 and every "active plan" filter description in this document (Clarifications, PR 1) to exclude `CANCELLED` as well as `CONVERTED`. Companion update: `api-contract-for-frontend.md` §1, §5.5 (new), §6, §7.
 - 2026-08-13: **Correction: B6 was never actually a gap** — the backend fixed `Booking.status → PENDING_CONFIRMED` long before this conversation; `Spec-stripe-payment-checkout.md`'s known-gaps list is stale on this point (flagged for its own correction, not done here). Removed B6 from PR 3's dependencies and reframed its `ConfirmationScreen.tsx` note from "once this lands" to "worth doing now."
 - 2026-08-13: Confirmed rental dates live once at the plan level, not per item — narrowed B11 to only the remaining mutability question (how/when the date range is set), since the location question is now settled.

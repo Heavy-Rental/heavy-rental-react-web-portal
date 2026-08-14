@@ -679,6 +679,28 @@ const equipmentRes = useApiResource(
       });
   };
 
+  // API mode only: abandon the current plan (api-contract-for-frontend.md §5.5). Minimal
+  // wiring for manual verification of PR 4 — trusts the response over local state, same as
+  // addItem/removeItem above, and clears the cart since a cancelled plan is no longer "mine".
+  const cancelPlanApi = () => {
+    if (planId === null) return;
+    if (!window.confirm("Cancel your current rental plan? This can't be undone.")) return;
+    rentalPlanCartApi
+      .cancel(planId)
+      .then(() => {
+        setCart([]);
+        setPlanItemIds({});
+        setPlanId(null);
+      })
+      .catch((err) => {
+        setCartDateError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't cancel your rental plan.",
+        );
+      });
+  };
+
   const handleChatbotSelect = (eq: EquipmentItem) => {
     setHighlightId(eq.id);
     if (sharedStartDate && sharedEndDate) {
@@ -1624,6 +1646,7 @@ const equipmentRes = useApiResource(
               siteAddress={siteAddress}
               onEditAddress={() => setSiteAddressModalOpen(true)}
               totalCost={totalCost}
+              onCancelPlan={isApiMode && planId !== null ? cancelPlanApi : undefined}
               onCheckout={() => {
                 setCartOpen(false);
                 setCheckoutOpen(true);
@@ -2711,8 +2734,6 @@ export default function App() {
   }, []);
 
   const handleLogin = async (role: Role, name: string, email: string) => {
-    setShowLogin(false);
-    setView(viewForRole(role));
     let id: number | null = null;
     try {
       const users = await userApi.list();
@@ -2721,21 +2742,34 @@ export default function App() {
       // no linked account for this email — proceed with id: null (existing behavior)
     }
     let session: StoredSession;
-    if (import.meta.env.MODE === "api") {
-      const password = ACCOUNTS[email]?.password;
-      const { accessToken, expiresIn } = await login(email, password);
-      const issuedAt = Date.now();
-      session = {
-        token: accessToken,
-        id,
-        name,
-        role,
-        issuedAt,
-        expiresAt: issuedAt + expiresIn * 1000,
-      };
-    } else {
-      session = issueSession({ id, name, role });
+    try {
+      if (import.meta.env.MODE === "api") {
+        const password = ACCOUNTS[email]?.password;
+        const { accessToken, expiresIn } = await login(email, password);
+        const issuedAt = Date.now();
+        session = {
+          token: accessToken,
+          id,
+          name,
+          role,
+          issuedAt,
+          expiresAt: issuedAt + expiresIn * 1000,
+        };
+      } else {
+        session = issueSession({ id, name, role });
+      }
+    } catch (err) {
+      // Previously unhandled: view was flipped optimistically before this could fail,
+      // so a thrown login() left `user` null and the app silently fell through to the
+      // marketing homepage with no visible error. Now the view only flips on success,
+      // and the modal stays open with the real failure surfaced.
+      window.alert(
+        err instanceof Error ? err.message : "Login failed. Please try again.",
+      );
+      return;
     }
+    setShowLogin(false);
+    setView(viewForRole(role));
     saveSession(session);
     setAuthToken(session.token);
     setUser(session);
