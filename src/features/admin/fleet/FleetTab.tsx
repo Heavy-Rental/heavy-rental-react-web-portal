@@ -1,20 +1,30 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { Search, X, MapPin, Calendar, Truck } from "lucide-react";
-import type { ConditionType } from "../../../app/assetRecord";
-import { formatCondition } from "../../../app/assetRecord";
+import type { AssetRecord, ConditionType } from "../../../app/assetRecord";
+import { formatCondition, deriveAssetRecord } from "../../../app/assetRecord";
+import { assetApi, ApiError } from "../../../app/api";
 import { mono, display } from "../../../lib/styles";
-import { DEPLOYMENT_META, type DeploymentStatus } from "../adminFormat";
+import {
+  DEPLOYMENT_META,
+  formatDateOnly,
+  formatTimestamp,
+  type DeploymentStatus,
+} from "../adminFormat";
 import type { FleetAsset } from "../AdminDataContext";
 import { FleetUpdateModal } from "./FleetUpdateModal";
 
 export function FleetTab({
   fleet,
   setFleet,
+  assets,
+  setAssets,
   userName,
   showToast,
 }: {
   fleet: FleetAsset[];
   setFleet: Dispatch<SetStateAction<FleetAsset[]>>;
+  assets: AssetRecord[];
+  setAssets: Dispatch<SetStateAction<AssetRecord[]>>;
   userName: string;
   showToast: (msg: string, type?: "success" | "error") => void;
 }) {
@@ -23,8 +33,56 @@ export function FleetTab({
   const [fleetSearch, setFleetSearch] = useState("");
   const [fleetView, setFleetView] = useState<"kanban" | "table">("kanban");
 
-  const handleFleetUpdate = (id: number, patch: Partial<FleetAsset>) => {
-    // No API resource backs deployment/lifecycle tracking fields — stays fully client-local.
+  // Deployment status, site, linked booking, and notes have no backing API resource
+  // (DEPLOYMENT_META documents deployment status as derived from real booking/condition
+  // data on load — this is a session-local override on top of that) and stay fully
+  // client-local. Condition IS a real Asset field, though, so a condition change here
+  // persists through the same assetApi.update() the Assets tab uses, keeping both tabs
+  // in sync against the real backend.
+  const handleFleetUpdate = async (id: number, patch: Partial<FleetAsset>) => {
+    const previous = fleet.find((a) => a.id === id);
+    if (!previous) return;
+
+    if (patch.condition && patch.condition !== previous.condition) {
+      const record = assets.find((a) => a.id === id);
+      if (!record) {
+        showToast("Couldn't find this asset's record to update its condition.", "error");
+        return;
+      }
+      try {
+        const saved = await assetApi.update(id, {
+          name: record.name,
+          category: record.category,
+          baseDailyRate: record.baseDailyRate,
+          minDailyRate: record.minDailyRate,
+          maxDailyRate: record.maxDailyRate,
+          weekly: record.weekly,
+          capacity: record.capacity,
+          platformHeight: record.platformHeight,
+          purchaseYear: record.purchaseYear,
+          location: record.location,
+          available: record.available,
+          utilization: record.utilization,
+          revenue: record.revenue,
+          hoursThisMonth: record.hoursThisMonth,
+          desc: record.desc,
+          serialno: record.serialno,
+          condition: patch.condition,
+        });
+        setAssets((prev) => prev.map((a) => (a.id === id ? deriveAssetRecord(saved) : a)));
+      } catch (err) {
+        showToast(
+          err instanceof ApiError && err.code === "forbidden"
+            ? "You don't have permission to do this."
+            : err instanceof Error
+              ? err.message
+              : "Failed to update condition.",
+          "error",
+        );
+        return;
+      }
+    }
+
     setFleet((prev) =>
       prev.map((a) =>
         a.id === id
@@ -93,7 +151,8 @@ export function FleetTab({
             FLEET BOARD
           </h1>
           <p className="text-muted-foreground mt-2 text-sm">
-            {fleet.length} assets tracked · last refreshed {fleet[0]?.lastUpdated}
+            {fleet.length} assets tracked · last refreshed{" "}
+            {formatTimestamp(fleet[0]?.lastUpdated ?? "")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -133,7 +192,6 @@ export function FleetTab({
 
       {/* System indicator */}
       <div className="flex items-center gap-2 text-xs text-primary mb-4">
-        <span>⚡ Deployment status is a simulated view derived from asset & booking data</span>
       </div>
 
       {/* Search */}
@@ -223,7 +281,7 @@ export function FleetTab({
                           {formatCondition(a.condition)}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {a.lastUpdated.split(" ")[0]}
+                          {formatDateOnly(a.lastUpdated)}
                         </span>
                       </div>
                       {a.notes && (
@@ -333,7 +391,7 @@ export function FleetTab({
                       </td>
                       <td className="px-4 py-3">
                         <p className="text-xs text-muted-foreground whitespace-nowrap" style={mono}>
-                          {a.lastUpdated}
+                          {formatTimestamp(a.lastUpdated)}
                         </p>
                         <p className="text-xs text-muted-foreground">{a.updatedBy}</p>
                       </td>

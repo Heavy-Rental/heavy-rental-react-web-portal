@@ -256,29 +256,89 @@ function buildBookingRows(
   });
 }
 
-const buildFleetAssets = (equipment: Asset[]): FleetAsset[] =>
-  equipment.map((e, i) => {
-    const statuses: DeploymentStatus[] = [
-      "Available",
-      "Booked",
-      "In-Transit",
-      "Maintenance",
-    ];
-    const bookings = ["", "RNT-0001", "RNT-0002", ""];
-    const customers = ["", "Alex Tan", "Mei Lin Goh", ""];
-    const sites = [
-      "Jurong Port Depot",
-      "En route to customer site",
-      "Reserved — Marina South",
-      "Service Center, Tuas",
-    ];
-    const notes = [
-      "Fully serviced. Ready for next rental.",
-      "Booked — delivery scheduled shortly.",
-      "En route to customer site.",
-      "Annual service due.",
-    ];
-    const idx = i % statuses.length;
+// Deployment status is derived from real data, not stored anywhere — DEPLOYMENT_META's
+// own descriptions (adminFormat.ts) document the intended mapping: Booked tracks an active
+// Booking.status === CONFIRMED, In-Transit tracks MOBILISED, and Maintenance tracks
+// Asset.condition === NEEDS_REPAIR independent of any booking. Only the free-text notes
+// and the lastUpdated/updatedBy audit trail have no backing API resource and stay
+// client-local (see FleetTab's handleFleetUpdate).
+const ACTIVE_DEPLOYMENT_STATUSES: Record<string, DeploymentStatus> = {
+  CONFIRMED: "Booked",
+  MOBILISED: "In-Transit",
+};
+const DEPLOYMENT_RANK: Record<DeploymentStatus, number> = {
+  Available: 0,
+  Booked: 1,
+  "In-Transit": 2,
+  Maintenance: 3,
+};
+
+interface FleetBookingLink {
+  deploymentStatus: DeploymentStatus;
+  assignedBooking: string;
+  assignedCustomer: string;
+  currentSite: string;
+}
+
+function buildFleetAssets(
+  equipment: Asset[],
+  apiBookings: (ApiBooking | CreateBookingResponse)[],
+  rentalPlans: ApiRentalPlan[],
+  apiUsers: ApiUser[],
+  depots: Depot[],
+): FleetAsset[] {
+  const links = new Map<number, FleetBookingLink>();
+  const consider = (
+    assetId: number,
+    status: string,
+    bookingRef: string,
+    customer: string,
+    site: string,
+  ) => {
+    const deploymentStatus = ACTIVE_DEPLOYMENT_STATUSES[status];
+    if (!deploymentStatus) return;
+    const existing = links.get(assetId);
+    if (existing && DEPLOYMENT_RANK[existing.deploymentStatus] >= DEPLOYMENT_RANK[deploymentStatus]) {
+      return;
+    }
+    links.set(assetId, { deploymentStatus, assignedBooking: bookingRef, assignedCustomer: customer, currentSite: site });
+  };
+
+  for (const b of apiBookings) {
+    if (isApiBookingRecord(b)) {
+      // Real backend shape — items carry serialNumber, not assetId (same join used by
+      // buildOnRentAssetIds above).
+      for (const item of b.items ?? []) {
+        const asset = equipment.find((e) => e.serialno === item.serialNumber);
+        if (asset) {
+          consider(
+            asset.id,
+            b.bookingStatus,
+            `RNT-${String(b.bookingId).padStart(4, "0")}`,
+            b.customerName,
+            b.siteAddress,
+          );
+        }
+      }
+    } else {
+      const plan = rentalPlans.find((p) => p.id === b.rentalPlanId);
+      const user = plan ? apiUsers.find((u) => u.id === plan.userId) : undefined;
+      const depot = depots.find((d) => d.id === b.depotId);
+      for (const id of b.equipmentIds) {
+        consider(
+          id,
+          b.status,
+          `RNT-${String(b.id).padStart(4, "0")}`,
+          user?.name ?? "Unknown",
+          depot?.name ?? `Depot #${b.depotId}`,
+        );
+      }
+    }
+  }
+
+  return equipment.map((e) => {
+    const link = links.get(e.id);
+    const inMaintenance = e.condition === "NEEDS_REPAIR";
     return {
       id: e.id,
       name: e.name,
@@ -287,16 +347,17 @@ const buildFleetAssets = (equipment: Asset[]): FleetAsset[] =>
       serialno: e.serialno,
       location: e.location,
       photo: resolvePhoto(e.img),
-      deploymentStatus: statuses[idx],
-      assignedBooking: bookings[idx],
-      assignedCustomer: customers[idx],
-      currentSite: sites[idx],
-      lastUpdated: "2026-08-01 08:30",
-      updatedBy: "Carlos Vega",
-      notes: notes[idx],
+      deploymentStatus: inMaintenance ? "Maintenance" : (link?.deploymentStatus ?? "Available"),
+      assignedBooking: inMaintenance ? "" : (link?.assignedBooking ?? ""),
+      assignedCustomer: inMaintenance ? "" : (link?.assignedCustomer ?? ""),
+      currentSite: inMaintenance ? e.location : (link?.currentSite ?? e.location),
+      lastUpdated: e.lastConditionUpdatedAt || "—",
+      updatedBy: "—",
+      notes: "",
       condition: e.condition ?? "GOOD",
     };
   });
+}
 
 // Read-only overview feed — no API resource backs rental lifecycle events, so this stays
 // client-local, deterministic seed data (mirrors the shape a future Lifecycle entity would take).
@@ -553,14 +614,25 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
   }
 
   const [fleet, setFleet] = useState<FleetAsset[]>([]);
-  const [fleetSeededFrom, setFleetSeededFrom] =
-    useState<typeof equipmentRes.data>(null);
+  const [fleetSeeded, setFleetSeeded] = useState(false);
   if (
+    !fleetSeeded &&
     equipmentRes.status === "success" &&
-    equipmentRes.data !== fleetSeededFrom
+    bookingsRes.status === "success" &&
+    rentalPlansRes.status === "success" &&
+    usersRes.status === "success" &&
+    depotsRes.status === "success"
   ) {
-    setFleetSeededFrom(equipmentRes.data);
-    setFleet(buildFleetAssets(equipmentRes.data));
+    setFleetSeeded(true);
+    setFleet(
+      buildFleetAssets(
+        equipmentRes.data,
+        bookingsRes.data,
+        rentalPlansRes.data,
+        usersRes.data,
+        depotsRes.data,
+      ),
+    );
   }
 
   const [lifecycles] = useState<RentalLifecycle[]>(INITIAL_LIFECYCLES);
