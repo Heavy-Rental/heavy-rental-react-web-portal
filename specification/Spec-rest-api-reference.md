@@ -101,9 +101,17 @@ There is one login flow, no web-vs-mobile distinction at the backend level (no `
 
 ### 2.7 Users
 
+**Corrected 2026-08-14.** Previously listed as a backend gap (⚠️, §5) — that was stale. The real backend's `UserController`/`UserAdminService` fully implements this surface (`ROLE_ADMIN`-only, soft-delete on remove, server-generated one-time password on create); confirmed by reading the backend source directly, not just live HTTP calls.
+
 | Method | Path | Status | Notes |
 |---|---|---|---|
-| `GET` / `POST` / `PATCH` / `DELETE` | `/api/users...` | ⚠️ Frontend calls it, backend doesn't have it | `userApi` — called unconditionally on every login (`App.tsx` `handleLogin`) to resolve a numeric `userId`, and by the admin Users tab. No `/api/users` route exists anywhere on the real backend. See §5. |
+| `GET` | `/api/users` | ✅ Backend live, frontend wired | Lists enabled users only (`enabled=true`), `{id, name, email, role}`. Called unconditionally on every login (`App.tsx` `handleLogin`) to resolve a numeric `userId`, and by the admin Users tab. |
+| `GET` | `/api/users/{id}` | ✅ Backend live, frontend wired | Not currently called by this portal's code (list is sufficient today), but exists and matches `userApi.get()`. |
+| `POST` | `/api/users` | ✅ Backend live, frontend wired | `{name, email}` only — role isn't accepted, always created as `role=USER`/`"customer"`. Response includes a server-generated one-time `temporaryPassword`, now surfaced to the admin via a confirmation modal after creation (`Spec-admin-dashboard-api-mode-fixes.md` FIX-06) rather than discarded. |
+| `PATCH` | `/api/users/{id}` | ✅ Backend live, frontend wired | Partial update, `{name?, email?, role?}` — used by the admin Users tab's Edit modal. |
+| `DELETE` | `/api/users/{id}` | ✅ Backend live, frontend wired | Soft-delete only (`enabled=false`, not a hard delete) — the user disappears from subsequent `GET /api/users` results but the row/FKs are preserved. |
+
+No `PUT /api/users/{id}` exists, but nothing in this portal calls it (`userApi.replace()` is unused for this resource) — not a gap.
 
 ### 2.8 Recommendations (S2b)
 
@@ -135,7 +143,6 @@ The last one is a Stripe-to-backend server callback, not a route any frontend (w
 
 These are treated as backend work still owed, not frontend bugs to fix — the frontend's assumed contract is the intended one:
 
-- **`/api/users`** — no route exists at all. Needed for: resolving a login's numeric `userId` (`handleLogin`, silently falls back to `id: null` today via try/catch), and the admin Users tab's full CRUD.
 - **`/api/depots` write routes** (`POST`/`PUT`/`PATCH`/`DELETE`) — real backend has GET-only stub, no `Depot` entity. Needed if depot management is ever exercised in API mode (currently only read via the stub, so no visible breakage yet — but any write path would fail).
 - **`/api/rentalPlans/{id}`** generic `PUT`/`PATCH`/`DELETE` — real backend only has item- and quote-scoped mutations (§2.4).
 - **`/api/status-distribution`** — no real-backend equivalent at all; mock-only today.
@@ -229,3 +236,4 @@ Same three fields `POST /api/bookings`'s response already carries — no new sha
 - 2026-08-13: Marked `POST /api/recommendations/project-spec` as frontend-wired (`recommendationApi` + Instant Quote in `CustomerOnboarding`). §7 now only tracks `knowledge-query` and `GET /{id}`. Vite `/api` proxy timeout set to 180s so `dev:api` can wait out Spring’s Haystack saga.
 - 2026-08-13: Documented `tentativeStartDate` / `tentativeEndDate` on the Instant Quotation DTO and the frontend binding that seeds DateRangeBar from those fields (or `days`) after Add All to Rental Plan.
 - 2026-08-13: `resolveQuoteDates` field rules are locked by `src/lib/dateFormat.test.ts` (`npm test`).
+- 2026-08-14: §2.7/§5 corrected — `/api/users` was listed as a backend gap; that was stale. The real backend's `UserController`/`UserAdminService` fully implements `GET`/`POST`/`PATCH`/`DELETE` (no `PUT`, not called anyway), confirmed by reading the backend source. Removed from §5's gap list; §2.7 now documents each route's actual behavior (soft-delete on remove, `role` not settable on create, one-time `temporaryPassword` on create — see `Spec-admin-dashboard-api-mode-fixes.md` FIX-06 for the frontend fix that stopped discarding it).

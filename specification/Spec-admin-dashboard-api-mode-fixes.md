@@ -3,11 +3,11 @@
 | Field | Value |
 |-------|--------|
 | **Feature** | Admin Dashboard — Real Backend (API Mode) Compatibility Fixes |
-| **Status** | Implemented — FIX-01 through FIX-03 committed; FIX-04 and FIX-05 added in a later pass on this branch, also committed |
+| **Status** | Implemented — FIX-01 through FIX-03 committed; FIX-04 and FIX-05 added in a later pass on this branch, also committed; FIX-06 added in a further pass, also committed |
 | **Module** | `heavy-rental-react-web-portal` |
 | **Primary surface** | Admin dashboard (`src/features/admin/`), shared API client (`src/app/api.ts`), shared data-fetch hook (`src/app/useApiResource.ts`) |
 | **Method** | Live debugging against the real Spring Boot backend (`heavy-rental-rest-api`) in `npm run dev:api` mode, driven by browser console/network errors |
-| **Related code** | `src/app/api.ts`, `src/app/useApiResource.ts`, `src/App.tsx`, `src/features/admin/AdminDataContext.tsx`, `src/features/admin/AdminDashboard.tsx`, `src/features/admin/overview/OverviewTab.tsx`, `mock/db.json` |
+| **Related code** | `src/app/api.ts`, `src/app/useApiResource.ts`, `src/App.tsx`, `src/features/admin/AdminDataContext.tsx`, `src/features/admin/AdminDashboard.tsx`, `src/features/admin/overview/OverviewTab.tsx`, `src/features/admin/users/UsersTab.tsx`, `mock/db.json` |
 | **Environment context** | [`Spec-frontend-api-integration.md`](./Spec-frontend-api-integration.md), [`Spec-mock-api-server.md`](./Spec-mock-api-server.md) |
 | **Linked backend** | `heavy-rental-spring-rest-api`, branch `36-link-rest-api-users-to-front-end` (separate repo, reachable at `heavy-rental-rest-api:8080` from this frontend's `dev:api` mode; not present in this workspace — verified only via live HTTP calls, not by reading its source) |
 
@@ -25,6 +25,7 @@ When these fixes are correct:
 4. The admin Bookings tab's equipment column and search filter no longer crash the dashboard when the real backend's response shape changes out from under a field the frontend assumed was always present (FIX-04).
 5. The admin Bookings tab's status filter, inline status editor, and summary stat cards cover the real backend's full 6-value `BookingStatus` enum instead of a stale 5-value subset, and the "Paid" column/filter (a `PaidStatus` enum the backend has since removed entirely) no longer exists (FIX-05).
 6. Logging out in API mode actually revokes the session token server-side, instead of only discarding it client-side (ADD-01).
+7. The admin Users tab's Active/Inactive status reflects a customer's real in-progress bookings instead of a mock-only rental-plan value that could never be true against the real backend; the tab's fourth stat card shows a real Admin role count instead of a stat that always read 0; and creating a customer surfaces the backend's one-time generated password instead of silently discarding it (FIX-06).
 
 ---
 
@@ -36,6 +37,7 @@ When these fixes are correct:
 - The shared data-fetching hook (`src/app/useApiResource.ts`) and every one of its call sites in `src/App.tsx` and `src/features/admin/AdminDataContext.tsx`.
 - The Admin Dashboard's booking view-model builders (`buildBookingRows`, `buildUserRows` in `AdminDataContext.tsx`) and the `bookingApi.list()` client (`src/app/api.ts`).
 - `CreateBookingResponse`'s shape (`src/app/api.ts`), the admin Bookings tab (`src/features/admin/bookings/BookingsTab.tsx`), the shared `BookingStatus` type (`src/app/types.ts`), and status label/list helpers (`src/features/admin/adminFormat.ts`) — FIX-04 and FIX-05.
+- The Users tab's status derivation and stat cards (`buildUserRows` in `AdminDataContext.tsx`, `src/features/admin/users/UsersTab.tsx`), and the `userApi.create()` client and response type (`src/app/api.ts`) — FIX-06.
 
 ### 2.2 Out of scope
 
@@ -85,11 +87,39 @@ When these fixes are correct:
 
 ### FIX-04: Admin Bookings equipment column / search crash after backend's `items` shape change
 
-[... FIX-04 body as above ...]
+**GIVEN** the real backend's `BookingResponse` changed (HR-113) from a flat `assetName`/`serialNumber` pair to `items: List<BookingItemLine>` — one row per booked item, since a booking can now cover more than one asset
+**AND** the frontend's `CreateBookingResponse` interface (`api.ts`) still declared the stale flat fields
+**WHEN** the admin Bookings tab reads `b.equipment` (sourced from the now-nonexistent `b.assetName`) — in particular when the search filter calls `.toLowerCase()` on it
+**THEN** `b.assetName` is `undefined` at runtime (TypeScript didn't catch it, nothing enforces the interface against live JSON), and `.toLowerCase()` on `undefined` throws, crashing the entire dashboard to a blank page (no error boundary exists in this app).
+
+**Fix**: `CreateBookingResponse` (`api.ts`) now declares `items: BookingItemLine[]` matching the real shape. `buildBookingRows` (`AdminDataContext.tsx`) joins every item's `assetName` (`(b.items ?? []).map(i => i.assetName).join(", ")`, falling back to `"—"` if empty) instead of assuming a single flat field.
 
 ### FIX-05: `BookingStatus` type only covered 5 of the real backend's 6 values; `PaidStatus` removed entirely
 
-[... FIX-05 body as above ...]
+**GIVEN** the frontend's `BookingStatus` type (`types.ts`) only declared 5 values (`PENDING`, `CONFIRMED`, `MOBILISED`, `COMPLETED`, `CANCELLED`)
+**AND** the real backend's `Booking.BookingStatus` enum actually has 6 values, splitting the old single `PENDING` into `PENDING_DEPOSIT` and `PENDING_CONFIRMED`
+**AND** the backend has since removed its `PaidStatus` enum entirely
+**WHEN** the admin Bookings tab renders in API mode
+**THEN** the two real pending statuses didn't format or filter correctly against the stale 5-value type, and the tab's "Paid" column/filter referenced a backend concept (`PaidStatus`) that no longer exists.
+
+**Fix**: `BookingStatus` (`types.ts`) widened to all 6 real values. `adminFormat.ts`'s `BOOKING_STATUSES` list and `formatBookingStatus` updated to title-case multi-word snake_case labels correctly. `BookingsTab.tsx`'s stat cards now group `PENDING_DEPOSIT`+`PENDING_CONFIRMED` into a single "Pending Payments" card (via a new `BOOKING_STAT_GROUPS` array) instead of listing 5 statuses 1:1. The "All Paid Statuses" filter dropdown, `paidStatusFilter` state, the "Paid" table column/cell, and the `PaidStatus`/`PAID_STATUSES`/`formatPaidStatus` imports were removed entirely, since the backend concept they represented no longer exists.
+
+### FIX-06: Admin Users tab — stale "Active" status, dead stat card, and discarded one-time password
+
+**GIVEN** `buildUserRows` (`AdminDataContext.tsx`) computed each user's `status` as `hasActivePlan = rentalPlans.some(p => p.userId === u.id && p.status === "active")` — a mock-server-only value
+**AND** the real backend's `RentalPlan.status` only ever holds `DRAFT`, `SAVED`, `QUOTED`, or `CONVERTED` (no `"active"` value at all)
+**WHEN** the Users tab renders in API mode
+**THEN** every user always shows `Inactive`, and the tab's fourth stat card ("Active") always reads `0`, regardless of real activity.
+
+**Fix**: `buildUserRows` now derives `status` from whether the user has a booking currently `CONFIRMED` or `MOBILISED` (genuinely in progress — not just a pending deposit, not finished/cancelled), reusing the same `BookingStatus` vocabulary FIX-05 already wired up, instead of rental-plan status. Separately, the "Active" stat card was replaced with an "Admin" card (`users.filter(u => u.role === "admin").length`) — the tab already had "Customers" and "Employees" role-count cards; "Admin" completes the set and reads directly off the already-normalized `role` field, no join needed.
+
+**GIVEN** `POST /api/users` (create) generates a random temporary password server-side and returns it once, in the response body (`UserCreateResponse.temporaryPassword`)
+**AND** `userApi.create()`'s return type was the generic `User` shape (`{id, name, email, role}`), with no `temporaryPassword` field, and `UsersTab.tsx`'s Add Customer handler only read `id`/`name`/`email`/`role` off the response
+**WHEN** an admin adds a new customer
+**THEN** the account is created successfully, but the temporary password is silently discarded — nowhere in the UI, and nowhere else in the backend (no email delivery, no reset flow exists), so the new customer has no way to ever learn their password and log in.
+
+**Fix**: added a `UserCreateResult` type (`User` + `temporaryPassword: string`) and had `userApi.create()` request/return it instead of the generic `User` shape. `UsersTab.tsx`'s Add Customer handler now stores the returned credentials in local state and shows a one-time "Account created" modal with the email and password (plus a Copy button) immediately after creation, instead of discarding them.
+
 ---
 
 ## 4. Known approximations & follow-ups
@@ -124,6 +154,7 @@ Unlike the three Open Questions in `Spec-ui-heavy-machinery-portal.md`, these ar
 - [x] Manual confirmation that the Admin Dashboard's Bookings/Users tabs render without crashing in API mode — confirmed 2026-08-12, no crash
 - [x] FIX-04: `npx tsc -b --noEmit` and `npx eslint .` clean after `CreateBookingResponse`/`buildBookingRows` changes; manual confirmation typing in the Bookings search box no longer crashes the dashboard in API mode
 - [x] FIX-05: `npx tsc -b --noEmit` and `npx eslint .` clean after `BookingStatus`/`adminFormat.ts`/`BookingsTab.tsx` changes; manual confirmation the stat row shows a single "Pending Payments" count summing both pending statuses, the status filter/editor list all 6 values with correct labels, and no "Paid" column/filter remains
+- [x] FIX-06: `npx tsc -b --noEmit` and `npx eslint .` clean after `api.ts`/`AdminDataContext.tsx`/`UsersTab.tsx` changes; manual confirmation the Users tab's fourth stat card shows a real Admin count, a customer with a `CONFIRMED`/`MOBILISED` booking shows Active, and Add Customer displays the generated password in a one-time modal
 
 ### 6.2 Manual smoke test
 
@@ -174,3 +205,4 @@ Both fixes are additive/opt-in on `ChartTip` (`unit`/`valueFormatter` both defau
 | 0.2.0 | 2026-08-13 | Added §8: CHANGE-01 (removed the unused Pricing tab and its `PricingRule` data layer) and CHANGE-02 (fixed two leaked internal `adm-*` chart labels — Utilization and Revenue tooltips on the Overview tab — and confirmed the Fleet Health pie chart wasn't affected). Both made on the `142-fix-admin-login-web-portal-utilization` branch; neither is API-mode specific. |
 | 0.3.0 | 2026-08-13 | Added ADD-01 to §3: a real `logout()` API call (`POST /auth/logout`), wired into `handleLogout` gated to API mode, so a real backend session token is actually revoked server-side on logout instead of only being forgotten client-side. Implemented by the user directly; documented here after review. |
 | 0.4.0 | 2026-08-13 | Added FIX-04 (admin Bookings equipment column / search crash, `assetName` → `items: BookingItemLine[]` after a backend shape change) and FIX-05 (`BookingStatus` widened from 5 to the real 6 values; "Paid" column/filter removed after the backend dropped `PaidStatus` entirely) — both found while continuing to exercise the admin Bookings tab against the real backend. §4 item 2 marked resolved by FIX-05 rather than removed, to keep the other items' numbering stable for existing cross-references. |
+| 0.5.0 | 2026-08-14 | Restored FIX-04/FIX-05's writeups (a prior save had left placeholder text — `[... FIX-04 body as above ...]` — in their place; replaced with the actual GIVEN/WHEN/THEN content). Added FIX-06 to §3: redefined the admin Users tab's Active/Inactive status from a dead mock-only rental-plan check to real in-progress bookings, replaced the always-zero "Active" stat card with an "Admin" role count, and fixed Add Customer to surface the backend's one-time generated `temporaryPassword` instead of discarding it — all found while auditing the Users tab's CRUD completeness against the real backend. |

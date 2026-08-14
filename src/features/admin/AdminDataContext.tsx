@@ -121,10 +121,23 @@ function buildUserRows(
     // customerName === user.name instead (fragile on duplicate display names, but
     // it's the only link the real backend's booking response actually carries).
     const userBookings = bookings.filter((b) =>
-      isApiBookingRecord(b) ? b.customerName === u.name : planIds.has(b.rentalPlanId),
+      isApiBookingRecord(b)
+        ? b.customerName === u.name
+        : planIds.has(b.rentalPlanId),
     );
-    const hasActivePlan = rentalPlans.some(
-      (p) => p.userId === u.id && p.status === "active",
+    // "Active" means the customer has a booking currently in progress (CONFIRMED
+    // or MOBILISED — i.e. not yet COMPLETED/CANCELLED, and not just a pending deposit).
+    // Previously checked rentalPlan.status === "active", a mock-server-only value; the
+    // real backend's RentalPlan.status is DRAFT/SAVED/QUOTED/CONVERTED and never matched,
+    // so every user always showed Inactive.
+    const inProgressBookingStatuses = new Set<BookingStatus>([
+      "CONFIRMED",
+      "MOBILISED",
+    ]);
+    const hasInProgressBooking = userBookings.some((b) =>
+      inProgressBookingStatuses.has(
+        (isApiBookingRecord(b) ? b.bookingStatus : b.status) as BookingStatus,
+      ),
     );
     return {
       id: u.id,
@@ -133,7 +146,7 @@ function buildUserRows(
       role: u.role,
       rentals: userBookings.length,
       spent: userBookings.reduce((s, b) => s + b.totalAmount, 0),
-      status: hasActivePlan ? "Active" : "Inactive",
+      status: hasInProgressBooking ? "Active" : "Inactive",
     };
   });
 }
@@ -165,7 +178,8 @@ function buildBookingRows(
       // filter's `.toLowerCase()` call the moment a booking without a fallback showed up).
       // depot and paidStatus have no real equivalent here — approximated from
       // siteAddress and remainingBalance respectively.
-      const equipment = (b.items ?? []).map((i) => i.assetName).join(", ") || "—";
+      const equipment =
+        (b.items ?? []).map((i) => i.assetName).join(", ") || "—";
       return {
         id: `RNT-${String(b.bookingId).padStart(4, "0")}`,
         apiId: b.bookingId,
@@ -177,7 +191,12 @@ function buildBookingRows(
         total: b.totalAmount,
         deposit: b.depositAmount,
         status: b.bookingStatus as BookingStatus,
-        paidStatus: b.remainingBalance === 0 ? "FULL" : b.depositAmount > 0 ? "DEPOSIT" : "UNPAID",
+        paidStatus:
+          b.remainingBalance === 0
+            ? "FULL"
+            : b.depositAmount > 0
+              ? "DEPOSIT"
+              : "UNPAID",
       };
     }
 
@@ -432,7 +451,12 @@ interface AdminDataValue {
   fleet: FleetAsset[];
   setFleet: Dispatch<SetStateAction<FleetAsset[]>>;
   lifecycles: RentalLifecycle[];
-  monthlyUtilization: { id: number; month: string; utilization: number; revenue: number }[];
+  monthlyUtilization: {
+    id: number;
+    month: string;
+    utilization: number;
+    revenue: number;
+  }[];
   toast: { msg: string; type?: "success" | "error" } | null;
   showToast: (msg: string, type?: "success" | "error") => void;
 }
@@ -440,13 +464,17 @@ interface AdminDataValue {
 const AdminDataContext = createContext<AdminDataValue | null>(null);
 
 export function AdminDataProvider({ children }: { children: ReactNode }) {
-  const equipmentRes = useApiResource((signal) => equipmentApi.list(undefined, signal));
+  const equipmentRes = useApiResource((signal) =>
+    equipmentApi.list(undefined, signal),
+  );
   const equipment = equipmentRes.data ?? [];
   const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const usersRes = useApiResource((signal) => userApi.list(signal));
   const bookingsRes = useApiResource((signal) => bookingApi.list(signal));
   const rentalPlansRes = useApiResource((signal) => rentalPlanApi.list(signal));
-  const monthlyUtilRes = useApiResource((signal) => monthlyUtilizationApi.list(signal));
+  const monthlyUtilRes = useApiResource((signal) =>
+    monthlyUtilizationApi.list(signal),
+  );
   const monthlyUtilization = monthlyUtilRes.data ?? [];
   const categories = Array.from(new Set(equipment.map((e) => e.category)));
 
@@ -558,6 +586,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
 
 export function useAdminData(): AdminDataValue {
   const ctx = useContext(AdminDataContext);
-  if (!ctx) throw new Error("useAdminData must be used within an AdminDataProvider");
+  if (!ctx)
+    throw new Error("useAdminData must be used within an AdminDataProvider");
   return ctx;
 }

@@ -45,7 +45,7 @@ export async function login(email: string, password: string): Promise<{ accessTo
   if (!res.ok) throw new Error("Login failed");
   return res.json();
 
-  
+
 }
 export function logout(): Promise<void> {
   return request("/auth/logout", { method: "POST" });
@@ -93,7 +93,20 @@ export const equipmentApi = {
 };
 
 export const depotApi = resource<Depot>("/depots");
-export const userApi = resource<User>("/users");
+export interface UserCreateResult extends User {
+  // Backend generates this server-side on create and never stores/emails it —
+  // it's the only place it's ever surfaced, so the caller must show it once.
+  temporaryPassword: string;
+}
+
+export const userApi = {
+  ...resource<User>("/users"),
+  create: (body: Omit<User, "id">) =>
+    request<UserCreateResult | [UserCreateResult]>("/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }).then(unwrapCreateResponse),
+};
 export const rentalPlanApi = resource<RentalPlan>("/rentalPlans");
 export const bookingApi = {
   ...resource<Booking>("/bookings"),
