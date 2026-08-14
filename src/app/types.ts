@@ -98,6 +98,37 @@ export interface Booking {
   deliveryNotes: string;
 }
 
+// ─── REAL BACKEND: RentalPlan cart persistence (api-contract-for-frontend.md §1-2) ─
+// Distinct from `RentalPlan` above (the mock server's shape, still used by mock mode
+// and the account "my rental plans" view) — MODE === "api" only, wired by
+// `rentalPlanCartApi` in api.ts. Wire status is uppercase; `SAVED` is declared but
+// never appears on a live plan. `CANCELLED` (§5.5) is a terminal status set by
+// `POST /rentalPlans/{id}/cancel` — treat it like `CONVERTED` for "is this plan
+// still active" checks (both free up the one-active-plan slot).
+export type RentalPlanApiStatus = "DRAFT" | "SAVED" | "QUOTED" | "CONVERTED" | "CANCELLED";
+
+export interface RentalPlanItemResponse {
+  id: number;
+  assetId: number;
+  assetName: string;
+  dailyRate: number;
+  subtotal: number;
+}
+
+// totalAmount is null whenever status !== "QUOTED" — including immediately after an
+// item add/remove reverts a previously-QUOTED plan back to DRAFT.
+export interface RentalPlanResponse {
+  id: number;
+  startDate: string; // ISO YYYY-MM-DD
+  endDate: string; // ISO YYYY-MM-DD
+  siteAddress: string | null;
+  status: RentalPlanApiStatus;
+  totalAmount: number | null;
+  items: RentalPlanItemResponse[];
+  updatedAt: string; // ISO local-date-time, no offset — repurposed as "last quoted at"
+  createdAt: string;
+}
+
 export interface MonthlyUtilization {
   id: number;
   month: string;
