@@ -205,12 +205,23 @@ export const rentalPlanCartApi = {
     request<RentalPlanResponse>(`/rentalPlans/${planId}/cancel`, {
       method: "POST",
     }),
+  // Spring-only arithmetic today; may reflect a live ML price instead once the
+  // backend-only pricing.dynamic-enabled flag flips on in an environment
+  // (specification/frontend-handoff.md) — field names/shape are unchanged either way,
+  // and this call can take noticeably longer (up to ~20s) once that happens.
+  quote: (planId: number) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}/quote`, {
+      method: "POST",
+    }),
 };
 
-export interface CreateBookingRequest {
-  items: { assetId: number }[];
-  startDate: string;
-  endDate: string;
+// Converts a QUOTED RentalPlan into a Booking (api-contract-for-frontend.md §5) — items/dates
+// are derived server-side from the plan and ignored if sent, so they're not part of this
+// shape; siteAddress is still required separately. The response's totalAmount is guaranteed
+// to equal the plan's quoted amount exactly (no independent recomputation), which is what
+// keeps the amount charged in sync with the amount shown at checkout (frontend-handoff.md).
+export interface CreateBookingFromPlanRequest {
+  rentalPlanId: number;
   siteAddress: string;
   deliveryNotes?: string;
 }
@@ -239,7 +250,7 @@ export interface CreateBookingResponse {
   remainingBalance: number;
 }
 
-export function createDepositBooking(req: CreateBookingRequest): Promise<CreateBookingResponse> {
+export function createBookingFromPlan(req: CreateBookingFromPlanRequest): Promise<CreateBookingResponse> {
   return request<CreateBookingResponse>("/bookings", {
     method: "POST",
     body: JSON.stringify(req),
