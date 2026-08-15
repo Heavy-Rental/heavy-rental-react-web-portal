@@ -700,6 +700,21 @@ const equipmentRes = useApiResource(
     rentalPlanCartApi
       .removeItem(planId, itemId)
       .then((plan) => {
+        if (plan.items.length === 0) {
+          // An emptied plan still counts as "active" (findActiveRentalPlan only excludes
+          // CONVERTED/CANCELLED) and its startDate/endDate stay fixed from creation (no
+          // update route exists) — left alone, the next ensureApiRentalPlanId() call with a
+          // different date range would wrongly read it as a real conflict against a plan
+          // that has nothing in it. Cancel it so the slot is genuinely free again.
+          rentalPlanCartApi.cancel(plan.id).catch(() => {
+            // Best-effort — the plan is empty either way, and "Cancel rental plan" in the
+            // cart drawer is still available as a manual fallback if this call fails.
+          });
+          setCart([]);
+          setPlanItemIds({});
+          setPlanId(null);
+          return;
+        }
         const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
         setCart(synced);
         setPlanItemIds(itemIds);

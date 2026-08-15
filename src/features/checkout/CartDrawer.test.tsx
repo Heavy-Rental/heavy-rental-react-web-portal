@@ -31,6 +31,42 @@ describe("CartDrawer", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers a Cancel rental plan recovery link when the cart is empty but a plan still exists", () => {
+    render(
+      <CartDrawer
+        cart={[]}
+        onRemoveItem={noop}
+        siteAddress=""
+        onEditAddress={noop}
+        totalCost={0}
+        onCancelPlan={noop}
+        onCheckout={noop}
+        onClose={noop}
+      />,
+    );
+    expect(screen.getByText("No equipment selected yet.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /cancel rental plan/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no Cancel rental plan link when the cart is empty and no plan exists (e.g. mock mode)", () => {
+    render(
+      <CartDrawer
+        cart={[]}
+        onRemoveItem={noop}
+        siteAddress=""
+        onEditAddress={noop}
+        totalCost={0}
+        onCheckout={noop}
+        onClose={noop}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /cancel rental plan/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("disables Proceed and highlights Add when items exist without an address", () => {
     render(
       <CartDrawer
