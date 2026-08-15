@@ -62,7 +62,7 @@ import {
   setAuthToken,
   login,
   logout,
-  createDepositBooking,
+  createBookingFromPlan,
   paymentApi,
 } from "./app/api";
 import { useApiResource } from "./app/useApiResource";
@@ -700,6 +700,21 @@ const equipmentRes = useApiResource(
     rentalPlanCartApi
       .removeItem(planId, itemId)
       .then((plan) => {
+        if (plan.items.length === 0) {
+          // An emptied plan still counts as "active" (findActiveRentalPlan only excludes
+          // CONVERTED/CANCELLED) and its startDate/endDate stay fixed from creation (no
+          // update route exists) — left alone, the next ensureApiRentalPlanId() call with a
+          // different date range would wrongly read it as a real conflict against a plan
+          // that has nothing in it. Cancel it so the slot is genuinely free again.
+          rentalPlanCartApi.cancel(plan.id).catch(() => {
+            // Best-effort — the plan is empty either way, and "Cancel rental plan" in the
+            // cart drawer is still available as a manual fallback if this call fails.
+          });
+          setCart([]);
+          setPlanItemIds({});
+          setPlanId(null);
+          return;
+        }
         const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
         setCart(synced);
         setPlanItemIds(itemIds);
@@ -1730,6 +1745,11 @@ const equipmentRes = useApiResource(
           userName={userName}
           paymentIntentId={paymentIntentId}
           onClose={() => setCheckoutOpen(false)}
+          onGetQuote={
+            isApiMode && planId !== null
+              ? () => rentalPlanCartApi.quote(planId)
+              : undefined
+          }
           onBeginPayment={async () => {
             // Real backend only (STRIPE_INTEGRATION_HANDOFF.md §2/§5) — DepositCheckout
             // only calls this when MODE === "api"; mock mode still creates its booking
@@ -1737,11 +1757,21 @@ const equipmentRes = useApiResource(
             // mock-mode path below, POST /api/bookings takes no userId — the real backend
             // derives the customer from the Authorization bearer token server-side (its
             // response's customerName proves this), so there's nothing to check here.
-            const { startDate, endDate } = cartDateRange(cart);
-            const booking = await createDepositBooking({
-              items: cart.map((c) => ({ assetId: c.equipment.id })),
-              startDate,
-              endDate,
+            if (planId === null) {
+              throw new Error(
+                "Your rental plan couldn't be found — please refresh and try again.",
+              );
+            }
+            // Re-quote immediately before converting the plan (re-quoting a QUOTED plan is
+            // explicitly allowed — it's the stale-quote recovery path) so the plan is
+            // guaranteed QUOTED and the amount about to be charged is the freshest one,
+            // regardless of whether DepositCheckout's own display-only quote (onGetQuote
+            // above) has resolved yet. This is what keeps the charged amount from silently
+            // reverting to flat base-rate math once dynamic pricing is live
+            // (specification/frontend-handoff.md).
+            await rentalPlanCartApi.quote(planId);
+            const booking = await createBookingFromPlan({
+              rentalPlanId: planId,
               siteAddress,
               deliveryNotes: deliveryNotes || undefined,
             });

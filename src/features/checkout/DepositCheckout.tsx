@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { X, CheckCircle, AlertTriangle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, CheckCircle, AlertTriangle, Sparkles } from "lucide-react";
 import {
   Elements,
   PaymentElement,
@@ -7,6 +7,7 @@ import {
   useElements,
 } from "@stripe/react-stripe-js";
 import type { CartItem } from "../cart/CartContext";
+import type { RentalPlanResponse } from "../../app/types";
 import type { SimulatedPayment } from "./payment";
 import { CheckoutInputField } from "./CheckoutInputField";
 import { mono, display, sans } from "../../lib/styles";
@@ -94,6 +95,7 @@ export function DepositCheckout({
   paymentIntentId,
   onClose,
   onBeginPayment,
+  onGetQuote,
   onPaid,
 }: {
   cart: CartItem[];
@@ -105,15 +107,68 @@ export function DepositCheckout({
   // PaymentIntent when the user leaves the summary step. A no-op returning
   // null in mock mode, where booking creation still happens inside onPaid.
   onBeginPayment: () => Promise<ApiDepositPayment | null>;
+  // Real-backend-only (MODE === "api"): fetches the authoritative quote for the
+  // active RentalPlan purely so the summary can show a "smart priced" badge when
+  // the returned dailyRate differs from the cart's client-side base-rate estimate
+  // (specification/frontend-handoff.md §2) — the booking itself is still created
+  // from client-side totals via onBeginPayment, unaffected by this call's result.
+  // Omitted in mock mode, where there's no persisted RentalPlan/quote endpoint.
+  onGetQuote?: () => Promise<RentalPlanResponse | null>;
   onPaid: (result?: ApiPaymentResult) => Promise<void>;
 }) {
   const isApiMode = import.meta.env.MODE === "api";
   const [apiPayment, setApiPayment] = useState<ApiDepositPayment | null>(null);
   const [beginningPayment, setBeginningPayment] = useState(false);
   const [beginError, setBeginError] = useState<string | null>(null);
+  const [quote, setQuote] = useState<RentalPlanResponse | null>(null);
+  // Starts true whenever a quote will actually be fetched below, so the loading
+  // indicator is correct on the very first render (no synchronous setState in the effect).
+  const [quoteLoading, setQuoteLoading] = useState(
+    () => isApiMode && !!onGetQuote,
+  );
+
+  // Fires once when the summary screen opens (API mode only) — pricing.dynamic-enabled
+  // means this call may take noticeably longer than the near-instant arithmetic it used
+  // to be (frontend-handoff.md §1), so it must not block "Continue to Payment": the badge
+  // below just doesn't render until (or unless) it resolves.
+  useEffect(() => {
+    if (!isApiMode || !onGetQuote) return;
+    let cancelled = false;
+    onGetQuote()
+      .then((result) => {
+        if (!cancelled) setQuote(result);
+      })
+      .catch(() => {
+        // Non-fatal — the badge just doesn't show, same as "feature off" (frontend-handoff.md §2 caveats).
+      })
+      .finally(() => {
+        if (!cancelled) setQuoteLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const quotedItem = (assetId: number) =>
+    quote?.items.find((i) => i.assetId === assetId);
+  // Per-item "smart priced" check: compares the quote's dailyRate against the cart's
+  // own baseDailyRate for that asset (frontend-handoff.md §2's trick) — true only once
+  // the quote has resolved and the two actually differ.
+  const isSmartPriced = (assetId: number, baseDailyRate: number): boolean => {
+    const quoted = quotedItem(assetId);
+    return quoted !== undefined && quoted.dailyRate !== baseDailyRate;
+  };
+  // Once the quote resolves, the summary's dollar figures switch to the authoritative
+  // quoted rate/total instead of the client-side base-rate estimate — otherwise the
+  // "Smart Priced" badge above would sit next to numbers it contradicts. Falls back to
+  // the client estimate while loading, if the quote failed, or outside API mode.
+  const displayDailyRate = (assetId: number, baseDailyRate: number): number =>
+    quotedItem(assetId)?.dailyRate ?? baseDailyRate;
+  const displayTotal = quote?.totalAmount ?? totalCost;
   const deposit = apiPayment
     ? apiPayment.depositAmount
-    : Math.round(totalCost * 0.3);
+    : Math.round(displayTotal * 0.3);
   const [step, setStep] = useState<
     "summary" | "payment" | "processing" | "failed"
   >("summary");
@@ -269,25 +324,44 @@ export function DepositCheckout({
         {step === "summary" && (
           <div className="p-6 flex flex-col gap-5">
             <div className="bg-secondary/30 border border-border">
-              <div className="px-4 py-3 border-b border-border">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
                 <p
                   className="text-xs font-semibold text-muted-foreground tracking-widest uppercase"
                   style={mono}
                 >
                   Reserved Equipment
                 </p>
+                {quoteLoading && (
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="w-3 h-3 border-2 border-muted-foreground/40 border-t-transparent rounded-full animate-spin" />
+                    Checking live pricing…
+                  </span>
+                )}
               </div>
               <div className="divide-y divide-border">
                 {cart.map((c) => {
                   const days = daysBetweenISO(c.startDate, c.endDate);
+                  const smartPriced = isSmartPriced(
+                    c.equipment.id,
+                    c.equipment.baseDailyRate,
+                  );
                   return (
                     <div
                       key={c.equipment.id}
                       className="px-4 py-3 flex items-center justify-between gap-3"
                     >
                       <div>
-                        <p className="text-sm font-semibold text-foreground">
+                        <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                           {c.equipment.name}
+                          {smartPriced && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wide uppercase text-primary border border-primary/30 bg-primary/10 px-1.5 py-0.5"
+                              style={mono}
+                              title="Priced by our live demand model, not the flat listed rate"
+                            >
+                              <Sparkles size={9} /> Smart Priced
+                            </span>
+                          )}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {formatDateRange(c.startDate, c.endDate)} · {days} day
@@ -298,7 +372,11 @@ export function DepositCheckout({
                         className="text-sm font-bold text-foreground shrink-0"
                         style={mono}
                       >
-                        S${(days * c.equipment.baseDailyRate).toLocaleString()}
+                        S$
+                        {(
+                          days *
+                          displayDailyRate(c.equipment.id, c.equipment.baseDailyRate)
+                        ).toLocaleString()}
                       </p>
                     </div>
                   );
@@ -307,18 +385,20 @@ export function DepositCheckout({
             </div>
 
             {/* Cost breakdown — GST is display-only, computed client-side, never sent to the API;
-                deposit stays 30% of the pre-GST subtotal (Spec-ui-heavy-machinery-portal.md §4.4) */}
+                deposit stays 30% of the pre-GST subtotal (Spec-ui-heavy-machinery-portal.md §4.4).
+                Uses displayTotal (the resolved quote's totalAmount once available, client
+                estimate otherwise) so these figures never contradict the Smart Priced badge above. */}
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Subtotal</span>
                 <span className="font-semibold text-foreground" style={mono}>
-                  S${totalCost.toLocaleString()}
+                  S${displayTotal.toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">GST (9%)</span>
                 <span className="font-semibold text-foreground" style={mono}>
-                  S${Math.round(totalCost * 0.09).toLocaleString()}
+                  S${Math.round(displayTotal * 0.09).toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm pb-2 border-b border-border">
@@ -326,7 +406,7 @@ export function DepositCheckout({
                   Total Payable
                 </span>
                 <span className="font-semibold text-foreground" style={mono}>
-                  S${Math.round(totalCost * 1.09).toLocaleString()}
+                  S${Math.round(displayTotal * 1.09).toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm pb-2 border-b border-border">
@@ -334,7 +414,7 @@ export function DepositCheckout({
                   Balance due upon mobilisation/completion
                 </span>
                 <span className="font-semibold text-foreground" style={mono}>
-                  S${(Math.round(totalCost * 1.09) - deposit).toLocaleString()}
+                  S${(Math.round(displayTotal * 1.09) - deposit).toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-between">

@@ -51,6 +51,17 @@ export function CartDrawer({
           <p className="text-sm text-muted-foreground">
             No equipment selected yet.
           </p>
+          {/* Recovery path for a plan left over from before an emptied plan was
+              auto-cancelled on removal — onCancelPlan is only passed once a plan
+              actually exists, so this can't show up for a customer with no plan at all. */}
+          {onCancelPlan && (
+            <button
+              onClick={onCancelPlan}
+              className="mt-4 text-xs text-muted-foreground hover:text-red-400 underline underline-offset-2 transition-colors"
+            >
+              Cancel rental plan
+            </button>
+          )}
         </div>
       ) : (
         <>
