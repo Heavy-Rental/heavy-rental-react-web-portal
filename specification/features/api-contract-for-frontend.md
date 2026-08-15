@@ -66,7 +66,13 @@ The response is the same `RentalPlanResponse` shape as §2, just reflecting the 
 
 No shape change from what's live today — still returns `RentalPlanResponse` (§2). What's new: this call now reliably refreshes `updatedAt` as part of succeeding (today it doesn't — see `plan.md` Step 1), so re-quoting a stale plan is exactly how you reset the 24-hour window.
 
-**Pricing source (clarified 2026-08-14):** this route is Spring-only arithmetic — it sums the plan's already-snapshotted line `subtotal`s (`PricingClient`/`DefaultPricingClient`), with no HTTP call to Haystack. `Spec-rental-plan-cart-checkout.md` and `Spec-rest-api-reference.md` §8.1 previously described this as Haystack-backed; that was incorrect and has been corrected in the former (the latter is outside this correction's scope). Don't design any loading/latency UI around Haystack round-trip time for this call.
+**Pricing source (clarified 2026-08-14, reversed 2026-08-15):** the 2026-08-14 note below was accurate as of that date — Spring-only arithmetic, no Haystack call. It no longer is: a Haystack-backed dynamic-pricing path has since shipped on this route behind a backend-only flag (`pricing.dynamic-enabled`, off by default in every environment today), with a silent fallback to the same Spring-only arithmetic whenever dynamic pricing is unavailable for any reason — this call still never fails or hangs because of it. Response shape is unchanged (`RentalPlanResponse`, §2) either way; `dailyRate`/`subtotal`/`totalAmount` may just reflect the ML price instead of the flat base rate once an environment turns the flag on. **Do** design loading/latency UI around this now — up to ~20s in the worst case once dynamic pricing is live, though typically much faster. See `Spec-dynamic-pricing-e2e.md` (web portal repo) for the frontend's handling of this.
+
+<details><summary>2026-08-14 note (superseded, kept for history)</summary>
+
+this route is Spring-only arithmetic — it sums the plan's already-snapshotted line `subtotal`s (`PricingClient`/`DefaultPricingClient`), with no HTTP call to Haystack. `Spec-rental-plan-cart-checkout.md` and `Spec-rest-api-reference.md` §8.1 previously described this as Haystack-backed; that was incorrect and has been corrected in the former (the latter is outside this correction's scope). Don't design any loading/latency UI around Haystack round-trip time for this call.
+
+</details>
 
 ## 5. `POST /api/bookings` with `rentalPlanId` — checkout
 
@@ -140,5 +146,6 @@ days  = (endDate - startDate in whole days) + 1     // inclusive of both ends
 
 ## Change Log
 
+- 2026-08-15: **§4 reversed again.** Haystack-backed dynamic pricing on `POST /rentalPlans/{id}/quote` has shipped behind `pricing.dynamic-enabled` (off by default everywhere), superseding the 2026-08-14 "Spring-only, no Haystack" note (kept inline for history). Silent fallback to the same base-rate arithmetic whenever unavailable — response shape unchanged. Companion update: `Spec-rental-plan-cart-checkout.md` (web portal repo), and a new `Spec-dynamic-pricing-e2e.md` documenting the frontend's handling.
 - 2026-08-13: **Added `POST /api/rentalPlans/{id}/cancel` (§5.5).** New `CANCELLED` status value (§1); allowed from `DRAFT`/`SAVED`/`QUOTED`, blocked from `CONVERTED` (`409 already_converted`) and from an already-`CANCELLED` plan (`409 already_cancelled`); clears `totalAmount` and refreshes `updatedAt` the same way item mutation does. §7's one-active-plan filter now excludes `CANCELLED` alongside `CONVERTED`. Source of truth: `rental-plan-quote/spec.md` FR-RP-010 and `rental-plan-quote/contracts/checkout.md`, both already as-built on the Spring Boot side.
 - 2026-08-13: Initial contract, generated from `plan.md` v0.3.0. Covers status casing, the full `RentalPlanResponse` shape with new `updatedAt`/`createdAt` fields, the item-mutation revert-to-`DRAFT` behavior, the `rentalPlanId` checkout contract, the new `quote_not_ready`/`quote_expired` error codes, and the client-side single-item pricing formula (no `/api/pricing/estimate` endpoint).
