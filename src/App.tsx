@@ -351,6 +351,11 @@ function CustomerPortal({
   const [pendingAutoAdd, setPendingAutoAdd] = useState<EquipmentItem[] | null>(
     null,
   );
+  // A single item queued from a card's "Select" button, waiting on the site-address
+  // modal the same way pendingAutoAdd waits for it above — see the retry effect below.
+  const [pendingCartItem, setPendingCartItem] = useState<CartItem | null>(
+    null,
+  );
   const { cart, setCart, cartOpen, setCartOpen } = useCart();
   const isApiMode = import.meta.env.MODE === "api";
   // API mode only: the persisted RentalPlan backing `cart`, and a lookup from
@@ -484,10 +489,18 @@ const equipmentRes = useApiResource(
       );
       return null;
     }
+    // The user only ever types/sees the plain street address (e.g. "20 Jurong Port
+    // Road") — sitePostalCode is resolved separately (typed inline or via OneMap
+    // lookup, see SiteAddressModal) and appended here so the combined string still
+    // satisfies the backend constraint above, without forcing the user to type it.
+    const resolvedSiteAddress =
+      sitePostalCode && !siteAddress.includes(sitePostalCode)
+        ? `${siteAddress}, ${sitePostalCode}`
+        : siteAddress;
     const created = await rentalPlanCartApi.create({
       startDate,
       endDate,
-      siteAddress,
+      siteAddress: resolvedSiteAddress,
     });
     return created.id;
   };
@@ -507,12 +520,12 @@ const equipmentRes = useApiResource(
     const toAdd = pendingAutoAdd;
     setCartOpen(true);
     setCartDateError(null);
-    setPendingAutoAdd(null);
     if (!siteAddressPrompted) {
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
     if (!isApiMode) {
+      setPendingAutoAdd(null);
       setCart((prev) => {
         const merged = [...prev];
         for (const eq of toAdd) {
@@ -525,6 +538,15 @@ const equipmentRes = useApiResource(
       });
       return;
     }
+    // API mode needs a saved delivery address before the rental plan can be created
+    // server-side — keep these items queued (pendingAutoAdd stays set, not cleared)
+    // and prompt for it, instead of attempting the doomed API call in this same
+    // click. The retry effect below re-invokes this handler once the address saves.
+    if (!siteAddress.trim()) {
+      setSiteAddressModalOpen(true);
+      return;
+    }
+    setPendingAutoAdd(null);
     void (async () => {
       try {
         const id = await ensureApiRentalPlanId(startDate, endDate);
@@ -551,6 +573,89 @@ const equipmentRes = useApiResource(
       }
     })();
   };
+
+  const addToCart = (item: CartItem) => {
+    // Hard-enforce one shared date range per cart (Spec-ui-heavy-machinery-portal.md §4.3) —
+    // a belt-and-suspenders backstop behind the date-bar lock below, in case an item reaches
+    // here from a path that doesn't source dates from the shared bar (chatbot, spec matches).
+    const other = cart.find((c) => c.equipment.id !== item.equipment.id);
+    if (
+      other &&
+      (other.startDate !== item.startDate || other.endDate !== item.endDate)
+    ) {
+      setCartDateError(
+        "All equipment in one booking must share the same rental dates. Remove the existing item(s) first, or match their dates.",
+      );
+      return;
+    }
+    setCartDateError(null);
+    setCartOpen(true);
+    // After Add All (specs mode), address is collected from the highlighted Add
+    // control — do not pop Delivery Details from equipment-card Select.
+    if (shouldPromptDeliveryDetails(onboardingMode) && !siteAddressPrompted) {
+      setSiteAddressPrompted(true);
+      setSiteAddressModalOpen(true);
+    }
+    if (!isApiMode) {
+      setCart((prev) => [
+        ...prev.filter((c) => c.equipment.id !== item.equipment.id),
+        item,
+      ]);
+      return;
+    }
+    // API mode needs a saved delivery address before the rental plan can be created
+    // server-side — queue this item and prompt for it, instead of attempting the
+    // doomed API call in this same click. The retry effect below re-adds it once
+    // the address saves.
+    if (!siteAddress.trim()) {
+      setSiteAddressModalOpen(true);
+      setPendingCartItem(item);
+      return;
+    }
+    void (async () => {
+      try {
+        const id = await ensureApiRentalPlanId(item.startDate, item.endDate);
+        if (id === null) return;
+        const plan = await rentalPlanCartApi.addItem(id, item.equipment.id);
+        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
+        setCart(synced);
+        setPlanItemIds(itemIds);
+        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
+      } catch (err) {
+        setCartDateError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't add this item to your rental plan.",
+        );
+      }
+    })();
+  };
+
+  // Retries whatever addToCart/handleSharedEndDateSelected deferred because siteAddress
+  // was still blank, the moment SiteAddressModal's onSave fills it in — otherwise the item
+  // is never actually added and the earlier "Add a delivery address…" prompt just sits
+  // there looking broken even after the user types an address (nothing else re-triggers
+  // the add). Narrow deps are intentional: this should only fire on the blank→non-blank
+  // transition, not on every pendingCartItem/pendingAutoAdd change. Declared before the
+  // onboarding/loading/error early returns below so this hook always runs in the same
+  // order across renders (react-hooks/rules-of-hooks).
+  useEffect(() => {
+    if (!siteAddress.trim()) return;
+    if (pendingCartItem) {
+      const item = pendingCartItem;
+      // Clearing the queue is inseparable from retrying addToCart(item) below,
+      // which itself synchronizes cart/plan state with the API — there's no
+      // external system to subscribe to other than this component's own
+      // siteAddress transition.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPendingCartItem(null);
+      addToCart(item);
+    }
+    if (pendingAutoAdd && sharedEndDate) {
+      handleSharedEndDateSelected(sharedEndDate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteAddress]);
 
   const applyQuoteDatesToBar = (quoteDates?: QuoteDateRange) => {
     if (!quoteDates) return;
@@ -639,54 +744,6 @@ const equipmentRes = useApiResource(
       s + daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate,
     0,
   );
-
-  const addToCart = (item: CartItem) => {
-    // Hard-enforce one shared date range per cart (Spec-ui-heavy-machinery-portal.md §4.3) —
-    // a belt-and-suspenders backstop behind the date-bar lock below, in case an item reaches
-    // here from a path that doesn't source dates from the shared bar (chatbot, spec matches).
-    const other = cart.find((c) => c.equipment.id !== item.equipment.id);
-    if (
-      other &&
-      (other.startDate !== item.startDate || other.endDate !== item.endDate)
-    ) {
-      setCartDateError(
-        "All equipment in one booking must share the same rental dates. Remove the existing item(s) first, or match their dates.",
-      );
-      return;
-    }
-    setCartDateError(null);
-    setCartOpen(true);
-    // After Add All (specs mode), address is collected from the highlighted Add
-    // control — do not pop Delivery Details from equipment-card Select.
-    if (shouldPromptDeliveryDetails(onboardingMode) && !siteAddressPrompted) {
-      setSiteAddressPrompted(true);
-      setSiteAddressModalOpen(true);
-    }
-    if (!isApiMode) {
-      setCart((prev) => [
-        ...prev.filter((c) => c.equipment.id !== item.equipment.id),
-        item,
-      ]);
-      return;
-    }
-    void (async () => {
-      try {
-        const id = await ensureApiRentalPlanId(item.startDate, item.endDate);
-        if (id === null) return;
-        const plan = await rentalPlanCartApi.addItem(id, item.equipment.id);
-        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
-        setCart(synced);
-        setPlanItemIds(itemIds);
-        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
-      } catch (err) {
-        setCartDateError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add this item to your rental plan.",
-        );
-      }
-    })();
-  };
 
   // API mode only: remove an item via DELETE .../items/{itemId} (keyed by RentalPlanItem
   // id, not assetId — planItemIds tracks that mapping since RentalPlanItemResponse is the

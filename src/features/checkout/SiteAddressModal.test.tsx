@@ -57,7 +57,7 @@ describe("SiteAddressModal", () => {
     expect(onSave).toHaveBeenCalledWith("20 Jurong Port Road", "619094", "");
   });
 
-  it("blocks save when no postal code can be found", async () => {
+  it("allows save with just a plain address when no postal code can be found", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
@@ -66,18 +66,27 @@ describe("SiteAddressModal", () => {
         json: async () => ({ results: [] }),
       }),
     );
+    const onSave = vi.fn();
     render(
       <SiteAddressModal
         address="not a real street xx"
         notes=""
         onClose={vi.fn()}
-        onSave={vi.fn()}
+        onSave={onSave}
       />,
     );
-    await screen.findByPlaceholderText(/no match/i, {}, { timeout: 2000 });
     await user.click(screen.getByRole("button", { name: /save address/i }));
-    expect(
-      screen.getByText(/couldn't find a singapore postal code/i),
-    ).toBeInTheDocument();
+    expect(onSave).toHaveBeenCalledWith("not a real street xx", "", "");
+  });
+
+  it("still requires a non-blank address", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <SiteAddressModal address="" notes="" onClose={vi.fn()} onSave={onSave} />,
+    );
+    await user.click(screen.getByRole("button", { name: /save address/i }));
+    expect(screen.getByText(/site address is required/i)).toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
   });
 });
