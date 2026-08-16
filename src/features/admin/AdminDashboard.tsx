@@ -11,13 +11,14 @@ import { UsersTab } from "./users/UsersTab";
 function AdminDashboardContent({
   userName,
   onLogout,
-  onHome,
 }: {
   userName: string;
   onLogout: () => void;
-  onHome: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
+  // Clicking the logo returns to the overview tab — it must never touch
+  // auth/session state (see handleLogout in App.tsx).
+  const goHome = () => setActiveTab("overview");
   const data = useAdminData();
 
   if (data.dataStatus === "loading") {
@@ -66,7 +67,7 @@ function AdminDashboardContent({
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-14">
           <div className="flex items-center gap-3">
             <button
-              onClick={onHome}
+              onClick={goHome}
               className="text-xl font-black text-primary hover:opacity-80 transition-opacity"
               style={display}
             >
@@ -153,7 +154,7 @@ function AdminDashboardContent({
   );
 }
 
-export function AdminDashboard(props: { userName: string; onLogout: () => void; onHome: () => void }) {
+export function AdminDashboard(props: { userName: string; onLogout: () => void }) {
   return (
     <AdminDataProvider>
       <AdminDashboardContent {...props} />

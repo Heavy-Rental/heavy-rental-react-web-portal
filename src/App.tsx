@@ -338,12 +338,10 @@ function CustomerPortal({
   userName,
   userId,
   onLogout,
-  onHome,
 }: {
   userName: string;
   userId: number | null;
   onLogout: () => void;
-  onHome: () => void;
 }) {
   const [onboardingMode, setOnboardingMode] = useState<OnboardingMode>(null);
   const [specsRecs, setSpecsRecs] = useState<EquipmentItem[]>([]);
@@ -790,6 +788,17 @@ const equipmentRes = useApiResource(
     setTimeout(() => setHighlightId(null), 3000);
   };
 
+  // Clicking the logo returns to the main equipment-browsing page within the
+  // portal — it must never touch auth/session state (see handleLogout in App).
+  const goHome = () => {
+    setDetailItem(null);
+    setProfileOpen(false);
+    setEditMode(false);
+    setConfirmed(false);
+    setConfirmedOrder(null);
+    setSelectedPlan(null);
+  };
+
   if (confirmed && confirmedOrder) {
     return (
       <ConfirmationScreen
@@ -811,7 +820,7 @@ const equipmentRes = useApiResource(
       <RentalPlanDetail
         plan={selectedPlan}
         userName={userName}
-        onHome={onHome}
+        onHome={goHome}
         onBack={() => setSelectedPlan(null)}
         onLogout={onLogout}
       />
@@ -831,7 +840,7 @@ const equipmentRes = useApiResource(
       <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="max-w-5xl mx-auto px-6 flex items-center justify-between h-14">
           <button
-            onClick={onHome}
+            onClick={goHome}
             className="text-xl font-black text-primary hover:opacity-80 transition-opacity"
             style={display}
           >
@@ -1146,7 +1155,7 @@ const equipmentRes = useApiResource(
         <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
           <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-14">
             <button
-              onClick={onHome}
+              onClick={goHome}
               className="text-xl font-black text-primary hover:opacity-80 transition-opacity"
               style={display}
             >
@@ -1497,7 +1506,7 @@ const equipmentRes = useApiResource(
       <nav className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-14">
           <button
-            onClick={onHome}
+            onClick={goHome}
             className="text-xl font-black text-primary hover:opacity-80 transition-opacity"
             style={display}
           >
@@ -1879,13 +1888,14 @@ const equipmentRes = useApiResource(
 function EmployeeDashboard({
   userName,
   onLogout,
-  onHome,
 }: {
   userName: string;
   onLogout: () => void;
-  onHome: () => void;
 }) {
   const [tab, setTab] = useState<"dashboard" | "assets">("dashboard");
+  // Clicking the logo returns to the dashboard tab — it must never touch
+  // auth/session state (see handleLogout in App).
+  const goHome = () => setTab("dashboard");
   const equipmentRes = useApiResource((signal) => assetApi.list(undefined, signal));
   const equipment = equipmentRes.data ?? [];
   const monthlyUtilRes = useApiResource((signal) => monthlyUtilizationApi.list(signal));
@@ -2027,7 +2037,7 @@ function EmployeeDashboard({
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-14">
           <div className="flex items-center gap-3">
             <button
-              onClick={onHome}
+              onClick={goHome}
               className="text-xl font-black text-primary hover:opacity-80 transition-opacity"
               style={display}
             >
@@ -2834,17 +2844,24 @@ export default function App() {
     setAuthOverlay(true);
     setShowLogin(false);
     try {
-      let id: number | null = null;
-      try {
-        const users = await userApi.list();
-        id = users.find((u) => u.email.toLowerCase() === email)?.id ?? null;
-      } catch {
-        // no linked account for this email — proceed with id: null (existing behavior)
-      }
+      const resolveUserId = async (): Promise<number | null> => {
+        try {
+          const users = await userApi.list();
+          return users.find((u) => u.email.toLowerCase() === email)?.id ?? null;
+        } catch {
+          // no linked account for this email — proceed with id: null (existing behavior)
+          return null;
+        }
+      };
       let session: StoredSession;
       if (import.meta.env.MODE === "api") {
         const password = ACCOUNTS[email]?.password;
         const { accessToken, expiresIn } = await login(email, password);
+        // Prime the api client with the real bearer token before calling any
+        // other authenticated endpoint (e.g. userApi.list() below) — previously
+        // that call fired before login() resolved and always 401'd.
+        setAuthToken(accessToken);
+        const id = await resolveUserId();
         const issuedAt = Date.now();
         session = {
           token: accessToken,
@@ -2855,6 +2872,7 @@ export default function App() {
           expiresAt: issuedAt + expiresIn * 1000,
         };
       } else {
+        const id = await resolveUserId();
         session = issueSession({ id, name, role });
       }
       const wait = Math.max(0, 500 - (Date.now() - started));
@@ -2891,7 +2909,6 @@ export default function App() {
           userName={user.name}
           userId={user.id}
           onLogout={handleLogout}
-          onHome={handleLogout}
         />
       </CartProvider>
     );
@@ -2900,7 +2917,6 @@ export default function App() {
       <EmployeeDashboard
         userName={user.name}
         onLogout={handleLogout}
-        onHome={handleLogout}
       />
     );
   if (view === "admin" && user)
@@ -2908,7 +2924,6 @@ export default function App() {
       <AdminDashboard
         userName={user.name}
         onLogout={handleLogout}
-        onHome={handleLogout}
       />
     );
   if (view === "safety") return <SafetyPage onHome={() => setView("portal")} />;
