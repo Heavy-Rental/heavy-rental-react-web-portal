@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { mono, display, sans } from "../../lib/styles";
-import { extractPostalCode, lookupSingaporePostal } from "../../lib/sgPostal";
+import { extractPostalCode, isSingaporePostal, lookupSingaporePostal } from "../../lib/sgPostal";
+import { ApiError, postalCodeApi } from "../../app/api";
 
 // ─── SITE ADDRESS MODAL ─────────────────────────────────────────────────────────
 // Captured once per cart — maps to Booking.siteAddress/sitePostalCode/deliveryNotes.
 // Postal code: use a 6-digit code already in the address, otherwise look it up
-// from OneMap as the user types a Singapore street address.
+// from OneMap as the user types a Singapore street address. In API mode, once a
+// 6-digit code is in hand (typed or OneMap-found), it's also confirmed against the
+// real backend (specification/features/postal-code-validation.md) before Save is
+// allowed — OneMap's own result is a plausible-address autofill, not proof the code
+// is real; the backend call is the authoritative check.
 
 export function SiteAddressModal({
   address,
@@ -19,12 +24,18 @@ export function SiteAddressModal({
   onClose: () => void;
   onSave: (address: string, postalCode: string, notes: string) => void;
 }) {
+  const isApiMode = import.meta.env.MODE === "api";
   const [form, setForm] = useState({ address, notes });
   const [error, setError] = useState<string | null>(null);
   const [lookup, setLookup] = useState<{
     query: string;
     postal: string;
     status: "loading" | "found" | "miss";
+  } | null>(null);
+  const [validation, setValidation] = useState<{
+    postalCode: string;
+    status: "checking" | "valid" | "invalid" | "unavailable";
+    message?: string;
   } | null>(null);
 
   const query = form.address.trim();
@@ -65,10 +76,66 @@ export function SiteAddressModal({
     };
   }, [query, typedPostal]);
 
+  // API mode only: once a 6-digit postal code is in hand (typed or OneMap-found),
+  // confirm it against the real backend before Save is allowed. Mirrors the OneMap
+  // effect above (debounce + AbortController + cleanup), keyed off the derived
+  // postalCode rather than a user-typed field, since the postal-code input itself
+  // is read-only/derived — there's no literal "blur" to hang this off.
+  useEffect(() => {
+    if (!isApiMode || !isSingaporePostal(postalCode)) return;
+    const ac = new AbortController();
+    const timer = window.setTimeout(() => {
+      setValidation({ postalCode, status: "checking" });
+      void postalCodeApi
+        .lookup(postalCode, ac.signal)
+        .then((res) => {
+          if (ac.signal.aborted) return;
+          setValidation({
+            postalCode,
+            status: res.status === "VALID" ? "valid" : "invalid",
+            message: res.message,
+          });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          if (ac.signal.aborted) return;
+          if (err instanceof ApiError && err.code === "bad_request") {
+            setValidation({ postalCode, status: "invalid", message: err.message });
+          } else {
+            // Network failure or the lookup service's own 503 — don't hard-block
+            // Save on this (specification/features/postal-code-validation.md).
+            setValidation({ postalCode, status: "unavailable" });
+          }
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      ac.abort();
+    };
+  }, [isApiMode, postalCode]);
+
+  const postalResolved =
+    validation !== null && validation.postalCode === postalCode && validation.status !== "checking";
+  const postalChecking = isApiMode && isSingaporePostal(postalCode) && !postalResolved;
+
   const handleSave = () => {
     if (!form.address.trim()) {
       setError("Site address is required.");
       return;
+    }
+    if (isApiMode) {
+      if (!isSingaporePostal(postalCode)) {
+        setError(
+          "Couldn't find a Singapore postal code for this address. Try a more specific street or building, or include the 6-digit postal code.",
+        );
+        return;
+      }
+      if (validation?.postalCode === postalCode && validation.status === "invalid") {
+        setError(
+          validation.message ?? "This postal code doesn't look right — check the address.",
+        );
+        return;
+      }
     }
     setError(null);
     onSave(form.address.trim(), postalCode, form.notes.trim());
@@ -149,6 +216,11 @@ export function SiteAddressModal({
               }
               className="w-full bg-secondary/30 border border-border px-3 py-2.5 text-sm text-muted-foreground placeholder-muted-foreground outline-none cursor-not-allowed"
             />
+            {postalChecking && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Verifying postal code…
+              </p>
+            )}
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1.5 block">
@@ -177,9 +249,10 @@ export function SiteAddressModal({
             </button>
             <button
               onClick={handleSave}
-              className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all"
+              disabled={postalChecking}
+              className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
             >
-              Save Address
+              {postalChecking ? "Verifying…" : "Save Address"}
             </button>
           </div>
         </div>

@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | **Implements** | [`postal-code-validation.md`](./postal-code-validation.md) — the Spring team's handoff contract for `GET /api/postalCodes/{postalCode}` |
-| **Status** | Planned — not yet implemented |
+| **Status** | In progress — Sub-tasks 1-3 done (persisted plan, `postalCodeApi` client, `SiteAddressModal` validation wiring); Sub-tasks 4-5 (cart/checkout UX fix) remaining |
 | **Branch** | `HR-158-postal-code-validation-via-one-map-api-and-distance-calculation` |
 
 This document is the frontend-side execution plan for consuming the new endpoint, plus a related UX bug fix
