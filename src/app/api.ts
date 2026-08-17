@@ -215,6 +215,24 @@ export const rentalPlanCartApi = {
     }),
 };
 
+// ─── REAL BACKEND: postal code validation (specification/features/postal-code-validation.md) ──
+// Real-time Singapore postal code lookup, meant to be called while a site-address form is still
+// being filled in (before final submit) — purely additive, doesn't change the siteAddress submit
+// payload on any of the routes above. VALID/INVALID both come back as 200 — branch on `status`,
+// not the HTTP status, to tell "field is genuinely invalid" apart from "lookup unavailable" (503,
+// which is a distinct status precisely so it can be told apart without parsing the body).
+export interface PostalCodeLookupResponse {
+  status: "VALID" | "INVALID";
+  postalCode: string;
+  address?: string;
+  message?: string;
+}
+
+export const postalCodeApi = {
+  lookup: (postalCode: string, signal?: AbortSignal) =>
+    request<PostalCodeLookupResponse>(`/postalCodes/${postalCode}`, { signal }),
+};
+
 // Converts a QUOTED RentalPlan into a Booking (api-contract-for-frontend.md §5) — items/dates
 // are derived server-side from the plan and ignored if sent, so they're not part of this
 // shape; siteAddress is still required separately. The response's totalAmount is guaranteed

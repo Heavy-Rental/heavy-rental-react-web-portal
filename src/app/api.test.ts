@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ApiError, rentalPlanCartApi, setAuthToken, type CreateRentalPlanRequest } from "./api";
+import {
+  ApiError,
+  postalCodeApi,
+  rentalPlanCartApi,
+  setAuthToken,
+  type CreateRentalPlanRequest,
+} from "./api";
 import type { RentalPlanResponse } from "./types";
 
 const samplePlan: RentalPlanResponse = {
@@ -121,6 +127,69 @@ describe("rentalPlanCartApi", () => {
 
     await expect(rentalPlanCartApi.cancel(55)).rejects.toMatchObject(
       new ApiError("already_converted", "Plan already converted"),
+    );
+  });
+});
+
+describe("postalCodeApi", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setAuthToken("test-token");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAuthToken(null);
+  });
+
+  it("lookup() GETs /api/postalCodes/{postalCode} with the Authorization header, returning VALID", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        status: "VALID",
+        postalCode: "619094",
+        address: "20 JURONG PORT ROAD SINGAPORE 619094",
+      }),
+    );
+
+    const result = await postalCodeApi.lookup("619094");
+
+    expect(result).toEqual({
+      status: "VALID",
+      postalCode: "619094",
+      address: "20 JURONG PORT ROAD SINGAPORE 619094",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/postalCodes/619094");
+    expect(init?.method ?? "GET").toBe("GET");
+    const headers = init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-token");
+  });
+
+  it("resolves (not rejects) with status: INVALID for a well-formed but nonexistent code", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        status: "INVALID",
+        postalCode: "999999",
+        message: "No address found for this postal code",
+      }),
+    );
+
+    const result = await postalCodeApi.lookup("999999");
+
+    expect(result.status).toBe("INVALID");
+    expect(result.message).toBe("No address found for this postal code");
+  });
+
+  it("rejects with a typed ApiError for a malformed (non-6-digit) postal code", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ error: "bad_request", message: "Postal code must be exactly 6 digits" }, 400),
+    );
+
+    await expect(postalCodeApi.lookup("12345")).rejects.toMatchObject(
+      new ApiError("bad_request", "Postal code must be exactly 6 digits"),
     );
   });
 });
