@@ -65,11 +65,6 @@ export function CustomerPortal({
   const [pendingAutoAdd, setPendingAutoAdd] = useState<EquipmentItem[] | null>(
     null,
   );
-  // A single item queued from a card's "Select" button, waiting on the site-address
-  // modal the same way pendingAutoAdd waits for it above — see the retry effect below.
-  const [pendingCartItem, setPendingCartItem] = useState<CartItem | null>(
-    null,
-  );
   const { cart, setCart, cartOpen, setCartOpen } = useCart();
   const isApiMode = import.meta.env.MODE === "api";
   // API mode only: the persisted RentalPlan backing `cart`, and a lookup from
@@ -219,6 +214,52 @@ export function CustomerPortal({
     return created.id;
   };
 
+  // API mode: does the actual RentalPlan sync for a set of items known not to be synced
+  // yet. Takes the items/date range explicitly rather than reading `cart` state, so callers
+  // that just called setCart(...) in the same tick aren't caught by React's
+  // stale-closure-until-next-render — `cart` here would still be the pre-update value
+  // otherwise. No-ops if there's no saved address yet — items just stay local/unsynced
+  // until syncUnsyncedCartItems() (below) flushes them once one is saved.
+  const syncCartItems = async (
+    itemsToSync: CartItem[],
+    startDate: string,
+    endDate: string,
+  ) => {
+    if (!isApiMode || !siteAddress.trim() || itemsToSync.length === 0) return;
+    try {
+      const id = await ensureApiRentalPlanId(startDate, endDate);
+      if (id === null) return;
+      let plan = null;
+      for (const c of itemsToSync) {
+        plan = await rentalPlanCartApi.addItem(id, c.equipment.id);
+      }
+      if (plan) {
+        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
+        setCart(synced);
+        setPlanItemIds(itemIds);
+        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
+      }
+    } catch (err) {
+      setCartDateError(
+        err instanceof Error ? err.message : "Couldn't sync your rental plan.",
+      );
+    }
+  };
+
+  // API mode: flushes whatever's sitting in `cart` but isn't yet reflected in
+  // `planItemIds` — i.e. items added locally while no address existed yet (e.g. after
+  // "Skip for now"). Called once a valid address is saved (SiteAddressModal's onSave).
+  // Safe to read live `cart`/`planItemIds` state here, since onSave fires as its own
+  // event, well after any earlier setCart(...) calls from add-to-cart actions have
+  // already settled.
+  const syncUnsyncedCartItems = () => {
+    if (!isApiMode) return;
+    const unsynced = cart.filter((c) => !(c.equipment.id in planItemIds));
+    if (unsynced.length === 0) return;
+    const { startDate, endDate } = cartDateRange(cart);
+    void syncCartItems(unsynced, startDate, endDate);
+  };
+
   // Auto-add AI-recommended equipment ("Add All to Rental Plan") to the cart the moment both
   // shared dates are available. Wraps setSharedEndDate (the only setter that can complete a
   // range) so the flush happens synchronously in the same click that finalizes the end date,
@@ -232,60 +273,31 @@ export function CustomerPortal({
     const startDate = sharedStartDate,
       endDate = d;
     const toAdd = pendingAutoAdd;
+    setPendingAutoAdd(null);
     setCartOpen(true);
     setCartDateError(null);
     if (!siteAddressPrompted) {
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
-    if (!isApiMode) {
-      setPendingAutoAdd(null);
-      setCart((prev) => {
-        const merged = [...prev];
-        for (const eq of toAdd) {
-          const idx = merged.findIndex((c) => c.equipment.id === eq.id);
-          const item: CartItem = { equipment: eq, startDate, endDate };
-          if (idx >= 0) merged[idx] = item;
-          else merged.push(item);
-        }
-        return merged;
-      });
-      return;
-    }
-    // API mode needs a saved delivery address before the rental plan can be created
-    // server-side — keep these items queued (pendingAutoAdd stays set, not cleared)
-    // and prompt for it, instead of attempting the doomed API call in this same
-    // click. The retry effect below re-invokes this handler once the address saves.
-    if (!siteAddress.trim()) {
-      setSiteAddressModalOpen(true);
-      return;
-    }
-    setPendingAutoAdd(null);
-    void (async () => {
-      try {
-        const id = await ensureApiRentalPlanId(startDate, endDate);
-        if (id === null) return;
-        let plan = null;
-        for (const eq of toAdd) {
-          if (cart.some((c) => c.equipment.id === eq.id)) continue;
-          plan = await rentalPlanCartApi.addItem(id, eq.id);
-        }
-        if (plan) {
-          const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
-          setCart(synced);
-          setPlanItemIds(itemIds);
-          setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
-        } else {
-          setPlanId(id);
-        }
-      } catch (err) {
-        setCartDateError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add those items to your rental plan.",
-        );
+    // Always update the local cart immediately, in both modes — no address required up
+    // front. In API mode, if an address is already saved, sync straight away; otherwise
+    // these items stay local-only until syncUnsyncedCartItems() flushes them later.
+    setCart((prev) => {
+      const merged = [...prev];
+      for (const eq of toAdd) {
+        const idx = merged.findIndex((c) => c.equipment.id === eq.id);
+        const item: CartItem = { equipment: eq, startDate, endDate };
+        if (idx >= 0) merged[idx] = item;
+        else merged.push(item);
       }
-    })();
+      return merged;
+    });
+    void syncCartItems(
+      toAdd.map((eq) => ({ equipment: eq, startDate, endDate })),
+      startDate,
+      endDate,
+    );
   };
 
   const addToCart = (item: CartItem) => {
@@ -310,64 +322,30 @@ export function CustomerPortal({
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
-    if (!isApiMode) {
-      setCart((prev) => [
-        ...prev.filter((c) => c.equipment.id !== item.equipment.id),
-        item,
-      ]);
-      return;
-    }
-    // API mode needs a saved delivery address before the rental plan can be created
-    // server-side — queue this item and prompt for it, instead of attempting the
-    // doomed API call in this same click. The retry effect below re-adds it once
-    // the address saves.
-    if (!siteAddress.trim()) {
-      setSiteAddressModalOpen(true);
-      setPendingCartItem(item);
-      return;
-    }
-    void (async () => {
-      try {
-        const id = await ensureApiRentalPlanId(item.startDate, item.endDate);
-        if (id === null) return;
-        const plan = await rentalPlanCartApi.addItem(id, item.equipment.id);
-        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
-        setCart(synced);
-        setPlanItemIds(itemIds);
-        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
-      } catch (err) {
-        setCartDateError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add this item to your rental plan.",
-        );
-      }
-    })();
+    // Always update the local cart immediately, in both modes — no address required up
+    // front. In API mode, if an address is already saved, sync straight away; otherwise
+    // this item stays local-only until syncUnsyncedCartItems() flushes it later.
+    setCart((prev) => [
+      ...prev.filter((c) => c.equipment.id !== item.equipment.id),
+      item,
+    ]);
+    void syncCartItems([item], item.startDate, item.endDate);
   };
 
-  // Retries whatever addToCart/handleSharedEndDateSelected deferred because siteAddress
-  // was still blank, the moment SiteAddressModal's onSave fills it in — otherwise the item
-  // is never actually added and the earlier "Add a delivery address…" prompt just sits
-  // there looking broken even after the user types an address (nothing else re-triggers
-  // the add). Narrow deps are intentional: this should only fire on the blank→non-blank
-  // transition, not on every pendingCartItem/pendingAutoAdd change. Declared before the
-  // onboarding/loading/error early returns below so this hook always runs in the same
-  // order across renders (react-hooks/rules-of-hooks).
+  // Flushes any cart items still awaiting sync the moment siteAddress transitions to a
+  // saved value (SiteAddressModal's onSave, e.g. after "Skip for now" was used earlier).
+  // Deliberately a useEffect rather than a direct call from onSave's handler — onSave's
+  // setSiteAddress(...) doesn't take effect until the next render, so calling
+  // syncUnsyncedCartItems() synchronously there would still read the pre-update
+  // siteAddress/cart closure and incorrectly no-op. Declared above the onboarding/loading/
+  // error early returns below so this hook always runs in the same order across renders
+  // (react-hooks/rules-of-hooks).
   useEffect(() => {
-    if (!siteAddress.trim()) return;
-    if (pendingCartItem) {
-      const item = pendingCartItem;
-      // Clearing the queue is inseparable from retrying addToCart(item) below,
-      // which itself synchronizes cart/plan state with the API — there's no
-      // external system to subscribe to other than this component's own
-      // siteAddress transition.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPendingCartItem(null);
-      addToCart(item);
-    }
-    if (pendingAutoAdd && sharedEndDate) {
-      handleSharedEndDateSelected(sharedEndDate);
-    }
+    // Fire-and-forget — syncUnsyncedCartItems() only *schedules* the async sync
+    // (syncCartItems); any setState it triggers happens after the async boundary, not
+    // synchronously within this effect body.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    syncUnsyncedCartItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteAddress]);
 
@@ -465,7 +443,12 @@ export function CustomerPortal({
   // from it directly rather than issuing a follow-up GET.
   const removeFromCartApi = (equipmentId: number) => {
     const itemId = planItemIds[equipmentId];
-    if (planId === null || itemId === undefined) return;
+    if (planId === null || itemId === undefined) {
+      // Not yet synced to the backend (added locally while no address was saved yet) —
+      // nothing to DELETE server-side, just drop it from the local cart.
+      setCart((prev) => prev.filter((c) => c.equipment.id !== equipmentId));
+      return;
+    }
     rentalPlanCartApi
       .removeItem(planId, itemId)
       .then((plan) => {
@@ -479,7 +462,9 @@ export function CustomerPortal({
             // Best-effort — the plan is empty either way, and "Cancel rental plan" in the
             // cart drawer is still available as a manual fallback if this call fails.
           });
-          setCart([]);
+          // Keep any still-unsynced local items (not in the plan the backend just emptied)
+          // rather than wiping the whole cart — they were never part of this plan.
+          setCart((prev) => prev.filter((c) => !(c.equipment.id in planItemIds)));
           setPlanItemIds({});
           setPlanId(null);
           return;
