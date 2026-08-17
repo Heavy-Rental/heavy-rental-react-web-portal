@@ -392,7 +392,10 @@ export function EquipmentDetailPage({
             <div className="flex flex-col gap-3 sticky top-20">
               <button
                 disabled={
-                  !detailItem.available || !sharedStartDate || !sharedEndDate
+                  inCart ||
+                  !detailItem.available ||
+                  !sharedStartDate ||
+                  !sharedEndDate
                 }
                 onClick={() => {
                   if (sharedStartDate && sharedEndDate) {
@@ -400,13 +403,15 @@ export function EquipmentDetailPage({
                   }
                 }}
                 title={
-                  !sharedStartDate || !sharedEndDate
-                    ? "Set your dates in the bar above first"
-                    : undefined
+                  inCart
+                    ? "Already in your rental plan"
+                    : !sharedStartDate || !sharedEndDate
+                      ? "Set your dates in the bar above first"
+                      : undefined
                 }
                 className="w-full flex items-center justify-center gap-2 py-4 bg-primary text-primary-foreground text-sm font-black tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Select
+                {inCart ? "Added" : "Select"}
               </button>
               {liveAvailable === false && (
                 <p className="text-xs text-center text-amber-400">
