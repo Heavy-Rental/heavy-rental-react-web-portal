@@ -4,7 +4,7 @@
 |-------|--------|
 | **Implements** | [`postal-code-validation.md`](./postal-code-validation.md) — the Spring team's handoff contract for `GET /api/postalCodes/{postalCode}` |
 | **Builds on** | [`../Spec-site-address-postal-code-validation.md`](../Spec-site-address-postal-code-validation.md) — the earlier, client-side-only auto-derivation work (now marked historical/superseded there) that gave `SiteAddressModal` its `extractPostalCode`/OneMap-lookup foundation; this plan adds the backend-authoritative check on top of it |
-| **Status** | In progress — Sub-tasks 1-3 done (persisted plan, `postalCodeApi` client, `SiteAddressModal` validation wiring); Sub-tasks 4-5 (cart/checkout UX fix) remaining |
+| **Status** | Code complete for all 5 sub-tasks (Sub-tasks 3-5 not yet committed, pending manual review — see per-commit history for what's actually landed). Manual `npm run dev:api` verification (below) still outstanding. |
 | **Branch** | `HR-158-postal-code-validation-via-one-map-api-and-distance-calculation` |
 
 This document is the frontend-side execution plan for consuming the new endpoint, plus a related UX bug fix
@@ -190,6 +190,26 @@ add/remove regardless of whether a server-side `RentalPlan` exists yet. `planIte
 
 Tests: adding an item with no address set shows it in the cart immediately (API mode); removing an unsynced
 item works without any API call; saving an address afterward flushes multiple queued items in one go.
+
+**Implementation note:** these are covered by manual verification (below), not automated tests —
+`CustomerPortal.tsx` has no existing test scaffold of any kind (unlike the smaller checkout components, which
+all have focused test files), and building one from scratch to cover this sub-task would be a materially
+larger, separate effort than the code change itself. Decided with the user 2026-08-17: manual `npm run dev:api`
+verification is sufficient for this sub-task; a dedicated `CustomerPortal.test.tsx` harness is a possible
+future follow-up, not part of this plan.
+
+**Additional correctness fix beyond the original plan, required by this change:** `removeFromCartApi`'s
+"plan emptied → cancel it" branch used to `setCart([])` unconditionally. Once items can be local-only/unsynced
+(this sub-task), that would wrongly wipe out any such items still sitting in `cart` alongside the
+now-removed-and-cancelled synced ones. Fixed to `setCart((prev) => prev.filter((c) => !(c.equipment.id in
+planItemIds)))` instead, keeping anything that was never part of the cancelled plan. `syncCartItems`/
+`syncUnsyncedCartItems` were also written to take the items-to-sync and date range as explicit arguments
+rather than reading `cart`/`siteAddress` from closure, to avoid a stale-closure bug: calling them synchronously
+right after `setCart(...)` (or, for the address-save case, right after `setSiteAddress(...)`) in the same
+function would otherwise still see the pre-update value until the next render. For the address-save case
+specifically, this is why `syncUnsyncedCartItems()` is invoked from a `useEffect` keyed on `siteAddress`
+(declared right after `addToCart`) rather than called directly inside `SiteAddressModal`'s `onSave` handler —
+the effect body runs after the state update commits, so it sees the fresh `siteAddress`/`cart`/`planItemIds`.
 
 ## Sub-task 5 (commit 5): Force the address modal at checkout — always, even to re-confirm
 

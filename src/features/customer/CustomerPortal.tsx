@@ -115,6 +115,10 @@ export function CustomerPortal({
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
   const [siteAddressPrompted, setSiteAddressPrompted] = useState(false);
+  // Set when "Proceed to Deposit" opened the address modal to force a fresh confirm/edit
+  // (checkout always reopens it, even over an already-saved address) — onSave resumes
+  // checkout once Save succeeds; closing/skipping instead just abandons the attempt.
+  const [checkoutPending, setCheckoutPending] = useState(false);
 
   const equipmentRes = useApiResource(
     (signal) => assetApi.list(sharedStartDate && sharedEndDate ? { startDate: sharedStartDate, endDate: sharedEndDate } : undefined, signal),
@@ -754,12 +758,24 @@ export function CustomerPortal({
           <SiteAddressModal
             address={siteAddress}
             notes={deliveryNotes}
-            onClose={() => setSiteAddressModalOpen(false)}
+            onClose={() => {
+              setSiteAddressModalOpen(false);
+              setCheckoutPending(false);
+            }}
             onSave={(address, postalCode, notes) => {
               setSiteAddress(address);
               setSitePostalCode(postalCode);
               setDeliveryNotes(notes);
               setSiteAddressModalOpen(false);
+              // Save is already hard-gated on postal-code validation passing (in API
+              // mode) — reaching here means the address just got a fresh, confirmed
+              // pass, so a checkout attempt waiting on this can proceed straight away.
+              if (checkoutPending) {
+                setCheckoutPending(false);
+                setCartOpen(false);
+                setCheckoutOpen(true);
+                setPaymentIntentId(generateFakePaymentIntentId());
+              }
             }}
           />
         )}
@@ -874,9 +890,11 @@ export function CustomerPortal({
               totalCost={totalCost}
               onCancelPlan={isApiMode && planId !== null ? cancelPlanApi : undefined}
               onCheckout={() => {
-                setCartOpen(false);
-                setCheckoutOpen(true);
-                setPaymentIntentId(generateFakePaymentIntentId());
+                // Always reopen the address modal — even over an already-saved address —
+                // so the customer explicitly confirms or edits it, with a fresh validation
+                // pass, before checkout proceeds. onSave above resumes from here.
+                setCheckoutPending(true);
+                setSiteAddressModalOpen(true);
               }}
               onClose={() => setCartOpen(false)}
             />
