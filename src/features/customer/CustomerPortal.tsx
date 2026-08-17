@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { User, Upload, ShoppingCart, LogOut, CheckCircle, X } from "lucide-react";
 import { CustomerOnboarding } from "../browse/CustomerOnboarding";
 import { equipmentImageSrc } from "../browse/equipmentImageSrc";
-import type { Asset as EquipmentItem, OnboardingMode } from "../../app/types";
+import type { Asset as EquipmentItem, OnboardingMode, RentalPlanResponse } from "../../app/types";
 import {
   assetApi,
   depotApi,
@@ -87,6 +87,15 @@ export function CustomerPortal({
   // with the async call's result; otherwise both clicks read `cart` as not-yet-containing
   // the item and both POST, producing two RentalPlanItems for the same asset.
   const pendingAddIds = useRef<Set<number>>(new Set());
+  // The in-flight POST /rentalPlans/{id}/quote promise, if any — shared between
+  // DepositCheckout's display-only quote (onGetQuote, fires on mount) and
+  // onBeginPayment's pre-charge re-quote (fires on "Continue to Payment"), which can
+  // legitimately overlap since dynamic pricing can take up to ~20s. quote() isn't
+  // idempotent under concurrent calls: it's a read-modify-write against the plan's
+  // @Version, so two calls racing to save() both throw a 409 (ObjectOptimisticLockingFailure) — see specification/features/postal-code-validation-execution-plan.md.
+  // Deduping to one shared promise means both callers get the same resolved plan
+  // instead of one of them failing outright.
+  const quoteInFlight = useRef<Promise<RentalPlanResponse> | null>(null);
   const [activeFilter, setActiveFilter] = useState("All");
   const [detailItem, setDetailItem] = useState<EquipmentItem | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -230,6 +239,25 @@ export function CustomerPortal({
       ...(resolvedSiteAddress.trim() ? { siteAddress: resolvedSiteAddress } : {}),
     });
     return created.id;
+  };
+
+  // API mode: POST /rentalPlans/{id}/quote, deduped against a concurrent in-flight call
+  // for the same plan. quote() isn't safe to call twice at once — it's a short read, a
+  // slow un-transacted pricing call (up to ~20s), then a short write that reloads the
+  // plan and saves against its current @Version; two calls racing to that final save()
+  // both throw, and whichever loses gets back a 409 the frontend has no business
+  // surfacing as a checkout failure. DepositCheckout's display-only quote (on mount) and
+  // onBeginPayment's pre-charge re-quote (on "Continue to Payment") can easily overlap
+  // given how long dynamic pricing can take, so every caller goes through this instead
+  // of calling rentalPlanCartApi.quote() directly — a call already in flight is awaited
+  // and shared rather than duplicated; once it settles, the next call starts a fresh one.
+  const quoteRentalPlan = (id: number): Promise<RentalPlanResponse> => {
+    if (!quoteInFlight.current) {
+      quoteInFlight.current = rentalPlanCartApi.quote(id).finally(() => {
+        quoteInFlight.current = null;
+      });
+    }
+    return quoteInFlight.current;
   };
 
   // API mode: does the actual RentalPlan sync for a set of items. Takes the items/date
@@ -937,7 +965,7 @@ export function CustomerPortal({
           onClose={() => setCheckoutOpen(false)}
           onGetQuote={
             isApiMode && planId !== null
-              ? () => rentalPlanCartApi.quote(planId)
+              ? () => quoteRentalPlan(planId)
               : undefined
           }
           onBeginPayment={async () => {
@@ -954,12 +982,15 @@ export function CustomerPortal({
             }
             // Re-quote immediately before converting the plan (re-quoting a QUOTED plan is
             // explicitly allowed — it's the stale-quote recovery path) so the plan is
-            // guaranteed QUOTED and the amount about to be charged is the freshest one,
-            // regardless of whether DepositCheckout's own display-only quote (onGetQuote
-            // above) has resolved yet. This is what keeps the charged amount from silently
-            // reverting to flat base-rate math once dynamic pricing is live
-            // (specification/frontend-handoff.md).
-            await rentalPlanCartApi.quote(planId);
+            // guaranteed QUOTED and the amount about to be charged is the freshest one.
+            // Goes through quoteRentalPlan(), not rentalPlanCartApi.quote() directly, so if
+            // DepositCheckout's own display-only quote (onGetQuote above) is still in
+            // flight, this awaits that same call instead of firing a concurrent one that
+            // would 409 — this is what keeps the charged amount from silently reverting to
+            // flat base-rate math once dynamic pricing is live (specification/frontend-handoff.md),
+            // and what keeps "Continue to Payment" from ever failing on a lock conflict
+            // that was never a real conflict, just two legitimate callers.
+            await quoteRentalPlan(planId);
             const booking = await createBookingFromPlan({
               rentalPlanId: planId,
               siteAddress,

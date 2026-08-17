@@ -146,6 +146,45 @@ describe("SiteAddressModal — API mode postal-code validation", () => {
     vi.unstubAllEnvs();
   });
 
+  it("keeps Save disabled while OneMap is still resolving a postal code, not just while the backend is checking one already in hand", async () => {
+    // Regression test: found in manual verification — clicking Save/Confirm while OneMap's
+    // lookup was still in flight (postalCode still "") went through with a blank postal
+    // code and got wrongly rejected as "no postal code found", instead of the button
+    // simply staying disabled a moment longer until the lookup actually settled.
+    const user = userEvent.setup();
+    let resolveOneMap!: (value: unknown) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (typeof url === "string" && url.startsWith("/api/postalCodes/")) {
+          return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
+        }
+        return new Promise((resolve) => {
+          resolveOneMap = resolve;
+        });
+      }),
+    );
+    const onSave = vi.fn();
+    render(
+      <SiteAddressModal address="" notes="" onClose={vi.fn()} onSave={onSave} />,
+    );
+    await user.type(
+      screen.getByPlaceholderText(/jurong port road/i),
+      "20 Jurong Port Road",
+    );
+    // Disabled the moment lookupStatus reads "loading" — before the debounced fetch to
+    // OneMap has even fired yet, let alone resolved.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /verifying/i })).toBeDisabled(),
+    );
+    // Now wait for the debounced fetch itself to actually go out before resolving it.
+    await waitFor(() => expect(resolveOneMap).toBeDefined());
+    resolveOneMap({ ok: true, json: async () => ({ results: [{ POSTAL: "619094" }] }) });
+    await waitFor(() =>
+      expect(screen.getByDisplayValue("619094")).toBeInTheDocument(),
+    );
+  });
+
   it("blocks Save and shows the backend's message when the postal code resolves INVALID", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -264,7 +303,12 @@ describe("SiteAddressModal — API mode postal-code validation", () => {
       />,
     );
     // Button reads "Confirm Address" (not "Save Address") since this modal opened with
-    // an existing address already passed in.
+    // an existing address already passed in — and stays disabled until the OneMap lookup
+    // settles (to "miss", since no results came back), not just while a postal code is
+    // already in hand and being backend-validated.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /confirm address/i })).not.toBeDisabled(),
+    );
     await user.click(screen.getByRole("button", { name: /confirm address/i }));
     expect(
       screen.getByText(/couldn't find a singapore postal code for this address/i),

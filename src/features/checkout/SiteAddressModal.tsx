@@ -121,7 +121,15 @@ export function SiteAddressModal({
 
   const postalResolved =
     validation !== null && validation.postalCode === postalCode && validation.status !== "checking";
-  const postalChecking = isApiMode && isSingaporePostal(postalCode) && !postalResolved;
+  // Covers two distinct async phases: OneMap still resolving a postal code from the typed
+  // address (lookupStatus "loading" — postalCode is still "" at this point, so the backend
+  // check below never even starts yet), and the backend still confirming a resolved code.
+  // Bug found in manual testing: without the lookupStatus check, clicking Save/Confirm while
+  // OneMap was still mid-lookup went through with an empty postalCode and got wrongly
+  // rejected as "no postal code found" instead of just staying disabled a moment longer.
+  const postalChecking =
+    isApiMode &&
+    (lookupStatus === "loading" || (isSingaporePostal(postalCode) && !postalResolved));
 
   const handleSave = () => {
     if (!form.address.trim()) {

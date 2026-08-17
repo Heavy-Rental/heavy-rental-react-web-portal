@@ -404,3 +404,33 @@ is manual-verification territory (below), not new automated coverage. `api.test.
     afterward reflects a fresh quote (not the stale pre-edit one) once you proceed to checkout again —
     this is the manual check for the sequencing note in Sub-task 8.3.
 - `npm run dev:mock`: unaffected — mock mode never touches `rentalPlanCartApi` at all.
+
+## Bugs found during Phase 2 manual verification (fixed, not their own numbered sub-tasks)
+
+Two real issues surfaced while manually verifying Phase 2 end-to-end (`npm run dev:api`, automated browser
+repro to isolate each), both fixed directly rather than filed as separate future sub-tasks since they're
+small, self-contained, and in the same files this phase already touches.
+
+**1. `SiteAddressModal`'s Save/Confirm button wasn't disabled while OneMap was still resolving a postal
+code.** `postalChecking` only accounted for the backend-validation phase (`isSingaporePostal(postalCode) &&
+!postalResolved`) — if the address required an OneMap round-trip (no digits typed inline) and the user
+clicked Save/Confirm before that lookup settled, `postalCode` was still `""`, and `handleSave` rejected it
+with "Couldn't find a Singapore postal code for this address" — a confusing false negative for an address
+that was often about to resolve successfully a moment later. Fixed by also disabling while `lookupStatus ===
+"loading"`. Covered by a new regression test in `SiteAddressModal.test.tsx`.
+
+**2. `POST /rentalPlans/{id}/quote` could be called twice concurrently for the same plan, and one call would
+409.** Confirmed by the Spring team (not a server bug — their optimistic-lock `@Version` check working as
+designed; root cause is client-side duplication): `quote()` is split server-side into a short read, an
+un-transacted pricing call that can take up to ~20s, then a short write that reloads the plan and saves
+against its current `@Version` — two concurrent calls both attempting that final save race, and whichever
+loses gets `409 {"error":"conflict",...}`. This repo has two independent call sites that can legitimately
+overlap given that ~20s window: `DepositCheckout`'s own mount-time display-only quote (`onGetQuote`, for the
+"Smart Priced" badge) and `onBeginPayment`'s pre-charge re-quote (fired on "Continue to Payment"). If the
+`onBeginPayment` call was the one that lost the race, `handleContinue` would surface the 409 as a checkout
+failure — not just a cosmetic issue. Fixed with a shared in-flight-dedup wrapper,
+`quoteRentalPlan()` (`CustomerPortal.tsx`, backed by a `useRef<Promise<RentalPlanResponse> | null>`) — every
+caller goes through it instead of calling `rentalPlanCartApi.quote()` directly; a call already in flight is
+awaited and shared instead of duplicated, and a fresh one only starts once the previous has settled. Verified
+live: before the fix, every checkout attempt showed one `200` and one `409` on `/quote` (order
+nondeterministic, matching the race); after, exactly one call.
