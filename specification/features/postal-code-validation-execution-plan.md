@@ -3,6 +3,7 @@
 | Field | Value |
 |-------|--------|
 | **Implements** | [`postal-code-validation.md`](./postal-code-validation.md) — the Spring team's handoff contract for `GET /api/postalCodes/{postalCode}` |
+| **Builds on** | [`../Spec-site-address-postal-code-validation.md`](../Spec-site-address-postal-code-validation.md) — the earlier, client-side-only auto-derivation work (now marked historical/superseded there) that gave `SiteAddressModal` its `extractPostalCode`/OneMap-lookup foundation; this plan adds the backend-authoritative check on top of it |
 | **Status** | In progress — Sub-tasks 1-3 done (persisted plan, `postalCodeApi` client, `SiteAddressModal` validation wiring); Sub-tasks 4-5 (cart/checkout UX fix) remaining |
 | **Branch** | `HR-158-postal-code-validation-via-one-map-api-and-distance-calculation` |
 
