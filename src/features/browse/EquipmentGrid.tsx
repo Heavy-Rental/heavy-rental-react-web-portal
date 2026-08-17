@@ -170,7 +170,10 @@ export function EquipmentGrid({
                   <div className="flex flex-col gap-1.5 items-end">
                     <button
                       disabled={
-                        !item.available || !sharedStartDate || !sharedEndDate
+                        inCart ||
+                        !item.available ||
+                        !sharedStartDate ||
+                        !sharedEndDate
                       }
                       onClick={() =>
                         sharedStartDate &&
@@ -182,13 +185,15 @@ export function EquipmentGrid({
                         })
                       }
                       title={
-                        !sharedStartDate || !sharedEndDate
-                          ? "Set your dates in the bar above first"
-                          : undefined
+                        inCart
+                          ? "Already in your rental plan"
+                          : !sharedStartDate || !sharedEndDate
+                            ? "Set your dates in the bar above first"
+                            : undefined
                       }
                       className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      Select
+                      {inCart ? "Added" : "Select"}
                     </button>
                     <button
                       onClick={() => onSelectDetail(item)}
