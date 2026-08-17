@@ -48,6 +48,16 @@ import { RentalPlanDetail } from "../checkout/RentalPlanDetail";
 import { CustomerProfilePage } from "./CustomerProfilePage";
 import { EquipmentDetailPage } from "./EquipmentDetailPage";
 
+// Combines a plain street address with its resolved postal code into the single string
+// the backend expects (must end in the 6-digit postal code whenever siteAddress is
+// provided at all) — shared between plan creation and the address-update PATCH so both
+// build the same value from the same two inputs.
+function resolveSiteAddress(address: string, postalCode: string): string {
+  return postalCode && !address.includes(postalCode)
+    ? `${address}, ${postalCode}`
+    : address;
+}
+
 export function CustomerPortal({
   userName,
   userId,
@@ -210,44 +220,30 @@ export function CustomerPortal({
       }
       return active.id;
     }
-    // siteAddress is required to create a plan (RentalPlanCreateRequest.siteAddress is
-    // @NotBlank + must end in a 6-digit postal code) — block and prompt for it rather
-    // than sending a blank value the server would reject as validation_failed.
-    if (!siteAddress.trim()) {
-      setSiteAddressModalOpen(true);
-      setCartDateError(
-        "Add a delivery address before adding equipment to your rental plan.",
-      );
-      return null;
-    }
-    // The user only ever types/sees the plain street address (e.g. "20 Jurong Port
-    // Road") — sitePostalCode is resolved separately (typed inline or via OneMap
-    // lookup, see SiteAddressModal) and appended here so the combined string still
-    // satisfies the backend constraint above, without forcing the user to type it.
-    const resolvedSiteAddress =
-      sitePostalCode && !siteAddress.includes(sitePostalCode)
-        ? `${siteAddress}, ${sitePostalCode}`
-        : siteAddress;
+    // siteAddress is optional at creation (specification/features/spring contract/
+    // rental-plan-site-address.md) — "Skip for now" creates the plan with no address at
+    // all rather than blocking.
+    const resolvedSiteAddress = resolveSiteAddress(siteAddress, sitePostalCode);
     const created = await rentalPlanCartApi.create({
       startDate,
       endDate,
-      siteAddress: resolvedSiteAddress,
+      ...(resolvedSiteAddress.trim() ? { siteAddress: resolvedSiteAddress } : {}),
     });
     return created.id;
   };
 
-  // API mode: does the actual RentalPlan sync for a set of items known not to be synced
-  // yet. Takes the items/date range explicitly rather than reading `cart` state, so callers
-  // that just called setCart(...) in the same tick aren't caught by React's
-  // stale-closure-until-next-render — `cart` here would still be the pre-update value
-  // otherwise. No-ops if there's no saved address yet — items just stay local/unsynced
-  // until syncUnsyncedCartItems() (below) flushes them once one is saved.
+  // API mode: does the actual RentalPlan sync for a set of items. Takes the items/date
+  // range explicitly rather than reading `cart` state, so callers that just called
+  // setCart(...) in the same tick aren't caught by React's stale-closure-until-next-render
+  // — `cart` here would still be the pre-update value otherwise. siteAddress is optional
+  // now (spring contract/rental-plan-site-address.md), so this always attempts to sync
+  // immediately — there's no more "wait for an address" phase to gate on.
   const syncCartItems = async (
     itemsToSync: CartItem[],
     startDate: string,
     endDate: string,
   ) => {
-    if (!isApiMode || !siteAddress.trim() || itemsToSync.length === 0) return;
+    if (!isApiMode || itemsToSync.length === 0) return;
     try {
       const id = await ensureApiRentalPlanId(startDate, endDate);
       if (id === null) return;
@@ -266,20 +262,6 @@ export function CustomerPortal({
         err instanceof Error ? err.message : "Couldn't sync your rental plan.",
       );
     }
-  };
-
-  // API mode: flushes whatever's sitting in `cart` but isn't yet reflected in
-  // `planItemIds` — i.e. items added locally while no address existed yet (e.g. after
-  // "Skip for now"). Called once a valid address is saved (SiteAddressModal's onSave).
-  // Safe to read live `cart`/`planItemIds` state here, since onSave fires as its own
-  // event, well after any earlier setCart(...) calls from add-to-cart actions have
-  // already settled.
-  const syncUnsyncedCartItems = () => {
-    if (!isApiMode) return;
-    const unsynced = cart.filter((c) => !(c.equipment.id in planItemIds));
-    if (unsynced.length === 0) return;
-    const { startDate, endDate } = cartDateRange(cart);
-    void syncCartItems(unsynced, startDate, endDate);
   };
 
   // Auto-add AI-recommended equipment ("Add All to Rental Plan") to the cart the moment both
@@ -366,23 +348,6 @@ export function CustomerPortal({
       pendingAddIds.current.delete(item.equipment.id);
     });
   };
-
-  // Flushes any cart items still awaiting sync the moment siteAddress transitions to a
-  // saved value (SiteAddressModal's onSave, e.g. after "Skip for now" was used earlier).
-  // Deliberately a useEffect rather than a direct call from onSave's handler — onSave's
-  // setSiteAddress(...) doesn't take effect until the next render, so calling
-  // syncUnsyncedCartItems() synchronously there would still read the pre-update
-  // siteAddress/cart closure and incorrectly no-op. Declared above the onboarding/loading/
-  // error early returns below so this hook always runs in the same order across renders
-  // (react-hooks/rules-of-hooks).
-  useEffect(() => {
-    // Fire-and-forget — syncUnsyncedCartItems() only *schedules* the async sync
-    // (syncCartItems); any setState it triggers happens after the async boundary, not
-    // synchronously within this effect body.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    syncUnsyncedCartItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteAddress]);
 
   const applyQuoteDatesToBar = (quoteDates?: QuoteDateRange) => {
     if (!quoteDates) return;
@@ -794,18 +759,48 @@ export function CustomerPortal({
               setCheckoutPending(false);
             }}
             onSave={(address, postalCode, notes) => {
+              const resolvedAddress = resolveSiteAddress(address, postalCode);
+              const previousResolvedAddress = resolveSiteAddress(siteAddress, sitePostalCode);
               setSiteAddress(address);
               setSitePostalCode(postalCode);
               setDeliveryNotes(notes);
               setSiteAddressModalOpen(false);
               // Save is already hard-gated on postal-code validation passing (in API
               // mode) — reaching here means the address just got a fresh, confirmed
-              // pass, so a checkout attempt waiting on this can proceed straight away.
-              if (checkoutPending) {
-                setCheckoutPending(false);
-                setCartOpen(false);
-                setCheckoutOpen(true);
-                setPaymentIntentId(generateFakePaymentIntentId());
+              // pass, so a checkout attempt waiting on this can proceed straight away
+              // once any address update below has settled.
+              const resumeCheckout = () => {
+                if (checkoutPending) {
+                  setCheckoutPending(false);
+                  setCartOpen(false);
+                  setCheckoutOpen(true);
+                  setPaymentIntentId(generateFakePaymentIntentId());
+                }
+              };
+              // Only PATCH if there's already a plan to attach it to, and the resolved
+              // address actually changed — an unchanged re-confirm (e.g. clicking
+              // "Confirm Address" at checkout without editing anything) shouldn't
+              // needlessly revert a QUOTED plan to DRAFT (spring contract/
+              // rental-plan-site-address.md's revert-on-PATCH rule). Awaited before
+              // resuming checkout so a subsequent quote() call (in onBeginPayment) is
+              // guaranteed to run after this, never before — patching after quoting
+              // would silently discard the fresh quote.
+              if (planId !== null && resolvedAddress && resolvedAddress !== previousResolvedAddress) {
+                void rentalPlanCartApi
+                  .updateSiteAddress(planId, resolvedAddress)
+                  .then((plan) => {
+                    setPlanId(
+                      plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id,
+                    );
+                  })
+                  .catch((err) => {
+                    setCartDateError(
+                      err instanceof Error ? err.message : "Couldn't update your delivery address.",
+                    );
+                  })
+                  .finally(resumeCheckout);
+              } else {
+                resumeCheckout();
               }
             }}
           />
