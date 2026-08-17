@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { stubEquipment } from "../../test/equipment";
 import { CartDrawer } from "./CartDrawer";
@@ -67,7 +68,7 @@ describe("CartDrawer", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("disables Proceed and highlights Add when items exist without an address", () => {
+  it("highlights Add when items exist without an address, but Proceed stays clickable — checkout itself forces the address modal", () => {
     render(
       <CartDrawer
         cart={[item]}
@@ -80,12 +81,14 @@ describe("CartDrawer", () => {
         onClose={noop}
       />,
     );
-    expect(screen.getByRole("button", { name: /proceed to deposit/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /proceed to deposit/i })).toBeEnabled();
     const add = screen.getByRole("button", { name: /^add$/i });
     expect(add.className).toContain("border-amber-500");
   });
 
-  it("enables Proceed once a delivery address is saved", () => {
+  it("calls onCheckout when Proceed is clicked, regardless of whether an address is already saved", async () => {
+    const onCheckout = vi.fn();
+    const user = userEvent.setup();
     render(
       <CartDrawer
         cart={[item]}
@@ -94,13 +97,16 @@ describe("CartDrawer", () => {
         onEditAddress={noop}
         highlightAddAddress={false}
         totalCost={12180}
-        onCheckout={noop}
+        onCheckout={onCheckout}
         onClose={noop}
       />,
     );
-    expect(screen.getByRole("button", { name: /proceed to deposit/i })).toBeEnabled();
+    const proceed = screen.getByRole("button", { name: /proceed to deposit/i });
+    expect(proceed).toBeEnabled();
     expect(screen.getByRole("button", { name: /^edit$/i }).className).not.toContain(
       "border-amber-500",
     );
+    await user.click(proceed);
+    expect(onCheckout).toHaveBeenCalledTimes(1);
   });
 });

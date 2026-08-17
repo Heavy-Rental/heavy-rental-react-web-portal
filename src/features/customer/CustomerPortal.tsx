@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { User, Upload, ShoppingCart, LogOut, CheckCircle, X } from "lucide-react";
 import { CustomerOnboarding } from "../browse/CustomerOnboarding";
 import { equipmentImageSrc } from "../browse/equipmentImageSrc";
-import type { Asset as EquipmentItem, OnboardingMode } from "../../app/types";
+import type { Asset as EquipmentItem, OnboardingMode, RentalPlanResponse } from "../../app/types";
 import {
   assetApi,
   depotApi,
@@ -48,6 +48,16 @@ import { RentalPlanDetail } from "../checkout/RentalPlanDetail";
 import { CustomerProfilePage } from "./CustomerProfilePage";
 import { EquipmentDetailPage } from "./EquipmentDetailPage";
 
+// Combines a plain street address with its resolved postal code into the single string
+// the backend expects (must end in the 6-digit postal code whenever siteAddress is
+// provided at all) — shared between plan creation and the address-update PATCH so both
+// build the same value from the same two inputs.
+function resolveSiteAddress(address: string, postalCode: string): string {
+  return postalCode && !address.includes(postalCode)
+    ? `${address}, ${postalCode}`
+    : address;
+}
+
 export function CustomerPortal({
   userName,
   userId,
@@ -65,11 +75,6 @@ export function CustomerPortal({
   const [pendingAutoAdd, setPendingAutoAdd] = useState<EquipmentItem[] | null>(
     null,
   );
-  // A single item queued from a card's "Select" button, waiting on the site-address
-  // modal the same way pendingAutoAdd waits for it above — see the retry effect below.
-  const [pendingCartItem, setPendingCartItem] = useState<CartItem | null>(
-    null,
-  );
   const { cart, setCart, cartOpen, setCartOpen } = useCart();
   const isApiMode = import.meta.env.MODE === "api";
   // API mode only: the persisted RentalPlan backing `cart`, and a lookup from
@@ -82,6 +87,15 @@ export function CustomerPortal({
   // with the async call's result; otherwise both clicks read `cart` as not-yet-containing
   // the item and both POST, producing two RentalPlanItems for the same asset.
   const pendingAddIds = useRef<Set<number>>(new Set());
+  // The in-flight POST /rentalPlans/{id}/quote promise, if any — shared between
+  // DepositCheckout's display-only quote (onGetQuote, fires on mount) and
+  // onBeginPayment's pre-charge re-quote (fires on "Continue to Payment"), which can
+  // legitimately overlap since dynamic pricing can take up to ~20s. quote() isn't
+  // idempotent under concurrent calls: it's a read-modify-write against the plan's
+  // @Version, so two calls racing to save() both throw a 409 (ObjectOptimisticLockingFailure) — see specification/features/postal-code-validation-execution-plan.md.
+  // Deduping to one shared promise means both callers get the same resolved plan
+  // instead of one of them failing outright.
+  const quoteInFlight = useRef<Promise<RentalPlanResponse> | null>(null);
   const [activeFilter, setActiveFilter] = useState("All");
   const [detailItem, setDetailItem] = useState<EquipmentItem | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -125,6 +139,10 @@ export function CustomerPortal({
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
   const [siteAddressPrompted, setSiteAddressPrompted] = useState(false);
+  // Set when "Proceed to Deposit" opened the address modal to force a fresh confirm/edit
+  // (checkout always reopens it, even over an already-saved address) — onSave resumes
+  // checkout once Save succeeds; closing/skipping instead just abandons the attempt.
+  const [checkoutPending, setCheckoutPending] = useState(false);
 
   const equipmentRes = useApiResource(
     (signal) => assetApi.list(sharedStartDate && sharedEndDate ? { startDate: sharedStartDate, endDate: sharedEndDate } : undefined, signal),
@@ -211,30 +229,67 @@ export function CustomerPortal({
       }
       return active.id;
     }
-    // siteAddress is required to create a plan (RentalPlanCreateRequest.siteAddress is
-    // @NotBlank + must end in a 6-digit postal code) — block and prompt for it rather
-    // than sending a blank value the server would reject as validation_failed.
-    if (!siteAddress.trim()) {
-      setSiteAddressModalOpen(true);
-      setCartDateError(
-        "Add a delivery address before adding equipment to your rental plan.",
-      );
-      return null;
-    }
-    // The user only ever types/sees the plain street address (e.g. "20 Jurong Port
-    // Road") — sitePostalCode is resolved separately (typed inline or via OneMap
-    // lookup, see SiteAddressModal) and appended here so the combined string still
-    // satisfies the backend constraint above, without forcing the user to type it.
-    const resolvedSiteAddress =
-      sitePostalCode && !siteAddress.includes(sitePostalCode)
-        ? `${siteAddress}, ${sitePostalCode}`
-        : siteAddress;
+    // siteAddress is optional at creation (specification/features/spring contract/
+    // rental-plan-site-address.md) — "Skip for now" creates the plan with no address at
+    // all rather than blocking.
+    const resolvedSiteAddress = resolveSiteAddress(siteAddress, sitePostalCode);
     const created = await rentalPlanCartApi.create({
       startDate,
       endDate,
-      siteAddress: resolvedSiteAddress,
+      ...(resolvedSiteAddress.trim() ? { siteAddress: resolvedSiteAddress } : {}),
     });
     return created.id;
+  };
+
+  // API mode: POST /rentalPlans/{id}/quote, deduped against a concurrent in-flight call
+  // for the same plan. quote() isn't safe to call twice at once — it's a short read, a
+  // slow un-transacted pricing call (up to ~20s), then a short write that reloads the
+  // plan and saves against its current @Version; two calls racing to that final save()
+  // both throw, and whichever loses gets back a 409 the frontend has no business
+  // surfacing as a checkout failure. DepositCheckout's display-only quote (on mount) and
+  // onBeginPayment's pre-charge re-quote (on "Continue to Payment") can easily overlap
+  // given how long dynamic pricing can take, so every caller goes through this instead
+  // of calling rentalPlanCartApi.quote() directly — a call already in flight is awaited
+  // and shared rather than duplicated; once it settles, the next call starts a fresh one.
+  const quoteRentalPlan = (id: number): Promise<RentalPlanResponse> => {
+    if (!quoteInFlight.current) {
+      quoteInFlight.current = rentalPlanCartApi.quote(id).finally(() => {
+        quoteInFlight.current = null;
+      });
+    }
+    return quoteInFlight.current;
+  };
+
+  // API mode: does the actual RentalPlan sync for a set of items. Takes the items/date
+  // range explicitly rather than reading `cart` state, so callers that just called
+  // setCart(...) in the same tick aren't caught by React's stale-closure-until-next-render
+  // — `cart` here would still be the pre-update value otherwise. siteAddress is optional
+  // now (spring contract/rental-plan-site-address.md), so this always attempts to sync
+  // immediately — there's no more "wait for an address" phase to gate on.
+  const syncCartItems = async (
+    itemsToSync: CartItem[],
+    startDate: string,
+    endDate: string,
+  ) => {
+    if (!isApiMode || itemsToSync.length === 0) return;
+    try {
+      const id = await ensureApiRentalPlanId(startDate, endDate);
+      if (id === null) return;
+      let plan = null;
+      for (const c of itemsToSync) {
+        plan = await rentalPlanCartApi.addItem(id, c.equipment.id);
+      }
+      if (plan) {
+        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
+        setCart(synced);
+        setPlanItemIds(itemIds);
+        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
+      }
+    } catch (err) {
+      setCartDateError(
+        err instanceof Error ? err.message : "Couldn't sync your rental plan.",
+      );
+    }
   };
 
   // Auto-add AI-recommended equipment ("Add All to Rental Plan") to the cart the moment both
@@ -250,60 +305,31 @@ export function CustomerPortal({
     const startDate = sharedStartDate,
       endDate = d;
     const toAdd = pendingAutoAdd;
+    setPendingAutoAdd(null);
     setCartOpen(true);
     setCartDateError(null);
     if (!siteAddressPrompted) {
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
-    if (!isApiMode) {
-      setPendingAutoAdd(null);
-      setCart((prev) => {
-        const merged = [...prev];
-        for (const eq of toAdd) {
-          const idx = merged.findIndex((c) => c.equipment.id === eq.id);
-          const item: CartItem = { equipment: eq, startDate, endDate };
-          if (idx >= 0) merged[idx] = item;
-          else merged.push(item);
-        }
-        return merged;
-      });
-      return;
-    }
-    // API mode needs a saved delivery address before the rental plan can be created
-    // server-side — keep these items queued (pendingAutoAdd stays set, not cleared)
-    // and prompt for it, instead of attempting the doomed API call in this same
-    // click. The retry effect below re-invokes this handler once the address saves.
-    if (!siteAddress.trim()) {
-      setSiteAddressModalOpen(true);
-      return;
-    }
-    setPendingAutoAdd(null);
-    void (async () => {
-      try {
-        const id = await ensureApiRentalPlanId(startDate, endDate);
-        if (id === null) return;
-        let plan = null;
-        for (const eq of toAdd) {
-          if (cart.some((c) => c.equipment.id === eq.id)) continue;
-          plan = await rentalPlanCartApi.addItem(id, eq.id);
-        }
-        if (plan) {
-          const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
-          setCart(synced);
-          setPlanItemIds(itemIds);
-          setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
-        } else {
-          setPlanId(id);
-        }
-      } catch (err) {
-        setCartDateError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add those items to your rental plan.",
-        );
+    // Always update the local cart immediately, in both modes — no address required up
+    // front. In API mode, if an address is already saved, sync straight away; otherwise
+    // these items stay local-only until syncUnsyncedCartItems() flushes them later.
+    setCart((prev) => {
+      const merged = [...prev];
+      for (const eq of toAdd) {
+        const idx = merged.findIndex((c) => c.equipment.id === eq.id);
+        const item: CartItem = { equipment: eq, startDate, endDate };
+        if (idx >= 0) merged[idx] = item;
+        else merged.push(item);
       }
-    })();
+      return merged;
+    });
+    void syncCartItems(
+      toAdd.map((eq) => ({ equipment: eq, startDate, endDate })),
+      startDate,
+      endDate,
+    );
   };
 
   const addToCart = (item: CartItem) => {
@@ -334,69 +360,22 @@ export function CustomerPortal({
       setSiteAddressPrompted(true);
       setSiteAddressModalOpen(true);
     }
-    if (!isApiMode) {
-      setCart((prev) => [
-        ...prev.filter((c) => c.equipment.id !== item.equipment.id),
-        item,
-      ]);
-      return;
-    }
-    // API mode needs a saved delivery address before the rental plan can be created
-    // server-side — queue this item and prompt for it, instead of attempting the
-    // doomed API call in this same click. The retry effect below re-adds it once
-    // the address saves.
-    if (!siteAddress.trim()) {
-      setSiteAddressModalOpen(true);
-      setPendingCartItem(item);
-      return;
-    }
+    // Always update the local cart immediately, in both modes — no address required up
+    // front. In API mode, if an address is already saved, sync straight away; otherwise
+    // this item stays local-only until syncUnsyncedCartItems() flushes it later.
+    setCart((prev) => [
+      ...prev.filter((c) => c.equipment.id !== item.equipment.id),
+      item,
+    ]);
+    // pendingAddIds bookkeeping wraps the sync call (not just the API-mode branch) so the
+    // in-flight guard above covers the mock-mode path too, even though syncCartItems()
+    // itself no-ops there — harmless (it clears on the same microtask), and simpler than
+    // special-casing the guard per mode.
     pendingAddIds.current.add(item.equipment.id);
-    void (async () => {
-      try {
-        const id = await ensureApiRentalPlanId(item.startDate, item.endDate);
-        if (id === null) return;
-        const plan = await rentalPlanCartApi.addItem(id, item.equipment.id);
-        const { cart: synced, itemIds } = cartFromRentalPlan(plan, equipment);
-        setCart(synced);
-        setPlanItemIds(itemIds);
-        setPlanId(plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id);
-      } catch (err) {
-        setCartDateError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add this item to your rental plan.",
-        );
-      } finally {
-        pendingAddIds.current.delete(item.equipment.id);
-      }
-    })();
+    void syncCartItems([item], item.startDate, item.endDate).finally(() => {
+      pendingAddIds.current.delete(item.equipment.id);
+    });
   };
-
-  // Retries whatever addToCart/handleSharedEndDateSelected deferred because siteAddress
-  // was still blank, the moment SiteAddressModal's onSave fills it in — otherwise the item
-  // is never actually added and the earlier "Add a delivery address…" prompt just sits
-  // there looking broken even after the user types an address (nothing else re-triggers
-  // the add). Narrow deps are intentional: this should only fire on the blank→non-blank
-  // transition, not on every pendingCartItem/pendingAutoAdd change. Declared before the
-  // onboarding/loading/error early returns below so this hook always runs in the same
-  // order across renders (react-hooks/rules-of-hooks).
-  useEffect(() => {
-    if (!siteAddress.trim()) return;
-    if (pendingCartItem) {
-      const item = pendingCartItem;
-      // Clearing the queue is inseparable from retrying addToCart(item) below,
-      // which itself synchronizes cart/plan state with the API — there's no
-      // external system to subscribe to other than this component's own
-      // siteAddress transition.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPendingCartItem(null);
-      addToCart(item);
-    }
-    if (pendingAutoAdd && sharedEndDate) {
-      handleSharedEndDateSelected(sharedEndDate);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteAddress]);
 
   const applyQuoteDatesToBar = (quoteDates?: QuoteDateRange) => {
     if (!quoteDates) return;
@@ -492,7 +471,12 @@ export function CustomerPortal({
   // from it directly rather than issuing a follow-up GET.
   const removeFromCartApi = (equipmentId: number) => {
     const itemId = planItemIds[equipmentId];
-    if (planId === null || itemId === undefined) return;
+    if (planId === null || itemId === undefined) {
+      // Not yet synced to the backend (added locally while no address was saved yet) —
+      // nothing to DELETE server-side, just drop it from the local cart.
+      setCart((prev) => prev.filter((c) => c.equipment.id !== equipmentId));
+      return;
+    }
     rentalPlanCartApi
       .removeItem(planId, itemId)
       .then((plan) => {
@@ -506,7 +490,9 @@ export function CustomerPortal({
             // Best-effort — the plan is empty either way, and "Cancel rental plan" in the
             // cart drawer is still available as a manual fallback if this call fails.
           });
-          setCart([]);
+          // Keep any still-unsynced local items (not in the plan the backend just emptied)
+          // rather than wiping the whole cart — they were never part of this plan.
+          setCart((prev) => prev.filter((c) => !(c.equipment.id in planItemIds)));
           setPlanItemIds({});
           setPlanId(null);
           return;
@@ -796,12 +782,54 @@ export function CustomerPortal({
           <SiteAddressModal
             address={siteAddress}
             notes={deliveryNotes}
-            onClose={() => setSiteAddressModalOpen(false)}
+            onClose={() => {
+              setSiteAddressModalOpen(false);
+              setCheckoutPending(false);
+            }}
             onSave={(address, postalCode, notes) => {
+              const resolvedAddress = resolveSiteAddress(address, postalCode);
+              const previousResolvedAddress = resolveSiteAddress(siteAddress, sitePostalCode);
               setSiteAddress(address);
               setSitePostalCode(postalCode);
               setDeliveryNotes(notes);
               setSiteAddressModalOpen(false);
+              // Save is already hard-gated on postal-code validation passing (in API
+              // mode) — reaching here means the address just got a fresh, confirmed
+              // pass, so a checkout attempt waiting on this can proceed straight away
+              // once any address update below has settled.
+              const resumeCheckout = () => {
+                if (checkoutPending) {
+                  setCheckoutPending(false);
+                  setCartOpen(false);
+                  setCheckoutOpen(true);
+                  setPaymentIntentId(generateFakePaymentIntentId());
+                }
+              };
+              // Only PATCH if there's already a plan to attach it to, and the resolved
+              // address actually changed — an unchanged re-confirm (e.g. clicking
+              // "Confirm Address" at checkout without editing anything) shouldn't
+              // needlessly revert a QUOTED plan to DRAFT (spring contract/
+              // rental-plan-site-address.md's revert-on-PATCH rule). Awaited before
+              // resuming checkout so a subsequent quote() call (in onBeginPayment) is
+              // guaranteed to run after this, never before — patching after quoting
+              // would silently discard the fresh quote.
+              if (planId !== null && resolvedAddress && resolvedAddress !== previousResolvedAddress) {
+                void rentalPlanCartApi
+                  .updateSiteAddress(planId, resolvedAddress)
+                  .then((plan) => {
+                    setPlanId(
+                      plan.status === "CONVERTED" || plan.status === "CANCELLED" ? null : plan.id,
+                    );
+                  })
+                  .catch((err) => {
+                    setCartDateError(
+                      err instanceof Error ? err.message : "Couldn't update your delivery address.",
+                    );
+                  })
+                  .finally(resumeCheckout);
+              } else {
+                resumeCheckout();
+              }
             }}
           />
         )}
@@ -916,9 +944,11 @@ export function CustomerPortal({
               totalCost={totalCost}
               onCancelPlan={isApiMode && planId !== null ? cancelPlanApi : undefined}
               onCheckout={() => {
-                setCartOpen(false);
-                setCheckoutOpen(true);
-                setPaymentIntentId(generateFakePaymentIntentId());
+                // Always reopen the address modal — even over an already-saved address —
+                // so the customer explicitly confirms or edits it, with a fresh validation
+                // pass, before checkout proceeds. onSave above resumes from here.
+                setCheckoutPending(true);
+                setSiteAddressModalOpen(true);
               }}
               onClose={() => setCartOpen(false)}
             />
@@ -935,7 +965,7 @@ export function CustomerPortal({
           onClose={() => setCheckoutOpen(false)}
           onGetQuote={
             isApiMode && planId !== null
-              ? () => rentalPlanCartApi.quote(planId)
+              ? () => quoteRentalPlan(planId)
               : undefined
           }
           onBeginPayment={async () => {
@@ -952,12 +982,15 @@ export function CustomerPortal({
             }
             // Re-quote immediately before converting the plan (re-quoting a QUOTED plan is
             // explicitly allowed — it's the stale-quote recovery path) so the plan is
-            // guaranteed QUOTED and the amount about to be charged is the freshest one,
-            // regardless of whether DepositCheckout's own display-only quote (onGetQuote
-            // above) has resolved yet. This is what keeps the charged amount from silently
-            // reverting to flat base-rate math once dynamic pricing is live
-            // (specification/frontend-handoff.md).
-            await rentalPlanCartApi.quote(planId);
+            // guaranteed QUOTED and the amount about to be charged is the freshest one.
+            // Goes through quoteRentalPlan(), not rentalPlanCartApi.quote() directly, so if
+            // DepositCheckout's own display-only quote (onGetQuote above) is still in
+            // flight, this awaits that same call instead of firing a concurrent one that
+            // would 409 — this is what keeps the charged amount from silently reverting to
+            // flat base-rate math once dynamic pricing is live (specification/frontend-handoff.md),
+            // and what keeps "Continue to Payment" from ever failing on a lock conflict
+            // that was never a real conflict, just two legitimate callers.
+            await quoteRentalPlan(planId);
             const booking = await createBookingFromPlan({
               rentalPlanId: planId,
               siteAddress,

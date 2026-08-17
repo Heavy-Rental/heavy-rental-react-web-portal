@@ -28,7 +28,6 @@ export function CartDrawer({
   onCheckout: () => void;
   onClose: () => void;
 }) {
-  const canCheckout = siteAddress.trim().length > 0;
   return (
     <div className="w-72 shrink-0 bg-card border border-border sticky top-20">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
@@ -119,14 +118,8 @@ export function CartDrawer({
             </div>
             <button
               type="button"
-              disabled={!canCheckout}
               onClick={onCheckout}
-              title={
-                canCheckout
-                  ? undefined
-                  : "Add a delivery address before proceeding to deposit"
-              }
-              className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
+              className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all"
             >
               Proceed to Deposit
             </button>

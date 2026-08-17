@@ -174,8 +174,14 @@ export const statusDistributionApi = readOnlyResource<StatusDistribution>("/stat
 export interface CreateRentalPlanRequest {
   startDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
   endDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
-  // Required — RentalPlanCreateRequest.siteAddress is @NotBlank + must end in a
-  // 6-digit postal code; a blank/missing value 400s as validation_failed.
+  // Optional (specification/features/spring contract/rental-plan-site-address.md) — omit
+  // entirely to create the plan with siteAddress: null ("Skip for now"). When provided, still
+  // validated exactly as before: must end in a 6-digit postal code, or 400s as
+  // validation_failed.
+  siteAddress?: string;
+}
+
+export interface UpdateRentalPlanSiteAddressRequest {
   siteAddress: string;
 }
 
@@ -213,6 +219,36 @@ export const rentalPlanCartApi = {
     request<RentalPlanResponse>(`/rentalPlans/${planId}/quote`, {
       method: "POST",
     }),
+  // Sets/changes siteAddress on an already-created plan (siteAddress-only PATCH, not a
+  // general update — specification/features/spring contract/rental-plan-site-address.md).
+  // ⚠️ Load-bearing: on a QUOTED plan, this silently reverts status to DRAFT and clears
+  // totalAmount in the same response — same rule already true for item add/remove on a
+  // quoted plan. Callers must not assume a previously-displayed price survives this call,
+  // and must not call quote() again until after this one resolves (quoting first, then
+  // patching, would discard the fresh quote).
+  updateSiteAddress: (planId: number, siteAddress: string) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ siteAddress } satisfies UpdateRentalPlanSiteAddressRequest),
+    }),
+};
+
+// ─── REAL BACKEND: postal code validation (specification/features/postal-code-validation.md) ──
+// Real-time Singapore postal code lookup, meant to be called while a site-address form is still
+// being filled in (before final submit) — purely additive, doesn't change the siteAddress submit
+// payload on any of the routes above. VALID/INVALID both come back as 200 — branch on `status`,
+// not the HTTP status, to tell "field is genuinely invalid" apart from "lookup unavailable" (503,
+// which is a distinct status precisely so it can be told apart without parsing the body).
+export interface PostalCodeLookupResponse {
+  status: "VALID" | "INVALID";
+  postalCode: string;
+  address?: string;
+  message?: string;
+}
+
+export const postalCodeApi = {
+  lookup: (postalCode: string, signal?: AbortSignal) =>
+    request<PostalCodeLookupResponse>(`/postalCodes/${postalCode}`, { signal }),
 };
 
 // Converts a QUOTED RentalPlan into a Booking (api-contract-for-frontend.md §5) — items/dates

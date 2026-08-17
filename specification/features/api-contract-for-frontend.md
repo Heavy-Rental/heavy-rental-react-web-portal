@@ -6,6 +6,7 @@
 | **Status** | Proposed — describes the Spring Boot behavior once [`plan.md`](./plan.md) is implemented, not yet merged |
 | **Companion** | [`plan.md`](./plan.md) — the internal HOW/execution plan this contract is generated from |
 | **Supersedes** | Where this disagrees with `temp_web/Spec-rental-plan-cart-checkout.md` or `temp_web/Spec-rest-api-reference.md` (both slated for deletion once this work lands), this document wins — see inline notes below for what changed and why |
+| **Related, newer** | [`spring contract/rental-plan-site-address.md`](./spring%20contract/rental-plan-site-address.md) — accepted, not-yet-live change making `siteAddress` optional when creating a plan (this document doesn't itself specify the create-request's field requirements — see `Spec-rest-api-reference.md` §2.4.1 for that — but §2's `RentalPlanResponse` example below always shows `siteAddress` populated, which stops being guaranteed once the change lands) and adding `PATCH /rentalPlans/{id}` to set it later. §5's booking-creation contract is explicitly unaffected either way — still always required there. |
 
 This is the literal request/response contract for the rental-plan checkout workflow. If you're implementing against this, everything below is what to code against — prose explanations of *why* live in `plan.md`, not here.
 
@@ -48,6 +49,7 @@ Returned by `POST /rentalPlans`, `GET /rentalPlans`, `GET /rentalPlans/{id}`, `P
 ```
 
 - **New fields (not live today):** `updatedAt`, `createdAt`. Both ISO-8601 local-date-time strings (`YYYY-MM-DDTHH:mm:ss`), no timezone offset — this is Spring Boot's default `LocalDateTime` serialization, confirmed by grepping the codebase for any Jackson date-format override (none exists) and cross-checked against the one other DTO that already exposes a `LocalDateTime` today (`RecommendationSessionResponse.createdAt`), which uses the same format.
+- **Pending, not yet live:** `siteAddress` becomes nullable in this response once `spring contract/rental-plan-site-address.md` lands — a plan created via the "Skip for now" path (no address given at creation) comes back with `siteAddress: null` here, not the always-populated string the example above shows.
 - `updatedAt` is repurposed as **"last quoted at."** It's only meaningful once `status == "QUOTED"` — use it to compute the 24-hour quote-validity window: `now - updatedAt <= 24h` means checkout is allowed without re-quoting.
 - `totalAmount` is `null` whenever `status != "QUOTED"` — including immediately after an item add/remove reverts a previously-`QUOTED` plan back to `DRAFT` (§3).
 

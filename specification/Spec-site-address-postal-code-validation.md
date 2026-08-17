@@ -2,8 +2,20 @@
 
 **Feature Area**: heavy-rental-react-web-portal
 **Created**: 2026-08-13
-**Status**: Draft / Live Verification
+**Status**: Historical — superseded, see note below
 **Purpose**: Capture the change to how the delivery-site postal code is captured at checkout — from a separate, independently-validated input to a value auto-derived from the site address itself — and its knock-on effect on the cart summary display.
+
+> **Superseded.** This document captures the *original* client-side-only auto-derivation change (§3.1's
+> `derivePostalCode()`/`.slice(-6)` snippet is no longer accurate — it was replaced by `extractPostalCode()`
+> + an OneMap fallback lookup, per this doc's own §5 2026-08-13 entry, though §3.1's body was never updated
+> to match). §3.3's unconditional Save-blocking and its exact error copy are also stale — validation was
+> later removed from Save entirely, then reintroduced scoped to API mode only, now backed by a real backend
+> check. For current behavior and the backend-authoritative validation built on top of this, see
+> [`specification/features/spring contract/postal-code-validation.md`](./features/spring%20contract/postal-code-validation.md) (Spring team's
+> handoff contract for `GET /api/postalCodes/{postalCode}`) and
+> [`specification/features/postal-code-validation-execution-plan.md`](./features/postal-code-validation-execution-plan.md)
+> (frontend execution plan / current status). This document is kept as the historical record of the original
+> design decision, not as a description of current behavior.
 
 ## 1. Overview
 
@@ -26,6 +38,10 @@
 
 ### 3.1 Postal code is now derived from the address, not entered separately
 
+**Stale as of the OneMap addition (§5, 2026-08-13) — kept for historical context only.** The snippet below
+was replaced by `extractPostalCode()` (regex match anywhere in the address) plus `lookupSingaporePostal()`
+(OneMap fallback when no digits are typed) — see `src/lib/sgPostal.ts` for the current implementation.
+
 New helper in `SiteAddressModal.tsx`:
 
 ```ts
@@ -42,6 +58,12 @@ The modal's local form state no longer holds a `postalCode` field — only `{ ad
 The "Postal Code" input is no longer an editable, independently-required field with its own asterisk. It's now `readOnly`, always mirrors `derivedPostalCode`, and its label reads "Postal Code (auto-detected from address)" instead of carrying the required-field marker. Placeholder text is `"Will appear once typed above"` when empty.
 
 ### 3.3 Validation moved onto the combined address
+
+**Stale — see `postal-code-validation-execution-plan.md` for current behavior.** The exact error copy below
+no longer exists in the code, and Save no longer blocks unconditionally on a missing postal code: that check
+was removed entirely at one point, then reintroduced scoped to API mode only (mock mode still allows saving
+with a blank postal code), and is now backed by a real backend validation call rather than just a client-side
+regex.
 
 `handleSave`'s postal-code check now runs against the derived value instead of a second field:
 
