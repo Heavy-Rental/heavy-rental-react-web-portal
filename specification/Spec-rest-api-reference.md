@@ -135,6 +135,12 @@ No `PUT /api/users/{id}` exists, but nothing in this portal calls it (`userApi.r
 | `POST` | `/api/recommendations/{id}/knowledge-query` | ⏳ Backend live, frontend not wired | Backs the project chatbot (Call 3). `Chatbot.tsx` currently simulates replies client-side. See §7. |
 | `GET` | `/api/recommendations/{id}` | ⏳ Backend live, frontend not wired | Session read-back; no frontend caller yet. |
 
+### 2.9 Postal Codes
+
+| Method | Path | Status | Notes |
+|---|---|---|---|
+| `GET` | `/api/postalCodes/{postalCode}` | ⏳ Backend live, frontend not wired | Real-time Singapore postal code validation, meant to be called while the customer is still filling in a site-address form (rental plan create, booking create), before final submit — additive, doesn't change the existing `siteAddress` submit payload. `200 {status: "VALID"\|"INVALID", ...}`, `400 bad_request` if not 6 digits, `503 {status: "UNAVAILABLE", ...}` if the lookup service is down. See `specification/features/postal-code-validation.md` (backend handoff) and `specification/features/postal-code-validation-frontend-plan.md` (frontend execution plan) for the full contract and wiring plan. |
+
 ## 3. Env/proxy context
 
 This portal reaches the real backend only under `npm run dev:api` (`MODE === "api"`), via the Vite dev-server proxy's `VITE_API_TARGET` (`http://heavy-rental-rest-api:8080`, a container-network hostname) — see `Spec-project-environment.md` FR-011 and `Spec-mock-api-server.md`'s Appendix. Under the default `npm run dev`/`dev:mock`, every route in this document is instead served by the mock server per `Spec-mock-api-server.md`, which has no auth, no Stripe, and different write semantics (e.g. `POST` responses wrapped in a single-element array — see `unwrapCreateResponse()` in `api.ts`).
