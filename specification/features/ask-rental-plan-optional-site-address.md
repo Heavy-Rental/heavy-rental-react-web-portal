@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | **Direction** | Frontend → Spring backend team (this is a request, not a description of built behavior) |
-| **Status** | Proposed — not yet built on either side |
+| **Status** | Accepted — Spring has agreed to build both the primary and secondary asks below. See [`spring contract/rental-plan-site-address.md`](./spring%20contract/rental-plan-site-address.md) for the actual contract, and [`postal-code-validation-execution-plan.md`](./postal-code-validation-execution-plan.md) (Phase 2) for the frontend work building against it. |
 | **Related** | [`postal-code-validation.md`](./spring%20contract/postal-code-validation.md) (backend handoff for `GET /api/postalCodes/{postalCode}`), [`postal-code-validation-execution-plan.md`](./postal-code-validation-execution-plan.md) (frontend work this ask grew out of), [`api-contract-for-frontend.md`](./api-contract-for-frontend.md) (current `RentalPlanCreateRequest` contract) |
 
 ## Problem
