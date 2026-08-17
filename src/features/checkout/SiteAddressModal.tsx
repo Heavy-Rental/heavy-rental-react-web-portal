@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { mono, display, sans } from "../../lib/styles";
-import {
-  extractPostalCode,
-  isSingaporePostal,
-  lookupSingaporePostal,
-} from "../../lib/sgPostal";
+import { extractPostalCode, lookupSingaporePostal } from "../../lib/sgPostal";
 
 // ─── SITE ADDRESS MODAL ─────────────────────────────────────────────────────────
 // Captured once per cart — maps to Booking.siteAddress/sitePostalCode/deliveryNotes.
@@ -72,12 +68,6 @@ export function SiteAddressModal({
   const handleSave = () => {
     if (!form.address.trim()) {
       setError("Site address is required.");
-      return;
-    }
-    if (!isSingaporePostal(postalCode)) {
-      setError(
-        "Couldn't find a Singapore postal code for this address. Try a more specific street or building, or include the 6-digit postal code.",
-      );
       return;
     }
     setError(null);
@@ -155,12 +145,9 @@ export function SiteAddressModal({
               placeholder={
                 lookupStatus === "loading"
                   ? "Looking up postal code…"
-                  : lookupStatus === "miss"
-                    ? "No match — try a more specific address"
-                    : "Appears after you type a Singapore address"
+                  : "e.g. 619094"
               }
               className="w-full bg-secondary/30 border border-border px-3 py-2.5 text-sm text-muted-foreground placeholder-muted-foreground outline-none cursor-not-allowed"
-              style={mono}
             />
           </div>
           <div>
