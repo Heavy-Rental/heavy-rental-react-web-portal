@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { User, Upload, ShoppingCart, LogOut, CheckCircle, X } from "lucide-react";
 import { CustomerOnboarding } from "../browse/CustomerOnboarding";
 import { equipmentImageSrc } from "../browse/equipmentImageSrc";
@@ -72,6 +72,11 @@ export function CustomerPortal({
   // real backend keys by item id, not asset id). Mock mode never touches these.
   const [planId, setPlanId] = useState<number | null>(null);
   const [planItemIds, setPlanItemIds] = useState<Record<number, number>>({});
+  // Equipment ids with an addItem request in flight — a ref (not state) so a rapid
+  // double-click on "Select" is blocked synchronously, before React has re-rendered
+  // with the async call's result; otherwise both clicks read `cart` as not-yet-containing
+  // the item and both POST, producing two RentalPlanItems for the same asset.
+  const pendingAddIds = useRef<Set<number>>(new Set());
   const [activeFilter, setActiveFilter] = useState("All");
   const [detailItem, setDetailItem] = useState<EquipmentItem | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -160,6 +165,19 @@ export function CustomerPortal({
         setCart(hydrated);
         setPlanItemIds(itemIds);
         setPlanId(active.id);
+        // The date bar locks as soon as `cart` is non-empty (see DateRangeBar's `locked`
+        // prop below), so these must be restored here too — otherwise a reload leaves
+        // sharedStartDate/sharedEndDate stuck at null with no way to unlock and set them.
+        setSharedStartDate(active.startDate);
+        setSharedEndDate(active.endDate);
+        // Same gap as the dates above: siteAddress is persisted on the plan, but was never
+        // read back on hydrate — so every reload/re-entry forgot it was already collected
+        // and the modal auto-opened again on the next Select (see addToCart/
+        // handleSharedEndDateSelected's `!siteAddressPrompted` checks below).
+        if (active.siteAddress) {
+          setSiteAddress(active.siteAddress);
+          setSiteAddressPrompted(true);
+        }
       })
       .catch(() => {
         // Non-fatal — the cart just starts empty, same as a customer with no plan yet.
@@ -305,6 +323,12 @@ export function CustomerPortal({
   };
 
   const addToCart = (item: CartItem) => {
+    if (pendingAddIds.current.has(item.equipment.id)) return;
+    // Guards repeat clicks on an already-added card, not just fast double-clicks — the
+    // in-flight ref above only blocks a second click *while the first is still pending*,
+    // so without this, clicking "Select" again after the first request resolves would
+    // still POST another addItem for the same equipment and duplicate the cart line.
+    if (cart.some((c) => c.equipment.id === item.equipment.id)) return;
     // Hard-enforce one shared date range per cart (Spec-ui-heavy-machinery-portal.md §4.3) —
     // a belt-and-suspenders backstop behind the date-bar lock below, in case an item reaches
     // here from a path that doesn't source dates from the shared bar (chatbot, spec matches).
@@ -333,7 +357,14 @@ export function CustomerPortal({
       ...prev.filter((c) => c.equipment.id !== item.equipment.id),
       item,
     ]);
-    void syncCartItems([item], item.startDate, item.endDate);
+    // pendingAddIds bookkeeping wraps the sync call (not just the API-mode branch) so the
+    // in-flight guard above covers the mock-mode path too, even though syncCartItems()
+    // itself no-ops there — harmless (it clears on the same microtask), and simpler than
+    // special-casing the guard per mode.
+    pendingAddIds.current.add(item.equipment.id);
+    void syncCartItems([item], item.startDate, item.endDate).finally(() => {
+      pendingAddIds.current.delete(item.equipment.id);
+    });
   };
 
   // Flushes any cart items still awaiting sync the moment siteAddress transitions to a
