@@ -25,6 +25,11 @@ export function SiteAddressModal({
   onSave: (address: string, postalCode: string, notes: string) => void;
 }) {
   const isApiMode = import.meta.env.MODE === "api";
+  // Whether this modal opened with an address already saved (e.g. the "always reopen
+  // to re-confirm" checkout gate) — drives the Save/Confirm button label below. Tied to
+  // the initial `address` prop, not the live-edited `form.address`, so the label doesn't
+  // flip mid-edit just because the user hasn't cleared the field yet.
+  const hadExistingAddress = address.trim().length > 0;
   const [form, setForm] = useState({ address, notes });
   const [error, setError] = useState<string | null>(null);
   const [lookup, setLookup] = useState<{
@@ -252,7 +257,11 @@ export function SiteAddressModal({
               disabled={postalChecking}
               className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-bold tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
             >
-              {postalChecking ? "Verifying…" : "Save Address"}
+              {postalChecking
+                ? "Verifying…"
+                : hadExistingAddress
+                  ? "Confirm Address"
+                  : "Save Address"}
             </button>
           </div>
         </div>

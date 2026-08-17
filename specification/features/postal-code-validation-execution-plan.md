@@ -2,9 +2,9 @@
 
 | Field | Value |
 |-------|--------|
-| **Implements** | [`postal-code-validation.md`](./postal-code-validation.md) — the Spring team's handoff contract for `GET /api/postalCodes/{postalCode}` |
+| **Implements** | [`postal-code-validation.md`](./spring%20contract/postal-code-validation.md) — the Spring team's handoff contract for `GET /api/postalCodes/{postalCode}` — and [`spring contract/rental-plan-site-address.md`](./spring%20contract/rental-plan-site-address.md) — Spring's accepted contract for making `siteAddress` optional at plan creation, per our [`ask-rental-plan-optional-site-address.md`](./ask-rental-plan-optional-site-address.md) |
 | **Builds on** | [`../Spec-site-address-postal-code-validation.md`](../Spec-site-address-postal-code-validation.md) — the earlier, client-side-only auto-derivation work (now marked historical/superseded there) that gave `SiteAddressModal` its `extractPostalCode`/OneMap-lookup foundation; this plan adds the backend-authoritative check on top of it |
-| **Status** | Code complete for all 5 sub-tasks (Sub-tasks 3-5 not yet committed, pending manual review — see per-commit history for what's actually landed). Manual `npm run dev:api` verification (below) still outstanding. |
+| **Status** | **Phase 1** (Sub-tasks 1-5, postal-code validation + local-staging cart fix) — done, committed, and merged with `develop`. **Phase 2** (Sub-tasks 6-8, optional-siteAddress-at-creation) — planned below, not yet implemented; Spring has agreed to build both the primary (`POST /rentalPlans`) and secondary (`PATCH /rentalPlans/{id}`) changes from our ask. |
 | **Branch** | `HR-158-postal-code-validation-via-one-map-api-and-distance-calculation` |
 
 This document is the frontend-side execution plan for consuming the new endpoint, plus a related UX bug fix
@@ -57,7 +57,7 @@ exists, and creating that plan requires `siteAddress` (backend `@NotBlank`). Ski
 - This file.
 - Add a row for `GET /api/postalCodes/{postalCode}` to `specification/Spec-rest-api-reference.md` (§2, it has
   no row for this route today), initially `⏳ Backend live, frontend not wired`.
-- `specification/features/postal-code-validation.md` itself is **not** edited — it's the Spring team's
+- `specification/features/spring contract/postal-code-validation.md` itself is **not** edited — it's the Spring team's
   handoff artifact; this document and the `Spec-rest-api-reference.md` row above are where frontend
   consumption status is tracked instead.
 - No `src/` changes in this commit.
@@ -256,7 +256,7 @@ checkout always opens the address modal, even with a valid address already saved
 on an unchanged, still-valid address proceeds straight to `DepositCheckout`; (c) skip/close mid-checkout
 returns to the cart without opening `DepositCheckout`, and "Proceed to Deposit" remains clickable to retry.
 
-## Verification (after sub-task 5, not its own commit)
+## Phase 1 Verification (after sub-task 5, not its own commit)
 
 - `npm test` — full suite green, including all new/updated cases above.
 - `npm run dev:api` (real backend): select equipment → "Skip for now" → item visibly in cart → "Proceed to
@@ -265,3 +265,142 @@ returns to the cart without opening `DepositCheckout`, and "Proceed to Deposit" 
   checkout proceeds with the previously-skipped item synced into the created `RentalPlan`.
 - `npm run dev:mock`: confirm mock mode is unaffected — no calls to `/api/postalCodes/...`, "Skip for now"
   behavior unchanged (mock mode already treats `cart` as fully local).
+
+---
+
+# Phase 2: `siteAddress` becomes optional at plan creation
+
+Spring has agreed to both changes we asked for in
+[`ask-rental-plan-optional-site-address.md`](./ask-rental-plan-optional-site-address.md), documented in
+[`spring contract/rental-plan-site-address.md`](./spring%20contract/rental-plan-site-address.md):
+
+1. `POST /rentalPlans` — `siteAddress` becomes optional. Omitting it creates the plan with
+   `siteAddress: null`; this is what "Skip for now" should now actually do server-side, instead of the
+   Phase 1 workaround of staging items client-side until an address exists. Validation is unchanged
+   whenever `siteAddress` *is* provided (still `@NotBlank` + must end in a 6-digit postal code), and nothing
+   changes at `POST /rentalPlans/{id}/items`, `POST /rentalPlans/{id}/quote`, or `POST /api/bookings` (the
+   last of which still independently requires and validates its own `siteAddress` at checkout, regardless of
+   what the plan has).
+2. **New** `PATCH /rentalPlans/{id}` — accepts `{siteAddress}` only (not a general update), lets an
+   already-created plan get an address set/changed on its own record. **⚠️ Load-bearing detail from the
+   contract:** PATCHing `siteAddress` on a `QUOTED` plan silently reverts it to `DRAFT` and clears
+   `totalAmount` — same rule as adding/removing a line item on a quoted plan. Any code path that PATCHes the
+   address must not assume a previously-displayed price is still valid afterward.
+
+Both are **not yet implemented on the Spring side either** (contract doc's own Status field: "not yet
+implemented" for both) — this phase's sub-tasks below should not start until Spring confirms the routes are
+actually live, since building against an unimplemented contract risks the same kind of drift the Phase 1
+postal-code-validation doc warned about.
+
+## Sub-task 6 (commit 6): Spec/doc updates for the new contract — docs only, no code
+
+Do this first, mirroring Phase 1's Sub-task 1 pattern — get the paper trail right before touching code.
+
+- **`ask-rental-plan-optional-site-address.md`** — flip `Status` from "Proposed — not yet built on either
+  side" to "Accepted — see `spring contract/rental-plan-site-address.md`", so the ask doc reads as resolved
+  rather than looking like an open, unanswered request.
+- **`specification/Spec-rest-api-reference.md`** (§2.4 Rental Plans table):
+  - Update the `POST /api/rentalPlans` row's notes to reflect `siteAddress` now being optional (currently
+    documents it as required).
+  - Add a new row for `PATCH /api/rentalPlans/{id}` — careful to describe it accurately as **siteAddress-only**,
+    not a general update, so it isn't confused with the still-missing generic `PATCH` full-update capability.
+  - §2.4.1's field-level bullet for `POST /rentalPlans` ("Confirmed. Request body is `RentalPlanCreateRequest
+    { startDate, endDate, siteAddress }`... `siteAddress` is `@NotBlank`...") needs updating — `siteAddress`
+    is no longer `@NotBlank` at creation; note the still-applies-when-provided validation instead.
+  - §5 (Backend implementation gaps) currently lists generic `PUT`/`PATCH`/`DELETE /api/rentalPlans/{id}` as
+    a gap ("frontend calls it, backend doesn't have it"). Narrow this entry once `PATCH` for `siteAddress`
+    specifically exists — it's no longer a full gap, just a partial one (`PATCH` exists but is
+    siteAddress-only; `PUT`/`DELETE` remain missing).
+- **`specification/features/api-contract-for-frontend.md`** — this doc's §2 (`RentalPlanResponse` shape) and
+  its request-contract prose still describe `siteAddress` as always required at creation. Add a cross-reference
+  to `spring contract/rental-plan-site-address.md` as the authoritative source for the updated behavior rather
+  than duplicating it, consistent with how this doc already points to `postal-code-validation.md` for the
+  postal-code-lookup endpoint.
+- **`specification/features/Spec-rental-plan-cart-checkout.md`** and
+  **`specification/Spec-cart-hydration-and-duplicate-add-fixes.md`** — skim both for any "siteAddress is
+  required to create a plan" assumptions baked into their prose (both predate this change) and add a
+  pointer to `spring contract/rental-plan-site-address.md` wherever that assumption shows up, rather than
+  rewriting their historical narrative — same "flag forward, don't retroactively rewrite" convention already
+  used for `Spec-site-address-postal-code-validation.md` in Phase 1.
+- This document (already being updated as part of writing this plan).
+
+## Sub-task 7 (commit 7): `api.ts` — optional `siteAddress` + new PATCH client
+
+- `CreateRentalPlanRequest.siteAddress` — change from `string` to `siteAddress?: string`; update its
+  inline comment (currently says `@NotBlank` unconditionally) to reflect that it's only validated when
+  present.
+- New client function, alongside `rentalPlanCartApi`'s existing methods:
+  ```ts
+  export interface UpdateRentalPlanSiteAddressRequest {
+    siteAddress: string;
+  }
+
+  // ...inside rentalPlanCartApi:
+  updateSiteAddress: (planId: number, siteAddress: string) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ siteAddress }),
+    }),
+  ```
+  Name TBD at implementation time if something reads better (e.g. `setSiteAddress`) — `updateSiteAddress`
+  avoids colliding with the component-level `setSiteAddress` state setter already in `CustomerPortal.tsx`.
+- Unit tests in `api.test.ts`, same pattern as existing `rentalPlanCartApi` coverage: URL
+  (`/api/rentalPlans/55`), method (`PATCH`), body (`{siteAddress: "..."}`), `Authorization` header: and a
+  case asserting the response's `status`/`totalAmount` pass through as-is when the backend reverts a
+  `QUOTED` plan to `DRAFT` (this API-client layer just needs to return what the backend sends — the
+  revert-handling logic itself belongs in the caller, Sub-task 8).
+
+## Sub-task 8 (commit 8): Let "Skip for now" actually persist, and PATCH the address once saved
+
+All in `src/features/customer/CustomerPortal.tsx`.
+
+1. **`ensureApiRentalPlanId`** — remove the `if (!siteAddress.trim()) { ...; return null; }` guard entirely.
+   Always create the plan: `rentalPlanCartApi.create({ startDate, endDate, ...(resolvedSiteAddress ?
+   { siteAddress: resolvedSiteAddress } : {}) })` — omit the field when blank instead of blocking, now that
+   the backend accepts its absence.
+2. **Phase 1's local-staging machinery becomes obsolete and should be removed**, not just relaxed: with plan
+   creation no longer gated on an address, `syncCartItems`'s `!siteAddress.trim()` early-return, the
+   `syncUnsyncedCartItems()` helper, and the `useEffect` keyed on `[siteAddress]` that calls it (added in
+   Sub-task 4) no longer serve a purpose — there's no more "waiting for an address" phase for items to be
+   unsynced *during*. `addToCart`/`handleSharedEndDateSelected` go back to always syncing immediately
+   (mirroring how mock mode already behaves), the same way they did before Phase 1's fix was needed. Keep
+   the "always update local cart immediately" pattern itself (still correct for responsive UI regardless of
+   API latency) — only the address-gating around the sync call goes away. The one remaining unsynced-item
+   case (an individual `addItem` call failing mid-flight, e.g. network error) is the same already-accepted
+   edge case noted in Sub-task 4/5 — not specially handled.
+3. **PATCH the address once it's saved or changed.** `SiteAddressModal`'s `onSave` handler (in
+   `CustomerPortal.tsx`, not the modal itself) should call `rentalPlanCartApi.updateSiteAddress(planId,
+   resolvedAddress)` whenever `planId !== null` (a plan already exists to attach it to) and the address is
+   new or changed. If `planId === null` (nothing added to the cart yet), there's nothing to PATCH — the
+   address will just be included the normal way the next time `ensureApiRentalPlanId` creates the plan.
+   **Sequencing note, not just an implementation detail — get this order right:** this PATCH must complete
+   *before* any subsequent `rentalPlanCartApi.quote()` call, since the contract's revert-to-`DRAFT`
+   side effect on a `QUOTED` plan means quoting-then-patching would silently discard the fresh quote. The
+   existing checkout flow already satisfies this by construction — `onSave` (where the PATCH would fire)
+   always runs before `onBeginPayment`'s `await rentalPlanCartApi.quote(planId)` (which runs right before
+   `createBookingFromPlan`, per Sub-task 5's checkout-gate flow) — so no new ordering code should be needed,
+   just confirm this during manual verification (below) rather than assuming it silently.
+   No new defensive/loading UI is needed for the revert-to-`DRAFT` itself: `onBeginPayment` already
+   unconditionally re-quotes immediately before charging regardless of the plan's current status, which
+   already covers "the price shown might be stale" the same way it already covers the existing
+   item-add/remove revert case.
+
+**Tests:** same call as Phase 1's Sub-task 4/5 — `CustomerPortal.tsx` has no automated test harness, so this
+is manual-verification territory (below), not new automated coverage. `api.test.ts` coverage for the new
+`updateSiteAddress` client function (Sub-task 7) is the automated piece.
+
+## Phase 2 Verification (after sub-task 8, not its own commit)
+
+- `npm test` — full suite green.
+- `npm run dev:api`:
+  - Select equipment, click **"Skip for now"** on the address modal. Refresh the page immediately (before
+    ever saving an address). **Expected, the actual point of Phase 2:** the item survives the reload — unlike
+    Phase 1, where a Skip-for-now item was lost on reload since nothing was ever persisted.
+  - With that same item still in the cart (address still unset), open the address modal and Save a valid
+    address. Confirm it's reflected both in the cart drawer and (if inspectable, e.g. via a follow-up
+    `GET /rentalPlans` call in devtools) on the plan's own record, not only appearing later via the booking.
+  - Get a plan to `QUOTED` (proceed far enough into checkout to trigger a quote, without completing payment),
+    back out, then edit the address to a different valid one and save. Confirm the total price shown
+    afterward reflects a fresh quote (not the stale pre-edit one) once you proceed to checkout again —
+    this is the manual check for the sequencing note in Sub-task 8.3.
+- `npm run dev:mock`: unaffected — mock mode never touches `rentalPlanCartApi` at all.

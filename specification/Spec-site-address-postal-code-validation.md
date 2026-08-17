@@ -11,7 +11,7 @@
 > to match). §3.3's unconditional Save-blocking and its exact error copy are also stale — validation was
 > later removed from Save entirely, then reintroduced scoped to API mode only, now backed by a real backend
 > check. For current behavior and the backend-authoritative validation built on top of this, see
-> [`specification/features/postal-code-validation.md`](./features/postal-code-validation.md) (Spring team's
+> [`specification/features/spring contract/postal-code-validation.md`](./features/spring%20contract/postal-code-validation.md) (Spring team's
 > handoff contract for `GET /api/postalCodes/{postalCode}`) and
 > [`specification/features/postal-code-validation-execution-plan.md`](./features/postal-code-validation-execution-plan.md)
 > (frontend execution plan / current status). This document is kept as the historical record of the original

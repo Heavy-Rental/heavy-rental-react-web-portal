@@ -74,7 +74,9 @@ describe("SiteAddressModal", () => {
     expect(
       await screen.findByDisplayValue("619094", {}, { timeout: 2000 }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /save address/i }));
+    // Button reads "Confirm Address" (not "Save Address") since this modal opened with
+    // an existing address already passed in.
+    await user.click(screen.getByRole("button", { name: /confirm address/i }));
     expect(onSave).toHaveBeenCalledWith("20 Jurong Port Road", "619094", "");
   });
 
@@ -96,7 +98,9 @@ describe("SiteAddressModal", () => {
         onSave={onSave}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /save address/i }));
+    // Button reads "Confirm Address" (not "Save Address") since this modal opened with
+    // an existing address already passed in.
+    await user.click(screen.getByRole("button", { name: /confirm address/i }));
     expect(onSave).toHaveBeenCalledWith("not a real street xx", "", "");
   });
 
@@ -109,6 +113,28 @@ describe("SiteAddressModal", () => {
     await user.click(screen.getByRole("button", { name: /save address/i }));
     expect(screen.getByText(/site address is required/i)).toBeInTheDocument();
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('labels the button "Save Address" with no prior address, "Confirm Address" when one already exists', () => {
+    const { unmount } = render(
+      <SiteAddressModal address="" notes="" onClose={vi.fn()} onSave={vi.fn()} />,
+    );
+    expect(
+      screen.getByRole("button", { name: /^save address$/i }),
+    ).toBeInTheDocument();
+    unmount();
+
+    render(
+      <SiteAddressModal
+        address="20 Jurong Port Road, 619094"
+        notes=""
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /^confirm address$/i }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -237,7 +263,9 @@ describe("SiteAddressModal — API mode postal-code validation", () => {
         onSave={onSave}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /save address/i }));
+    // Button reads "Confirm Address" (not "Save Address") since this modal opened with
+    // an existing address already passed in.
+    await user.click(screen.getByRole("button", { name: /confirm address/i }));
     expect(
       screen.getByText(/couldn't find a singapore postal code for this address/i),
     ).toBeInTheDocument();

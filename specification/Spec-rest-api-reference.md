@@ -139,7 +139,7 @@ No `PUT /api/users/{id}` exists, but nothing in this portal calls it (`userApi.r
 
 | Method | Path | Status | Notes |
 |---|---|---|---|
-| `GET` | `/api/postalCodes/{postalCode}` | ✅ Backend live, frontend wired | Real-time Singapore postal code validation, called from `SiteAddressModal` (`postalCodeApi.lookup()`) while the customer is still filling in the site-address form (rental plan create, booking create), before final submit — additive, doesn't change the existing `siteAddress` submit payload. `200 {status: "VALID"\|"INVALID", ...}` (blocks Save on `INVALID`), `400 bad_request` if not 6 digits, `503 {status: "UNAVAILABLE", ...}` if the lookup service is down (soft-fail, doesn't block Save). See `specification/features/postal-code-validation.md` (backend handoff) and `specification/features/postal-code-validation-execution-plan.md` (frontend execution plan) for the full contract and wiring plan. |
+| `GET` | `/api/postalCodes/{postalCode}` | ✅ Backend live, frontend wired | Real-time Singapore postal code validation, called from `SiteAddressModal` (`postalCodeApi.lookup()`) while the customer is still filling in the site-address form (rental plan create, booking create), before final submit — additive, doesn't change the existing `siteAddress` submit payload. `200 {status: "VALID"\|"INVALID", ...}` (blocks Save on `INVALID`), `400 bad_request` if not 6 digits, `503 {status: "UNAVAILABLE", ...}` if the lookup service is down (soft-fail, doesn't block Save). See `specification/features/spring contract/postal-code-validation.md` (backend handoff) and `specification/features/postal-code-validation-execution-plan.md` (frontend execution plan) for the full contract and wiring plan. |
 
 ## 3. Env/proxy context
 
