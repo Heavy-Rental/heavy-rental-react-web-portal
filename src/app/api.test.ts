@@ -68,6 +68,22 @@ describe("rentalPlanCartApi", () => {
     expect(JSON.parse(init?.body as string)).toEqual(body);
   });
 
+  it("create() omits siteAddress entirely when not given ('Skip for now')", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ...samplePlan, siteAddress: null }));
+    const body: CreateRentalPlanRequest = {
+      startDate: "2026-09-01",
+      endDate: "2026-09-05",
+    };
+
+    const result = await rentalPlanCartApi.create(body);
+
+    expect(result.siteAddress).toBeNull();
+    const [, init] = fetchMock.mock.calls[0];
+    const sentBody = JSON.parse(init?.body as string);
+    expect(sentBody).toEqual({ startDate: "2026-09-01", endDate: "2026-09-05" });
+    expect(sentBody).not.toHaveProperty("siteAddress");
+  });
+
   it("addItem() POSTs { assetId } to /api/rentalPlans/{id}/items", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(samplePlan));
 
@@ -105,6 +121,45 @@ describe("rentalPlanCartApi", () => {
     expect(url).toBe("/api/rentalPlans/55/cancel");
     expect(init?.method).toBe("POST");
     expect(init?.body).toBeUndefined();
+  });
+
+  it("updateSiteAddress() PATCHes { siteAddress } to /api/rentalPlans/{id}", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ ...samplePlan, siteAddress: "20 Jurong Port Road, 619094" }),
+    );
+
+    const result = await rentalPlanCartApi.updateSiteAddress(
+      55,
+      "20 Jurong Port Road, 619094",
+    );
+
+    expect(result.siteAddress).toBe("20 Jurong Port Road, 619094");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/rentalPlans/55");
+    expect(init?.method).toBe("PATCH");
+    expect(JSON.parse(init?.body as string)).toEqual({
+      siteAddress: "20 Jurong Port Road, 619094",
+    });
+  });
+
+  it("updateSiteAddress() passes through a QUOTED→DRAFT revert as-is, unmodified", async () => {
+    // Per the backend contract, PATCHing siteAddress on a QUOTED plan silently reverts it —
+    // this API-client layer just needs to hand back exactly what the backend sent, with no
+    // special-casing; reacting to the revert is the caller's job, not this layer's.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        ...samplePlan,
+        siteAddress: "1 Pioneer Road, 628401",
+        status: "DRAFT",
+        totalAmount: null,
+      }),
+    );
+
+    const result = await rentalPlanCartApi.updateSiteAddress(55, "1 Pioneer Road, 628401");
+
+    expect(result.status).toBe("DRAFT");
+    expect(result.totalAmount).toBeNull();
+    expect(result.siteAddress).toBe("1 Pioneer Road, 628401");
   });
 
   it("attaches the Authorization header once a token is set, and omits it otherwise", async () => {

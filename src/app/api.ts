@@ -174,8 +174,14 @@ export const statusDistributionApi = readOnlyResource<StatusDistribution>("/stat
 export interface CreateRentalPlanRequest {
   startDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
   endDate: string; // ISO YYYY-MM-DD, optional server-side but always sent here
-  // Required — RentalPlanCreateRequest.siteAddress is @NotBlank + must end in a
-  // 6-digit postal code; a blank/missing value 400s as validation_failed.
+  // Optional (specification/features/spring contract/rental-plan-site-address.md) — omit
+  // entirely to create the plan with siteAddress: null ("Skip for now"). When provided, still
+  // validated exactly as before: must end in a 6-digit postal code, or 400s as
+  // validation_failed.
+  siteAddress?: string;
+}
+
+export interface UpdateRentalPlanSiteAddressRequest {
   siteAddress: string;
 }
 
@@ -212,6 +218,18 @@ export const rentalPlanCartApi = {
   quote: (planId: number) =>
     request<RentalPlanResponse>(`/rentalPlans/${planId}/quote`, {
       method: "POST",
+    }),
+  // Sets/changes siteAddress on an already-created plan (siteAddress-only PATCH, not a
+  // general update — specification/features/spring contract/rental-plan-site-address.md).
+  // ⚠️ Load-bearing: on a QUOTED plan, this silently reverts status to DRAFT and clears
+  // totalAmount in the same response — same rule already true for item add/remove on a
+  // quoted plan. Callers must not assume a previously-displayed price survives this call,
+  // and must not call quote() again until after this one resolves (quoting first, then
+  // patching, would discard the fresh quote).
+  updateSiteAddress: (planId: number, siteAddress: string) =>
+    request<RentalPlanResponse>(`/rentalPlans/${planId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ siteAddress } satisfies UpdateRentalPlanSiteAddressRequest),
     }),
 };
 
