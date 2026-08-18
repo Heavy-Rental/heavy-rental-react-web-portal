@@ -1,4 +1,5 @@
 import type { Asset, ConditionType } from "./types";
+import { isUnsplashPhotoId } from "../features/browse/equipmentImageSrc";
 
 export type { ConditionType };
 
@@ -33,11 +34,17 @@ export interface AssetRecord {
   photo: string | null;
 }
 
-// Asset.img is overloaded: an Unsplash photo-id fragment until an admin uploads a real
-// photo (Task 3, PUT /api/assets/{id}/image), after which the backend returns a data: URI in
-// the same field — branch on the prefix to tell the two apart.
+// Asset.img is overloaded: an Unsplash photo-id fragment (already including the "photo-"
+// prefix, e.g. "photo-1780054984720-...") until an admin uploads a real photo (Task 3,
+// PUT /api/assets/{id}/image), after which the backend returns a data: URI in the same
+// field — branch on the prefix to tell the two apart. Anything that's neither a data: URI
+// nor a valid photo id (a stray/oversized string, a data: URI missing its prefix) falls
+// back to "" rather than being concatenated into the Unsplash path, which previously built
+// a malformed/doubled-prefix URL that 404'd or, for a genuinely oversized value, produced a
+// request Unsplash's edge rejects outright (414/502).
 export function resolvePhoto(img: string): string {
-  return img.startsWith("data:") ? img : `https://images.unsplash.com/photo-${img}?w=400&q=80`;
+  if (img.startsWith("data:")) return img;
+  return isUnsplashPhotoId(img) ? `https://images.unsplash.com/${img}?w=400&q=80` : "";
 }
 
 export function deriveAssetRecord(e: Asset): AssetRecord {

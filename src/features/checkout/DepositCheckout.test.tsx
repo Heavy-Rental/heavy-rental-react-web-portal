@@ -43,7 +43,6 @@ describe("DepositCheckout — dynamic pricing", () => {
     render(
       <DepositCheckout
         cart={[item]}
-        totalCost={2900}
         userName="Alex Tan"
         paymentIntentId="pi_test"
         onClose={noop}
@@ -64,7 +63,6 @@ describe("DepositCheckout — dynamic pricing", () => {
     render(
       <DepositCheckout
         cart={[item]}
-        totalCost={2900}
         userName="Alex Tan"
         paymentIntentId="pi_test"
         onClose={noop}
@@ -90,7 +88,6 @@ describe("DepositCheckout — dynamic pricing", () => {
     render(
       <DepositCheckout
         cart={[item]}
-        totalCost={2900}
         userName="Alex Tan"
         paymentIntentId="pi_test"
         onClose={noop}
@@ -111,7 +108,6 @@ describe("DepositCheckout — dynamic pricing", () => {
     render(
       <DepositCheckout
         cart={[item]}
-        totalCost={2900} // stale client-side estimate — quote should win once it resolves
         userName="Alex Tan"
         paymentIntentId="pi_test"
         onClose={noop}
@@ -129,12 +125,42 @@ describe("DepositCheckout — dynamic pricing", () => {
     expect(screen.getAllByText("S$3,200").length).toBeGreaterThanOrEqual(2);
   });
 
+  it("derives Subtotal from the line items even when quote.totalAmount disagrees with them", async () => {
+    // Regression test: seen live, quote.totalAmount came back equal to a single item's
+    // dailyRate (640) instead of dailyRate × days (3200) — Subtotal must not trust that
+    // field directly, or it desyncs from the "Reserved Equipment" line item shown above it.
+    const onGetQuote = vi.fn().mockResolvedValue({
+      ...basePlan,
+      totalAmount: 640, // deliberately wrong — should be 5 × 640 = 3200
+      items: [{ ...basePlan.items[0], dailyRate: 640, subtotal: 3200 }],
+    });
+    render(
+      <DepositCheckout
+        cart={[item]}
+        userName="Alex Tan"
+        paymentIntentId="pi_test"
+        onClose={noop}
+        onBeginPayment={onBeginPayment}
+        onGetQuote={onGetQuote}
+        onPaid={onPaid}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/checking live pricing/i)).not.toBeInTheDocument(),
+    );
+    // Both the line item and Subtotal must read 3200 (days × quoted dailyRate) — never the
+    // bogus 640 totalAmount — and GST/Total Payable must be computed off that same figure.
+    expect(screen.getAllByText("S$3,200").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("S$640")).not.toBeInTheDocument();
+    expect(screen.getByText("S$288")).toBeInTheDocument(); // GST: round(3200 × 0.09)
+    expect(screen.getByText("S$3,488")).toBeInTheDocument(); // Total Payable: round(3200 × 1.09)
+  });
+
   it("shows no badge when the quoted dailyRate equals the cart's base rate (base price or fallback)", async () => {
     const onGetQuote = vi.fn().mockResolvedValue(basePlan); // dailyRate 580 === baseDailyRate
     render(
       <DepositCheckout
         cart={[item]}
-        totalCost={2900}
         userName="Alex Tan"
         paymentIntentId="pi_test"
         onClose={noop}
@@ -155,7 +181,6 @@ describe("DepositCheckout — dynamic pricing", () => {
     render(
       <DepositCheckout
         cart={[item]}
-        totalCost={2900}
         userName="Alex Tan"
         paymentIntentId="pi_test"
         onClose={noop}

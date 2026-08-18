@@ -90,7 +90,6 @@ function StripeDepositForm({
 
 export function DepositCheckout({
   cart,
-  totalCost,
   userName,
   paymentIntentId,
   onClose,
@@ -99,7 +98,6 @@ export function DepositCheckout({
   onPaid,
 }: {
   cart: CartItem[];
-  totalCost: number;
   userName: string;
   paymentIntentId: string;
   onClose: () => void;
@@ -165,7 +163,17 @@ export function DepositCheckout({
   // the client estimate while loading, if the quote failed, or outside API mode.
   const displayDailyRate = (assetId: number, baseDailyRate: number): number =>
     quotedItem(assetId)?.dailyRate ?? baseDailyRate;
-  const displayTotal = quote?.totalAmount ?? totalCost;
+  // Summed from the same per-item day×rate figures rendered in the "Reserved Equipment"
+  // list above, rather than trusted directly off quote.totalAmount — the two can drift
+  // out of sync (seen live: totalAmount came back as a single item's dailyRate instead
+  // of dailyRate×days), which desyncs the Subtotal from the line item shown right above it.
+  const displayTotal = cart.reduce(
+    (s, c) =>
+      s +
+      daysBetweenISO(c.startDate, c.endDate) *
+        displayDailyRate(c.equipment.id, c.equipment.baseDailyRate),
+    0,
+  );
   const deposit = apiPayment
     ? apiPayment.depositAmount
     : Math.round(displayTotal * 0.3);
@@ -386,8 +394,9 @@ export function DepositCheckout({
 
             {/* Cost breakdown — GST is display-only, computed client-side, never sent to the API;
                 deposit stays 30% of the pre-GST subtotal (Spec-ui-heavy-machinery-portal.md §4.4).
-                Uses displayTotal (the resolved quote's totalAmount once available, client
-                estimate otherwise) so these figures never contradict the Smart Priced badge above. */}
+                Uses displayTotal (summed from the same per-item quoted rate/days shown in the
+                Reserved Equipment list above) so these figures never contradict the Smart Priced
+                badge above, or the line item the customer can see right above the breakdown. */}
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Subtotal</span>
