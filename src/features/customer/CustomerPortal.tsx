@@ -397,8 +397,14 @@ export function CustomerPortal({
     setCartDateError(null);
     applyQuoteDatesToBar(quoteDates);
     if (quoteDates) {
-      setCart(buildQuoteCartItems(recs, quoteDates));
+      const items = buildQuoteCartItems(recs, quoteDates);
+      setCart(items);
       setCartOpen(true);
+      // API mode only (syncCartItems no-ops otherwise): this is the one add-to-cart path that
+      // used to skip syncing to the backend entirely, leaving planId null — checkout would
+      // then always fail with "Your rental plan couldn't be found" the moment Continue to
+      // Payment tried to convert a plan that was never actually created server-side.
+      void syncCartItems(items, quoteDates.startDate, quoteDates.endDate);
     } else {
       setCart([]);
       setCartOpen(false);

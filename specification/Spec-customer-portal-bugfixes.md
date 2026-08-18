@@ -1,15 +1,17 @@
-# Specification: Customer Portal Bugfixes — Checkout Subtotal, Equipment Images, Login Auth, Stale Rental Plans
+# Specification: Customer Portal Bugfixes — Checkout Subtotal, Equipment Images, Login Auth, Stale Rental Plans, AI-Recommendation Cart Sync
 
 | Field | Value |
 |-------|--------|
-| **Feature** | Customer Portal — Deposit Checkout Subtotal Desync, Unsplash Image Requests, `/api/users` 403 on Non-Admin Login, and Post-Conversion Rental Plan Recovery |
-| **Status** | Implemented — CHANGE-01 through CHANGE-04 completed |
+| **Feature** | Customer Portal — Deposit Checkout Subtotal Desync, Unsplash Image Requests, `/api/users` 403 on Non-Admin Login, Post-Conversion Rental Plan Recovery, and AI-Recommendation "Add All" Cart/Sync Corruption |
+| **Status** | Implemented — CHANGE-01 through CHANGE-05 completed |
 | **Module** | `heavy-rental-web-portal` |
-| **Primary surfaces** | Deposit checkout summary (`src/features/checkout/DepositCheckout.tsx`); equipment catalog/detail images (`src/features/browse/equipmentImageSrc.ts`, `EquipmentGrid.tsx`, `src/features/customer/EquipmentDetailPage.tsx`, `src/app/assetRecord.ts`); login (`src/App.tsx`); checkout/cart (`src/features/customer/CustomerPortal.tsx`) |
-| **Method** | Manual bug reports (screenshots of the live app / browser console) reproduced against the real Spring Boot backend (`heavy-rental-rest-api`) in `npm run dev:api` mode; each fix verified with `npx tsc --noEmit` and `npx eslint` |
-| **Environment context** | [`Spec-dynamic-pricing-e2e.md`](./Spec-dynamic-pricing-e2e.md) and [`features/Spec-rental-plan-cart-checkout.md`](./features/Spec-rental-plan-cart-checkout.md) (the quote/`totalAmount` and `RentalPlan` → `Booking` conversion model CHANGE-01 and CHANGE-04 patch); [`Spec-rest-api-reference.md`](./Spec-rest-api-reference.md) §2.7 (documents `/api/users` as `ROLE_ADMIN`-only, source for CHANGE-03) |
+| **Primary surfaces** | Deposit checkout summary (`src/features/checkout/DepositCheckout.tsx`); equipment catalog/detail images (`src/features/browse/equipmentImageSrc.ts`, `EquipmentGrid.tsx`, `src/features/customer/EquipmentDetailPage.tsx`, `src/app/assetRecord.ts`); login (`src/App.tsx`); checkout/cart (`src/features/customer/CustomerPortal.tsx`); AI recommendation review (`src/features/browse/onboarding/QuoteResultScreen.tsx`, `src/features/checkout/specsPlan.ts`) |
+| **Method** | Manual bug reports (screenshots of the live app / browser console) reproduced against the real Spring Boot backend (`heavy-rental-rest-api`) in `npm run dev:api` mode; each fix verified with `npx tsc -b --pretty false` (see note below) and `npx eslint .`; CHANGE-05 additionally covered by a new automated test in `specsPlan.test.ts` |
+| **Environment context** | [`Spec-dynamic-pricing-e2e.md`](./Spec-dynamic-pricing-e2e.md) and [`features/Spec-rental-plan-cart-checkout.md`](./features/Spec-rental-plan-cart-checkout.md) (the quote/`totalAmount` and `RentalPlan` → `Booking` conversion model CHANGE-01, CHANGE-04, and CHANGE-05 patch); [`Spec-rest-api-reference.md`](./Spec-rest-api-reference.md) §2.7 (documents `/api/users` as `ROLE_ADMIN`-only, source for CHANGE-03) |
 
-This document records four unrelated bugs found via manual testing across one session, bundled into a single document at the user's request rather than filed separately: a pricing-display desync in the deposit checkout summary, a malformed-URL bug in equipment image rendering, a guaranteed-403 network call on every non-admin login, and a stuck-checkout bug where a customer's local cart/plan state survives past the point their rental plan converts to a real booking.
+This document records five unrelated bugs found via manual testing across one session, bundled into a single document at the user's request rather than filed separately: a pricing-display desync in the deposit checkout summary, a malformed-URL bug in equipment image rendering, a guaranteed-403 network call on every non-admin login, a stuck-checkout bug where a customer's local cart/plan state survives past the point their rental plan converts to a real booking, and a cart-corruption/missing-sync bug in the AI-recommendation "Add All to Rental Plan" flow.
+
+**Verification command correction (relevant from CHANGE-05 onward):** CHANGE-01 through CHANGE-04 above were verified with plain `npx tsc --noEmit`, which — discovered partway through this session — is a silent no-op against this repo's root `tsconfig.json` (`files: []` with project references; plain `tsc --noEmit` doesn't build referenced projects). That gap let a real regression through: CHANGE-01's removal of `DepositCheckout`'s `totalCost` prop broke `DepositCheckout.test.tsx`, which still passed that prop in six `render()` calls, and no `tsc` run in this document caught it until the project-references-aware command below was used. Fixed at that point (test file updated to drop the removed prop) and confirmed via `npx tsc -b --pretty false`, the command CI's own "Quality Control" job actually runs (`.github/workflows/integration-pipeline.yml`) — this is also the command used to verify CHANGE-05.
 
 ---
 
@@ -21,6 +23,7 @@ When these changes are correct:
 2. Equipment images (catalog grid, detail page, admin asset records) never send a malformed request to Unsplash — an `img` value that isn't a recognizable Unsplash photo id, a `data:` URI, or an absolute URL is treated as "no photo" instead of being concatenated into the request path (CHANGE-02).
 3. Logging in as a customer or employee (API mode) no longer fires a doomed `GET /api/users` call that always 403s — only admin logins attempt it (CHANGE-03).
 4. Once a rental plan has converted to a booking (deposit paid, or an interrupted/retried checkout already converted it server-side), the customer is never stuck: retrying checkout or "Cancel rental plan" against that dead plan self-heals the local cart, and a successful payment proactively clears the plan reference so the very next item added starts a fresh plan instead of failing against the old one (CHANGE-04).
+5. Adding equipment via the AI-recommendation "Add All to Rental Plan" screen never puts two lines for the same equipment into the cart, the Include/Add controls on that screen respond reliably even when two recommendations resolve to the same equipment, and the resulting cart is actually synced to a real backend `RentalPlan` in API mode — so checkout no longer fails with "Your rental plan couldn't be found" (CHANGE-05).
 
 ---
 
@@ -32,6 +35,7 @@ When these changes are correct:
 - `equipmentImageSrc.ts`'s photo-id validation and its use (or lack of use) in `EquipmentGrid.tsx`, `EquipmentDetailPage.tsx`, and `assetRecord.ts`.
 - `App.tsx`'s `handleLogin` → `resolveUserId()` call site.
 - `CustomerPortal.tsx`'s `onBeginPayment`, `cancelPlanApi`, and `onPaid` handlers, specifically their handling of `planId`/`planItemIds`/`cart` around plan conversion.
+- `specsPlan.ts`'s `buildQuoteCartItems`; `QuoteResultScreen.tsx`'s recommendation list rendering; `CustomerPortal.tsx`'s `applySpecsRecsToPlan`.
 
 ### 2.2 Out of scope
 
@@ -39,6 +43,8 @@ When these changes are correct:
 - Whether `GET /api/users` should be restricted to `ROLE_ADMIN` at all — that's an existing, confirmed backend decision (`Spec-rest-api-reference.md` §2.7), not something this frontend-only repo can or should change.
 - Wiring "My Rental Plans" to the real backend's `RentalPlanResponse` shape — customer `userId` staying `null` in API mode (a consequence of CHANGE-03, but not a regression it introduces) leaves that view non-functional in API mode, which it already was for unrelated reasons (`buildRentalPlanViews` parses the mock server's `RentalPlan` shape, not the real backend's).
 - Whatever is causing intermittent `net::ERR_INCOMPLETE_CHUNKED_ENCODING` / `Failed to fetch` / Unsplash `502`s observed separately in the same session — investigated live (backend and Unsplash both responded normally on retest), inconclusive, not a frontend code change. Flagged for separate follow-up once/if it reproduces again.
+- Whether the recommendation engine (`POST /api/recommendations/project-spec`) *should* return two separate recommendation entries resolving to the same catalog equipment at all — that's a backend/AI behavior this frontend-only repo doesn't control. CHANGE-05 makes the frontend handle that response correctly (dedupe, don't corrupt the cart) regardless of whether the backend's doing so is itself intentional.
+- A `GET /api/postalCodes/619094 → 503 (Service Unavailable)` observed in the same console session as CHANGE-05's repro — a separate backend service outage, unrelated to the cart/sync bugs and not a frontend code change.
 
 ---
 
@@ -109,6 +115,24 @@ const displayTotal = cart.reduce(
 
 `ApiError` (already defined in `app/api.ts` for exactly this `{code, message}` envelope) is now imported into `CustomerPortal.tsx` to support the `code === "already_converted"` checks in parts 1 and 2.
 
+### CHANGE-05: AI-recommendation "Add All to Rental Plan" corrupts the cart and skips the backend sync
+
+**GIVEN** the recommendation engine returns two or more recommendation entries that resolve to the same catalog equipment (e.g. two "Hyster H4.2FT Forklift" rows matched against two different project-spec lines) on the AI-recommendation review screen (`QuoteResultScreen.tsx`)
+**WHEN** the customer reviews and adds equipment from that screen
+**THEN** three compounding failures occurred:
+1. Each recommendation row was rendered with `key={r.eq.id}` — React logged "Encountered two children with the same key" for the shared equipment id, and its reconciliation of that list became unreliable: the per-row Include checkbox and Add button (both indexed by array position `i` in local `checked` state) could end up wired to the wrong row's DOM node after a re-render, so clicking Add on one duplicate-keyed row could silently do nothing or affect the other one instead.
+2. `buildQuoteCartItems` (`specsPlan.ts`) — the function that turns the checked recommendations into cart items — did a plain `.map()` with no dedup by equipment id, unlike every other cart-mutation function in the app (`addToCart`, `toggleEquipmentInPlan`). So once duplicate-equipment rows got checked, the cart ended up with literal duplicate lines (e.g. the same forklift three times), which then broke every other piece of code that assumes one cart line per equipment id: `planItemIds` (a plain object keyed by equipment id, so it can only ever track *one* backend line-item id per equipment id — the second duplicate has nowhere to be tracked), the cart's own React key (`CartDrawer.tsx:69`, `CustomerPortal.tsx:873`, `DepositCheckout.tsx:357` all warned the same way as point 1), and removal (`removeFromCartApi`'s local-only branch filters out *all* matching-equipment-id entries at once, so an individual duplicate could never be discarded on its own — the customer could only remove all copies together, not just the extra one).
+3. Separately and more severely, `applySpecsRecsToPlan` (`CustomerPortal.tsx`) — the handler behind this entire screen's "Add All to Rental Plan" button — only ever called `setCart(buildQuoteCartItems(...))` locally. It never called `syncCartItems`/`ensureApiRentalPlanId`, the code every *other* add-to-cart path in the app uses to create/attach the backend `RentalPlan` in API mode. So `planId` stayed `null` for any customer who added equipment this way, regardless of whether duplicates were involved — and `onBeginPayment` unconditionally throws when `planId === null`.
+
+**Symptom**: duplicate cart lines for the same equipment that couldn't be individually removed (deleting one removed all copies, or nothing visibly happened, due to point 1's key collision); and, independent of duplicates, checkout for *any* AI-recommendation-onboarding customer failed at "Continue to Payment" with `Your rental plan couldn't be found — please refresh and try again.`, because no real rental plan had ever been created server-side.
+
+**Change**, three parts:
+1. **`specsPlan.ts:5-25`** — `buildQuoteCartItems` now dedupes its input by equipment id (first occurrence wins) before mapping to `CartItem[]`, so a cart built from this path can never contain two lines for the same equipment — restoring the invariant every other cart-mutation function already enforces.
+2. **`QuoteResultScreen.tsx:120-129`** — the recommendation list is now keyed by array index (`key={i}`) instead of `r.eq.id`, so two recommendation rows for the same equipment no longer collide as React keys and the Include/Add controls respond reliably regardless of whether the underlying recommendations repeat an equipment id.
+3. **`CustomerPortal.tsx:399-406`** — `applySpecsRecsToPlan` now calls `void syncCartItems(items, quoteDates.startDate, quoteDates.endDate)` immediately after building and setting the cart (mirroring how `handleSharedEndDateSelected` already does this for its own auto-add path), so a real `RentalPlan` gets created/synced in API mode and `planId` is populated — fixing "Your rental plan couldn't be found" for this entire onboarding path.
+
+A regression test was added to `specsPlan.test.ts` covering `buildQuoteCartItems`'s new dedup behavior (same equipment id appearing twice in the input, first occurrence kept, no duplicate in the output).
+
 ---
 
 ## 4. Known approximations & follow-ups
@@ -118,6 +142,7 @@ const displayTotal = cart.reduce(
 3. **CHANGE-03** leaves customer/employee `userId` permanently `null` in API mode, same as before this fix — "My Rental Plans" was already non-functional against the real backend for the unrelated reason noted in §2.2, so this fix doesn't make that better or worse.
 4. **CHANGE-04** doesn't address *why* a booking's payment can be interrupted after the booking is already created (e.g. a declined Stripe card, or the customer closing the tab between `onBeginPayment` succeeding and `onPaid` firing) — that gap is inherent to the two-step booking-then-pay flow (`STRIPE_INTEGRATION_HANDOFF.md`) and out of scope here; this fix only ensures the *next* attempt recovers cleanly rather than getting permanently stuck.
 5. The separate connectivity symptoms noticed in the same session (`net::ERR_INCOMPLETE_CHUNKED_ENCODING` on `/api/assets`, a "Couldn't reach the equipment catalog — Failed to fetch" error, and a batch of Unsplash `502`s) did not reproduce on manual retest (backend and Unsplash both responded normally, repeatedly, when checked directly) — left uninvestigated further pending a live reproduction; not a code change in this document.
+6. **CHANGE-05** doesn't address *why* the recommendation engine can return duplicate-equipment recommendation entries in the first place — see §2.2. The fix makes the frontend robust to that response shape rather than assuming it won't happen. It also doesn't retroactively repair any `RentalPlanItem` rows already duplicated server-side by a customer who hit this bug before the fix shipped (same caveat as `Spec-cart-hydration-and-duplicate-add-fixes.md`'s CHANGE-03) — those still need manual removal via the cart drawer's trash icon.
 
 ---
 
@@ -127,6 +152,7 @@ const displayTotal = cart.reduce(
 - CHANGE-02 consolidates on the one already-tested validation helper (`equipmentImageSrc`/`isUnsplashPhotoId`) instead of leaving each call site to reimplement (and under-implement) its own `data:`-only guard.
 - CHANGE-03 is a minimal, behavior-preserving fix: it removes a call that could never succeed for two of the three roles, without changing what any role ends up with.
 - CHANGE-04 treats `already_converted` as a recognized, recoverable case rather than a generic error — the fix is deliberately duplicated across three call sites (`onBeginPayment`, `cancelPlanApi`, `onPaid`) rather than pulled into one shared helper, since two are reactive (catch a specific error and recover) and one is proactive (avoid the error in the first place); each needed a different trigger even though the recovery (`clear cart/planId/planItemIds`) is identical.
+- CHANGE-05's three parts target three different layers of the same failure chain rather than one broad patch: the dedup fix (`specsPlan.ts`) restores the "one line per equipment id" invariant at its source, the key fix (`QuoteResultScreen.tsx`) makes the *upstream* recommendation-review UI correctly clickable even before that invariant is restored, and the sync fix (`CustomerPortal.tsx`) makes this add-to-cart path consistent with every other one in the app (`addToCart`, `handleSharedEndDateSelected`) by actually calling `syncCartItems`. All three were needed — fixing only the dedup, for example, would still leave AI-recommendation customers unable to check out.
 
 ---
 
@@ -138,6 +164,7 @@ const displayTotal = cart.reduce(
 - [x] CHANGE-02: `npx tsc --noEmit` and `npx eslint` clean; `equipmentImageSrc.test.ts` (3 cases) still passes unmodified
 - [x] CHANGE-03: `npx tsc --noEmit` and `npx eslint` clean
 - [x] CHANGE-04: `npx tsc --noEmit` and `npx eslint` clean
+- [x] CHANGE-05: `npx tsc -b --pretty false` and `npx eslint .` clean; `npm test` — 12 test files, 82 tests, all passed (includes the new `buildQuoteCartItems` dedup regression test)
 
 ### 6.2 Manual smoke test
 
@@ -145,6 +172,7 @@ const displayTotal = cart.reduce(
 2. **CHANGE-02**: In API mode, browse the equipment catalog and open a detail page for an item whose `img` is a valid photo id — images load normally. (Reproducing the malformed-value case requires an `img` value that violates the expected shape, which isn't producible from the current UI — validated via `equipmentImageSrc.test.ts`'s existing "not-a-photo" case instead.)
 3. **CHANGE-03**: Log in as a customer (`alex.tan@example.sg`) and as an admin (`ravi.kumar@example.sg`) in API mode. Confirm no `/api/users` request fires for the customer login, and confirm it still fires (and succeeds) for the admin login.
 4. **CHANGE-04**: Complete a full checkout (deposit paid). Immediately select a new piece of equipment for a new booking — confirm it adds without error. Separately, reproduce a stuck `already_converted` state (e.g. retry "Continue to Payment" after a plan has already converted) and confirm the cart clears itself with an actionable message instead of repeating the raw backend error.
+5. **CHANGE-05**: In API mode, go through the "Instant Quote" onboarding flow with a project spec likely to produce overlapping equipment recommendations, and confirm no duplicate-key warnings appear on the recommendation review screen and the resulting Rental Plan panel never shows two lines for the same equipment. Click "Add All to Rental Plan," then open the Booking Summary and click "Continue to Payment" — confirm it proceeds instead of showing "Your rental plan couldn't be found."
 
 ---
 
@@ -157,7 +185,10 @@ const displayTotal = cart.reduce(
 | Skip `resolveUserId()` entirely for non-admin roles, rather than catching-and-ignoring more quietly | The call can never succeed for those roles (confirmed backend restriction) — not making a doomed request is strictly better than making one and swallowing its failure. |
 | Duplicate the `already_converted` recovery logic across three call sites instead of extracting a shared helper | Two sites are reactive (inside a `catch`) and one is proactive (inside a success branch) — the trigger conditions differ enough that a shared helper would mostly just be the three-line `setCart([]); setPlanItemIds({}); setPlanId(null);` body, which isn't worth abstracting over. |
 | `resolvePhoto()` falls back to `""`, not `null` | `FleetAsset.photo`/`AssetRecord.photo` are typed as non-nullable `string`, and existing admin/employee views already treat falsy `photo` as "no photo" — matching that convention avoided touching three more files' render logic. |
-| Bundle all four bugs into one document | Not one coherent theme (pricing, images, auth, and cart/plan state are unrelated surfaces), but fixed in the same session — combined at the user's explicit request rather than filed as separate specs. |
+| Bundle all five bugs into one document | Not one coherent theme (pricing, images, auth, and cart/plan state are unrelated surfaces), but fixed in the same session — combined at the user's explicit request rather than filed as separate specs. |
+| `buildQuoteCartItems` dedupes by keeping the *first* occurrence of a repeated equipment id | Arbitrary but deterministic — no signal in the recommendation response about which of two duplicate entries is more "correct," so first-seen is the simplest stable rule. |
+| Key the recommendation list by array index instead of `r.eq.id` | The list is static per render (no add/remove/reorder of recommendation rows after the initial render), so an index key is safe here and immediately resolves the duplicate-key collision without needing a synthetic composite key. |
+| Fix the dedup, the key, and the missing sync as three separate changes rather than just fixing the sync | The sync fix alone would still let duplicate-equipment cart lines reach the backend (as duplicate `addItem` calls) and still leave the recommendation screen's clicks unreliable — all three were independently necessary, not redundant with each other. |
 
 ---
 
@@ -166,3 +197,4 @@ const displayTotal = cart.reduce(
 | Version | Date | Notes |
 |---------|------|--------|
 | 0.1.0 | 2026-08-18 | Combined from two earlier same-session drafts (`Spec-deposit-checkout-subtotal-desync-fix.md` and `Spec-image-auth-and-stale-plan-fixes.md`, both superseded and removed by this document) into one file per user request. Documents CHANGE-01 (Booking Summary Subtotal desynced from the displayed line item), CHANGE-02 (malformed Unsplash image requests from unvalidated `Asset.img` values), CHANGE-03 (`GET /api/users` 403ing on every non-admin login), and CHANGE-04 (customers getting stuck once a rental plan converts to a booking, both on retry and proactively after a successful payment). All verified with `npx tsc --noEmit` / `npx eslint`. |
+| 0.2.0 | 2026-08-18 | Added CHANGE-05 (AI-recommendation "Add All to Rental Plan" screen: duplicate React keys breaking Include/Add clicks, `buildQuoteCartItems` letting duplicate-equipment cart lines through, and `applySpecsRecsToPlan` never syncing to the backend — causing undiscardable duplicate cart lines and "Your rental plan couldn't be found" at checkout). Also corrected this document's verification methodology going forward: discovered that `npx tsc --noEmit` (used for CHANGE-01–04's verification) silently checks nothing against this repo's root `tsconfig.json`, and had already let a real regression through (CHANGE-01's `totalCost` prop removal broke `DepositCheckout.test.tsx`, fixed once caught). CHANGE-05 and later are verified with `npx tsc -b --pretty false` instead, matching CI's actual Quality Control job. |

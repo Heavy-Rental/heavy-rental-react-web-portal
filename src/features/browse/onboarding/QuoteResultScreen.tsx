@@ -118,7 +118,15 @@ export function QuoteResultScreen({
 
           <div className="flex flex-col gap-3">
             {recItems.map((r, i) => (
-              <div key={r.eq.id} className="bg-card border border-border overflow-hidden">
+              // Keyed by array index, not r.eq.id — the recommendation engine can legitimately
+              // return two separate recommendation entries that resolve to the same catalog
+              // equipment (e.g. two "CAT 320 Excavator" rows for two different project-spec
+              // lines). Keying by eq.id then gives React duplicate keys, which breaks its
+              // reconciliation of this list: the Include checkbox and Add button (both indexed
+              // by i in local `checked` state) can end up wired to the wrong row's DOM node
+              // after a re-render, so clicking Add on one duplicate-keyed row silently does
+              // nothing (or toggles the other one instead).
+              <div key={i} className="bg-card border border-border overflow-hidden">
                 <div className="flex items-stretch">
                   {/* LEFT: clickable zone — thumbnail + name → detail page */}
                   <button
