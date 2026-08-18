@@ -21,6 +21,23 @@ describe("buildQuoteCartItems", () => {
   it("returns an empty cart when there are no recs", () => {
     expect(buildQuoteCartItems([], DATES)).toEqual([]);
   });
+
+  it("dedupes recommendations that resolve to the same equipment, keeping the first", () => {
+    // Regression: the recommendation engine can return two recommendation lines for the
+    // same catalog equipment (e.g. two project-spec lines both matched to the same unit).
+    // Every other cart mutation in this app enforces one line per equipment id — this must
+    // too, or downstream code keyed on equipment.id (React list keys, planItemIds, removal)
+    // breaks once a duplicate equipment id reaches the cart.
+    const forkliftFirst = stubEquipment({ id: 7, name: "Hyster H4.2FT Forklift" });
+    const forkliftAgain = stubEquipment({ id: 7, name: "Hyster H4.2FT Forklift" });
+    const excavator = stubEquipment({ id: 4, name: "Excavator" });
+    expect(
+      buildQuoteCartItems([forkliftFirst, excavator, forkliftAgain], DATES),
+    ).toEqual([
+      { equipment: forkliftFirst, ...DATES },
+      { equipment: excavator, ...DATES },
+    ]);
+  });
 });
 
 describe("shouldPromptDeliveryDetails", () => {

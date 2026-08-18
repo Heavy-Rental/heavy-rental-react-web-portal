@@ -2,6 +2,7 @@ import { Search } from "lucide-react";
 import type { Asset } from "../../app/types";
 import type { CartItem } from "../cart/CartContext";
 import { mono, display } from "../../lib/styles";
+import { equipmentImageSrc } from "./equipmentImageSrc";
 
 // ─── EQUIPMENT CATALOG / FILTER GRID ──────────────────────────────────────────
 
@@ -89,12 +90,13 @@ export function EquipmentGrid({
                 onClick={() => onSelectDetail(item)}
                 className="relative aspect-video bg-muted overflow-hidden text-left w-full"
               >
-                <img
-                 src={item.img.startsWith("data:") ? item.img : `https://images.unsplash.com/${item.img}?w=600&h=340&fit=crop&auto=format`}
-
-                  alt={item.name}
-                  className="w-full h-full object-cover opacity-80 group-hover:scale-105 transition-transform duration-500"
-                />
+                {equipmentImageSrc(item.img, 600, 340) && (
+                  <img
+                    src={equipmentImageSrc(item.img, 600, 340)!}
+                    alt={item.name}
+                    className="w-full h-full object-cover opacity-80 group-hover:scale-105 transition-transform duration-500"
+                  />
+                )}
                 <div className="absolute inset-0 bg-gradient-to-t from-card/80 to-transparent" />
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                   <span className="bg-black/70 text-white text-xs font-bold tracking-widest uppercase px-4 py-2 border border-white/20">

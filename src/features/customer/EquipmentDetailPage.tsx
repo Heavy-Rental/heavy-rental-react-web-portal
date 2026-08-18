@@ -10,6 +10,7 @@ import { DateRangeBar } from "../../components/DateRangeBar";
 import type { Asset as EquipmentItem } from "../../app/types";
 import type { CartItem } from "../cart/CartContext";
 import { deriveTags, IDEAL_FOR_BY_CATEGORY } from "./equipmentDetail";
+import { equipmentImageSrc, isUnsplashPhotoId } from "../browse/equipmentImageSrc";
 
 export function EquipmentDetailPage({
   detailItem,
@@ -69,10 +70,6 @@ export function EquipmentDetailPage({
     ["Max Capacity", `${detailItem.capacity} tonnes`],
     ["Location", detailItem.location ?? "—"],
     ["Base Daily Rate", `S$${detailItem.baseDailyRate.toLocaleString()}`],
-    [
-      "Weekly Rate",
-      detailItem.weekly ? `S$${detailItem.weekly.toLocaleString()}` : "—",
-    ],
     [
       "Availability",
       typeof liveAvailable === "boolean"
@@ -171,15 +168,13 @@ export function EquipmentDetailPage({
           {/* Left: image + gallery */}
           <div className="lg:col-span-3 flex flex-col gap-3">
             <div className="relative aspect-video bg-muted overflow-hidden border border-border">
-              <img
-                src={
-                  detailItem.img.startsWith("data:")
-                    ? detailItem.img
-                    : `https://images.unsplash.com/${detailItem.img}?w=900&h=520&fit=crop&auto=format`
-                }
-                alt={detailItem.name}
-                className="w-full h-full object-cover"
-              />
+              {equipmentImageSrc(detailItem.img, 900, 520) && (
+                <img
+                  src={equipmentImageSrc(detailItem.img, 900, 520)!}
+                  alt={detailItem.name}
+                  className="w-full h-full object-cover"
+                />
+              )}
               <div className="absolute inset-0 bg-gradient-to-t from-background/60 to-transparent" />
               <div className="absolute top-4 left-4 flex gap-2">
                 {typeof liveAvailable === "boolean" && (
@@ -208,27 +203,30 @@ export function EquipmentDetailPage({
                   key={i}
                   className="aspect-video bg-muted overflow-hidden border border-border opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
                 >
-                  <img
-                    src={
-                      detailItem.img.startsWith("data:")
-                        ? detailItem.img
-                        : `https://images.unsplash.com/${detailItem.img}${q}&auto=format`
-                    }
-                    alt=""
-                    className="w-full h-full object-cover"
-                    style={
-                      detailItem.img.startsWith("data:")
-                        ? {
-                            transform: "scale(1.7)",
-                            transformOrigin: [
-                              "10% 10%",
-                              "50% 50%",
-                              "90% 90%",
-                            ][i],
-                          }
-                        : undefined
-                    }
-                  />
+                  {(detailItem.img.startsWith("data:") ||
+                    isUnsplashPhotoId(detailItem.img)) && (
+                    <img
+                      src={
+                        detailItem.img.startsWith("data:")
+                          ? detailItem.img
+                          : `https://images.unsplash.com/${detailItem.img}${q}&auto=format`
+                      }
+                      alt=""
+                      className="w-full h-full object-cover"
+                      style={
+                        detailItem.img.startsWith("data:")
+                          ? {
+                              transform: "scale(1.7)",
+                              transformOrigin: [
+                                "10% 10%",
+                                "50% 50%",
+                                "90% 90%",
+                              ][i],
+                            }
+                          : undefined
+                      }
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -286,43 +284,16 @@ export function EquipmentDetailPage({
               >
                 Pricing
               </p>
-              <div className="flex gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">
-                    Daily rate
-                  </p>
-                  <p
-                    className="text-3xl font-black text-foreground"
-                    style={display}
-                  >
-                    S${detailItem.baseDailyRate.toLocaleString()}
-                  </p>
-                </div>
-                <div className="w-px bg-border" />
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">
-                    Weekly rate
-                  </p>
-                  <p
-                    className="text-3xl font-black text-foreground"
-                    style={display}
-                  >
-                    {detailItem.weekly
-                      ? `S$${detailItem.weekly.toLocaleString()}`
-                      : "—"}
-                  </p>
-                  {detailItem.weekly && (
-                    <p className="text-xs text-green-400 mt-0.5">
-                      Save{" "}
-                      {Math.round(
-                        (1 -
-                          detailItem.weekly / (detailItem.baseDailyRate * 7)) *
-                          100,
-                      )}
-                      % vs daily
-                    </p>
-                  )}
-                </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">
+                  Daily rate
+                </p>
+                <p
+                  className="text-3xl font-black text-foreground"
+                  style={display}
+                >
+                  S${detailItem.baseDailyRate.toLocaleString()}
+                </p>
               </div>
             </div>
 

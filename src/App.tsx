@@ -87,7 +87,11 @@ export default function App() {
         // other authenticated endpoint (e.g. userApi.list() below) — previously
         // that call fired before login() resolved and always 401'd.
         setAuthToken(accessToken);
-        const id = await resolveUserId();
+        // GET /api/users is ROLE_ADMIN-only on the real backend (Spec-rest-api-reference.md
+        // §2.7) — only attempt resolution for admin logins. Customer/employee logins would
+        // always 403 here (caught and silently downgraded to id: null anyway), so skip the
+        // doomed call rather than fire a guaranteed-to-fail request on every non-admin login.
+        const id = role === "admin" ? await resolveUserId() : null;
         const issuedAt = Date.now();
         session = {
           token: accessToken,

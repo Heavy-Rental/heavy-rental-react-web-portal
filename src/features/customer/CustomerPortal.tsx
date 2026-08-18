@@ -13,6 +13,7 @@ import {
   calcFullPaymentDueDate,
   createBookingFromPlan,
   paymentApi,
+  ApiError,
 } from "../../app/api";
 import { useApiResource } from "../../app/useApiResource";
 import { mono, display, sans } from "../../lib/styles";
@@ -396,8 +397,14 @@ export function CustomerPortal({
     setCartDateError(null);
     applyQuoteDatesToBar(quoteDates);
     if (quoteDates) {
-      setCart(buildQuoteCartItems(recs, quoteDates));
+      const items = buildQuoteCartItems(recs, quoteDates);
+      setCart(items);
       setCartOpen(true);
+      // API mode only (syncCartItems no-ops otherwise): this is the one add-to-cart path that
+      // used to skip syncing to the backend entirely, leaving planId null — checkout would
+      // then always fail with "Your rental plan couldn't be found" the moment Continue to
+      // Payment tried to convert a plan that was never actually created server-side.
+      void syncCartItems(items, quoteDates.startDate, quoteDates.endDate);
     } else {
       setCart([]);
       setCartOpen(false);
@@ -525,6 +532,16 @@ export function CustomerPortal({
         setPlanId(null);
       })
       .catch((err) => {
+        // Same stale-plan case as onBeginPayment above: a plan that already converted to a
+        // Booking on an earlier attempt can't be cancelled either (409 already_converted),
+        // so retrying "Cancel rental plan" here is just as dead an end — drop the local
+        // cart/plan state instead of leaving the customer stuck with no way out.
+        if (err instanceof ApiError && err.code === "already_converted") {
+          setCart([]);
+          setPlanItemIds({});
+          setPlanId(null);
+          return;
+        }
         setCartDateError(
           err instanceof Error
             ? err.message
@@ -959,7 +976,6 @@ export function CustomerPortal({
       {checkoutOpen && (
         <DepositCheckout
           cart={cart}
-          totalCost={totalCost}
           userName={userName}
           paymentIntentId={paymentIntentId}
           onClose={() => setCheckoutOpen(false)}
@@ -990,21 +1006,42 @@ export function CustomerPortal({
             // flat base-rate math once dynamic pricing is live (specification/frontend-handoff.md),
             // and what keeps "Continue to Payment" from ever failing on a lock conflict
             // that was never a real conflict, just two legitimate callers.
-            await quoteRentalPlan(planId);
-            const booking = await createBookingFromPlan({
-              rentalPlanId: planId,
-              siteAddress,
-              deliveryNotes: deliveryNotes || undefined,
-            });
-            const intent = await paymentApi.createDepositIntent(
-              booking.bookingId,
-            );
-            return {
-              bookingId: booking.bookingId,
-              clientSecret: intent.clientSecret,
-              paymentIntentId: intent.paymentIntentId,
-              depositAmount: booking.depositAmount,
-            };
+            try {
+              await quoteRentalPlan(planId);
+              const booking = await createBookingFromPlan({
+                rentalPlanId: planId,
+                siteAddress,
+                deliveryNotes: deliveryNotes || undefined,
+              });
+              const intent = await paymentApi.createDepositIntent(
+                booking.bookingId,
+              );
+              return {
+                bookingId: booking.bookingId,
+                clientSecret: intent.clientSecret,
+                paymentIntentId: intent.paymentIntentId,
+                depositAmount: booking.depositAmount,
+              };
+            } catch (err) {
+              // Both quote() and createBookingFromPlan() 409 with "already_converted" if this
+              // plan already turned into a Booking in an earlier attempt (e.g. this same
+              // checkout succeeded once but the client never got to clear its cart — a
+              // declined/interrupted Stripe confirmation, a stale reload, etc.). Retrying
+              // "Continue to Payment" against the same planId can never succeed once that's
+              // happened, so the local cart/plan state is stale and must be dropped here —
+              // otherwise the customer is stuck retrying the same dead plan indefinitely
+              // (nothing else in this component clears it on this specific failure).
+              if (err instanceof ApiError && err.code === "already_converted") {
+                setCart([]);
+                setPlanItemIds({});
+                setPlanId(null);
+                throw new Error(
+                  "This rental plan was already turned into a booking on a previous attempt — your cart has been cleared. Check My Rental Plans for that booking, or add items again to start a new one.",
+                  { cause: err },
+                );
+              }
+              throw err;
+            }
           }}
           onPaid={async (result) => {
             if (result) {
@@ -1021,6 +1058,16 @@ export function CustomerPortal({
               setCheckoutOpen(false);
               setConfirmed(true);
               setCart([]);
+              // planId still points at the plan that just converted to this booking —
+              // terminal server-side, so it must be dropped here too, not just the cart.
+              // Left set, the next equipment the customer selects for a new plan would
+              // route through ensureApiRentalPlanId's `planId !== null` fast path straight
+              // back to this now-CONVERTED plan, and every addItem against it would 409
+              // (already_converted) — the same stuck state the onBeginPayment/cancelPlanApi
+              // self-heal above recovers from, but hit proactively on the very next add
+              // instead of on a retried failure.
+              setPlanId(null);
+              setPlanItemIds({});
               setSiteAddress("");
               setSitePostalCode("");
               setDeliveryNotes("");
