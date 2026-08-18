@@ -6,12 +6,12 @@ const display = { fontFamily: "'Barlow Condensed', sans-serif" };
 const mono    = { fontFamily: "'DM Mono', monospace" };
 
 const CERTIFICATIONS = [
-  { code: "ISO 45001:2018",     name: "Occupational Health & Safety Management",  body: "Bureau Veritas",       year: "2023", },
-  { code: "OSHA 1910/1926",     name: "General Industry & Construction Standards", body: "OSHA Compliance",     year: "2024", },
-  { code: "ANSI/ASME B30",      name: "Crane, Hoist & Hook Safety Standards",      body: "ASME International",  year: "2024", },
-  { code: "AS 2550 / AS 4991",  name: "Cranes & Elevating Work Platform Standards",body: "Standards Australia",  year: "2023", },
-  { code: "NFPA 505",           name: "Fire Safety Standard for Powered Equipment", body: "NFPA",               year: "2024", },
-  { code: "API RP 54",          name: "Occupational Safety for Oil & Gas Drilling", body: "API",                year: "2023", },
+  { code: "ISO 45001:2018",     name: "Occupational Health & Safety Management",   body: "Bureau Veritas",                       year: "2023", },
+  { code: "bizSAFE STAR",       name: "Highest-Tier WSH Risk Management Certification", body: "Workplace Safety and Health Council", year: "2024", },
+  { code: "BCA Reg. Supplier",  name: "Registered Plant & Equipment Supplier",      body: "Building and Construction Authority",  year: "2024", },
+  { code: "SS 536 : Part 1",    name: "Code of Practice for Mobile Crane Safety",   body: "Enterprise Singapore",                 year: "2024", },
+  { code: "WSH (Crane) Regs",   name: "Operation of Cranes Regulatory Compliance",  body: "Ministry of Manpower",                 year: "2024", },
+  { code: "AS 2550 / AS 4991",  name: "Elevating Work Platform Safety Standards",   body: "Standards Australia",                  year: "2023", },
 ];
 
 const STATS = [
@@ -48,9 +48,9 @@ const PROTOCOLS = [
     icon: Users,
     title: "Operator Certification",
     steps: [
-      "All operators hold current NCCCO or equivalent national certification",
+      "All operators hold current MOM-approved WSQ crane/lifting certification",
       "Site-specific inductions completed before first operation",
-      "Spotter and signal person training aligned to ASME B30.5",
+      "Spotter and signal person training aligned to SS 536",
       "Drug and alcohol policy enforced — zero tolerance on all sites",
       "Annual refresher training with practical assessment required",
     ],
@@ -62,7 +62,7 @@ const PROTOCOLS = [
       "Exclusion zones established and marked before equipment start",
       "Ground bearing pressure assessed before any tracked/wheeled deployment",
       "Overhead power line clearances verified — minimum 4.5 m enforced",
-      "Lift plans mandatory for all crane operations over 75% rated capacity",
+      "Lift plans mandatory for all lifted loads and complex pick operations over 75% rated capacity",
       "Emergency stop and shutdown procedures posted on every machine",
     ],
   },
@@ -71,7 +71,7 @@ const PROTOCOLS = [
 const FAQS = [
   {
     q: "What certifications do your operators hold?",
-    a: "All Heavy Rental operators hold current NCCCO (National Commission for the Certification of Crane Operators) certification or equivalent national credentials. Excavator and bulldozer operators are OEM-certified through CAT, Komatsu, or Volvo training programmes. Certifications are renewed annually and records are available on request.",
+    a: "All Heavy Rental operators hold current certifications for elevated work platforms and excavator operation. Excavator operators are OEM-certified through CAT or Volvo training programmes. Certifications are renewed annually and records are available on request.",
   },
   {
     q: "How is equipment inspected before each rental?",
@@ -86,12 +86,12 @@ const FAQS = [
     a: "Contact our 24/7 equipment safety hotline immediately. Do not continue operating the unit. We will dispatch a field technician within 4 hours for urgent defects. If the unit cannot be made safe on site, we will arrange a like-for-like replacement at no additional charge. All defects are logged in our safety management system and investigated.",
   },
   {
-    q: "Do you provide lift plans for crane operations?",
-    a: "Yes. For all crane operations involving picks over 75% of the crane's rated capacity, Heavy Rental's certified lift planner will produce a site-specific lift plan including rigging configuration, ground loading calculations, exclusion zone dimensions, and weather limits. Lift plans for complex or tandem lifts are available on request for any capacity.",
+    q: "Do you provide lift plans for lifted operations?",
+    a: "Yes. For lifted operations or complex picks, Heavy Rental's certified lift planner will produce a site-specific lift plan including rigging configuration, ground loading calculations, exclusion zone dimensions, and weather limits. Lift plans are available on request.",
   },
   {
     q: "What insurance and liability coverage applies?",
-    a: "Heavy Rental carries $20M public liability insurance and $50M products liability cover. Rental agreements include equipment damage waiver options. Clients are required to maintain their own site public liability cover of a minimum $5M. Full insurance certificates are available upon request before rental commencement.",
+    a: "Heavy Rental carries S$20M public liability insurance and S$50M products liability cover. Rental agreements include equipment damage waiver options. Clients are required to maintain their own site public liability cover of a minimum S$5M. Full insurance certificates are available upon request before rental commencement.",
   },
 ];
 
@@ -197,7 +197,7 @@ export function SafetyPage({ onHome }: { onHome: () => void }) {
             <div>
               <p className="text-sm font-semibold text-foreground mb-1">Site-Specific Compliance</p>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                While Heavy Rental meets or exceeds all listed standards, clients are responsible for ensuring equipment use complies with local council, state, and federal regulations applicable to their specific project site. Our safety team is available to assist with permit applications and method statement preparation.
+                While Heavy Rental meets or exceeds all listed standards, clients are responsible for ensuring equipment use complies with Ministry of Manpower (MOM), Building and Construction Authority (BCA), and NEA regulations applicable to their specific project site. Our safety team is available to assist with permit applications and method statement preparation.
               </p>
             </div>
           </div>
@@ -243,8 +243,8 @@ export function SafetyPage({ onHome }: { onHome: () => void }) {
               </p>
             </div>
             <div className="flex flex-col gap-3 shrink-0">
-              <a href="tel:1800429368" className="flex items-center gap-3 px-6 py-3 bg-green-500 hover:bg-green-400 transition-colors text-black font-bold text-sm tracking-widest uppercase">
-                <Phone size={16} /> 1-800-HEAVY-ES
+              <a href="tel:+65 6262 4200" className="flex items-center gap-3 px-6 py-3 bg-green-500 hover:bg-green-400 transition-colors text-black font-bold text-sm tracking-widest uppercase">
+                <Phone size={16} /> (+65) 6262 4200
               </a>
               <a href="mailto:safety@heavyrental.com" className="flex items-center gap-3 px-6 py-3 border border-green-500/40 text-green-400 hover:bg-green-500/10 transition-colors font-semibold text-sm">
                 <Mail size={16} /> safety@heavyrental.com

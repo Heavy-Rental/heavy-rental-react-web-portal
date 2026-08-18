@@ -1,0 +1,309 @@
+{
+  "assets": [
+    {
+      "id": 1,
+      "name": "JLG 1350SJP Telescopic Boom",
+      "category": "Boom Lift",
+      "baseDailyRate": 580,
+      "minDailyRate": 410,
+      "maxDailyRate": 750,
+      "weekly": 2600,
+      "capacity": 1,
+      "platformHeight": 135,
+      "purchaseYear": 2023,
+      "location": "Jurong Port",
+      "rating": 4.6,
+      "reviews": 31,
+      "available": true,
+      "img": "photo-1780054984720-20ccf265317f",
+      "tags": ["135ft Reach", "4WD"],
+      "utilization": 68,
+      "revenue": 32480,
+      "hoursThisMonth": 155,
+      "desc": "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
+      "idealFor": ["aerial work", "height", "painting", "electrical", "maintenance", "elevated"],
+      "serialno": "SN-BOO-2023-0001",
+      "condition": "GOOD",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
+    },
+    {
+      "id": 2,
+      "name": "Genie GS-1932 Scissors Lift",
+      "category": "Scissors Lift",
+      "baseDailyRate": 420,
+      "minDailyRate": 290,
+      "maxDailyRate": 550,
+      "weekly": 1900,
+      "capacity": 1,
+      "platformHeight": 19,
+      "purchaseYear": 2024,
+      "location": "Pioneer",
+      "rating": 4.7,
+      "reviews": 24,
+      "available": true,
+      "img": "photo-1664312616511-81fe2e745cb3",
+      "tags": ["Compact", "Indoor Ready"],
+      "utilization": 72,
+      "revenue": 20160,
+      "hoursThisMonth": 148,
+      "desc": "Compact scissors lift suited for indoor and outdoor elevated access on construction and facility sites.",
+      "idealFor": ["access", "maintenance", "fit-out", "indoor", "elevated"],
+      "serialno": "SN-SCI-2024-0002",
+      "condition": "EXCELLENT",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
+    },
+    {
+      "id": 3,
+      "name": "Toyota 8FBE15 Electric Fork Lift",
+      "category": "Fork Lift",
+      "baseDailyRate": 320,
+      "minDailyRate": 220,
+      "maxDailyRate": 420,
+      "weekly": 1400,
+      "capacity": 2,
+      "platformHeight": null,
+      "purchaseYear": 2023,
+      "location": "Tuas",
+      "rating": 4.7,
+      "reviews": 44,
+      "available": true,
+      "img": "photo-1664312616511-81fe2e745cb3",
+      "tags": ["Zero Emissions", "Indoor Safe"],
+      "utilization": 58,
+      "revenue": 17920,
+      "hoursThisMonth": 132,
+      "desc": "Electric fork lift for warehouse operations, indoor material handling, and pallet moving.",
+      "idealFor": ["warehouse", "indoor", "pallet", "forklift", "material handling"],
+      "serialno": "SN-FOR-2023-0003",
+      "condition": "FAIR",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
+    },
+    {
+      "id": 4,
+      "name": "CAT 320 Hydraulic Excavator",
+      "category": "Excavator",
+      "baseDailyRate": 890,
+      "minDailyRate": 620,
+      "maxDailyRate": 1160,
+      "weekly": 4200,
+      "capacity": 20,
+      "platformHeight": null,
+      "purchaseYear": 2022,
+      "location": "Marina South",
+      "rating": 4.9,
+      "reviews": 37,
+      "available": true,
+      "img": "photo-1630288214173-a119cf823388",
+      "tags": ["GPS Tracked", "Operator Available"],
+      "utilization": 82,
+      "revenue": 58400,
+      "hoursThisMonth": 187,
+      "desc": "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
+      "idealFor": ["excavation", "demolition", "earthmoving", "foundation", "trenching"],
+      "serialno": "SN-EXC-2022-0004",
+      "condition": "NEEDS_REPAIR",
+      "lastConditionUpdatedAt": "2026-08-01T09:00:00+08:00"
+    }
+  ],
+  "depots": [
+    { "id": 1, "name": "Jurong Port", "region": "Singapore" },
+    { "id": 2, "name": "Pioneer", "region": "Singapore" },
+    { "id": 3, "name": "Tuas", "region": "Singapore" },
+    { "id": 4, "name": "Marina South", "region": "Singapore" }
+  ],
+  "users": [
+    { "id": 1, "name": "Alex Tan", "email": "alex.tan@example.sg", "role": "customer" },
+    { "id": 2, "name": "Mei Lin Goh", "email": "mei.lin.goh@example.sg", "role": "customer" },
+    { "id": 3, "name": "Ravi Kumar", "email": "ravi.kumar@example.sg", "role": "admin" }
+  ],
+  "rentalPlans": [
+    {
+      "id": 1,
+      "userId": 1,
+      "status": "active",
+      "depotId": 1,
+      "items": [
+        { "equipmentId": 1, "startDate": "2026-08-10", "endDate": "2026-08-14" },
+        { "equipmentId": 3, "startDate": "2026-08-10", "endDate": "2026-08-14" }
+      ],
+      "createdAt": "2026-08-01T09:00:00+08:00"
+    },
+    {
+      "id": 2,
+      "userId": 2,
+      "status": "completed",
+      "depotId": 4,
+      "items": [
+        { "equipmentId": 4, "startDate": "2026-07-20", "endDate": "2026-07-22" }
+      ],
+      "createdAt": "2026-07-15T10:30:00+08:00"
+    }
+  ],
+  "bookings": [
+    {
+      "id": 1,
+      "rentalPlanId": 1,
+      "depotId": 1,
+      "equipmentIds": [1, 3],
+      "startDate": "2026-08-10",
+      "endDate": "2026-08-14",
+      "deliveryDate": "2026-08-10",
+      "returnDate": "2026-08-14",
+      "totalAmount": 3600,
+      "depositAmount": 1080,
+      "fullPaymentDueDate": "2026-08-08",
+      "status": "CONFIRMED",
+      "paidStatus": "DEPOSIT",
+      "siteAddress": "20 Jurong Port Road",
+      "sitePostalCode": "S(619094)",
+      "deliveryNotes": ""
+    },
+    {
+      "id": 2,
+      "rentalPlanId": 2,
+      "depotId": 4,
+      "equipmentIds": [4],
+      "startDate": "2026-07-20",
+      "endDate": "2026-07-22",
+      "deliveryDate": "2026-07-20",
+      "returnDate": "2026-07-22",
+      "totalAmount": 1780,
+      "depositAmount": 534,
+      "fullPaymentDueDate": "2026-07-18",
+      "status": "COMPLETED",
+      "paidStatus": "FULL",
+      "siteAddress": "12 Commercial Avenue, Marina South",
+      "sitePostalCode": "S(018982)",
+      "deliveryNotes": ""
+    }
+  ],
+  "monthly-utilization": [
+    { "id": 1, "month": "Feb", "utilization": 68, "revenue": 189000 },
+    { "id": 2, "month": "Mar", "utilization": 74, "revenue": 214000 },
+    { "id": 3, "month": "Apr", "utilization": 79, "revenue": 231000 },
+    { "id": 4, "month": "May", "utilization": 85, "revenue": 258000 },
+    { "id": 5, "month": "Jun", "utilization": 88, "revenue": 271000 },
+    { "id": 6, "month": "Jul", "utilization": 76, "revenue": 243000 }
+  ],
+  "status-distribution": [
+    { "id": 1, "name": "Rented Out", "value": 68, "color": "#f5a623" },
+    { "id": 2, "name": "Available", "value": 22, "color": "#4ade80" },
+    { "id": 3, "name": "Maintenance", "value": 7, "color": "#f87171" },
+    { "id": 4, "name": "In Transit", "value": 3, "color": "#60a5fa" }
+  ],
+  "/recommendations/project-spec": {
+    "_config": true,
+    "description": "POST Instant Quotation (JSON or multipart). Static Instant Quotation DTO using the Singapore catalog.",
+    "mock": {
+      "recommendationId": 1,
+      "ingestId": "ing_mock_001",
+      "userRequirementSummary": "Elevated facade access, site preparation, and compact indoor fit-out",
+      "tentativeStartDate": "2026-09-01",
+      "tentativeEndDate": "2026-09-21",
+      "needsSummary": [
+        {
+          "needId": "need-1",
+          "description": "Elevated access for facade work",
+          "equipmentHints": ["boom lift", "135ft", "4WD"],
+          "quantity": 1
+        },
+        {
+          "needId": "need-2",
+          "description": "Foundation prep and site clearing",
+          "equipmentHints": ["excavator", "earthmoving"],
+          "quantity": 1
+        },
+        {
+          "needId": "need-3",
+          "description": "Compact indoor access",
+          "equipmentHints": ["scissors lift", "indoor"],
+          "quantity": 1
+        }
+      ],
+      "expectedBudget": {
+        "amount": 39690,
+        "currency": "SGD",
+        "source": "mock"
+      },
+      "warnings": [
+        "Quote valid for 48 hours",
+        "Delivery window depends on site access"
+      ],
+      "correlationId": "corr-mock-001",
+      "quoteRef": "QUO-MOCK-1",
+      "confidenceScore": 0.91,
+      "days": 21,
+      "estimatedTotal": 39690,
+      "specSummary": "6-storey building · 8T load · 18m reach · 3 weeks",
+      "rationale": "This bundle covers elevated facade access via the telescopic boom, site preparation via the hydraulic excavator, and compact indoor access via the scissors lift.",
+      "items": [
+        {
+          "rankOrder": 1,
+          "matchScore": 0.95,
+          "reason": "135ft reach covers the elevation requirement; 4WD suits uneven site terrain.",
+          "lineTotal": 12180,
+          "quantity": 1,
+          "equipment": {
+            "id": 1,
+            "name": "JLG 1350SJP Telescopic Boom",
+            "category": "Boom Lift",
+            "baseDailyRate": 580,
+            "weekly": 2600,
+            "capacity": 1,
+            "platformHeight": 135,
+            "purchaseYear": 2023,
+            "location": "Jurong Port",
+            "available": true,
+            "img": "photo-1780054984720-20ccf265317f",
+            "desc": "Telescopic boom lift for reaching elevated work areas — construction, maintenance, painting, electrical.",
+            "tags": ["135ft Reach", "4WD"]
+          }
+        },
+        {
+          "rankOrder": 2,
+          "matchScore": 0.9,
+          "reason": "Foundation prep and site clearing needed before elevated work begins.",
+          "lineTotal": 18690,
+          "quantity": 1,
+          "equipment": {
+            "id": 4,
+            "name": "CAT 320 Hydraulic Excavator",
+            "category": "Excavator",
+            "baseDailyRate": 890,
+            "weekly": 4200,
+            "capacity": 20,
+            "platformHeight": null,
+            "purchaseYear": 2022,
+            "location": "Marina South",
+            "available": true,
+            "img": "photo-1630288214173-a119cf823388",
+            "desc": "Best for heavy earthmoving, trenching, demolition, and foundation work on large construction sites.",
+            "tags": ["GPS Tracked", "Operator Available"]
+          }
+        },
+        {
+          "rankOrder": 3,
+          "matchScore": 0.88,
+          "reason": "Compact indoor access for facade and finishing work in tighter areas.",
+          "lineTotal": 8820,
+          "quantity": 1,
+          "equipment": {
+            "id": 2,
+            "name": "Genie GS-1932 Scissors Lift",
+            "category": "Scissors Lift",
+            "baseDailyRate": 420,
+            "weekly": 1900,
+            "capacity": 1,
+            "platformHeight": 19,
+            "purchaseYear": 2024,
+            "location": "Pioneer",
+            "available": true,
+            "img": "photo-1664312616511-81fe2e745cb3",
+            "desc": "Compact scissors lift suited for indoor and outdoor elevated access on construction and facility sites.",
+            "tags": ["Compact", "Indoor Ready"]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "mock-server.settings.paths.root": "/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal",
+  "mock-server.settings.paths.db": "/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock/db.json",
+  "mock-server.settings.paths.static": "",
+  "mock-server.settings.paths.snapshots": "mock/snapshots",
+  "mock-server.settings.host": "127.0.0.1",
+  "mock-server.settings.port": 4010,
+  "mock-server.settings.base": "/api"
+}
+
