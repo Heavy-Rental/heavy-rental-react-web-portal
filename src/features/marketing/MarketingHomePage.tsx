@@ -57,7 +57,7 @@ export function MarketingHomePage({
             className="text-2xl font-black tracking-tight text-primary"
             style={display}
           >
-            HEAVY<span className="text-foreground"> RENTAL</span>
+            HEAVY<span className="text-foreground"> RENTAL v2</span>
           </span>
           <div className="hidden md:flex items-center gap-8">
             {["Equipment", "Projects", "Safety", "About"].map((l) => (
