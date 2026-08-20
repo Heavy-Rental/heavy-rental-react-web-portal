@@ -229,7 +229,8 @@ describe("DepositCheckout — booking conversion retry", () => {
       bookingId: 1,
       clientSecret: "secret",
       paymentIntentId: "pi_1",
-      depositAmount: 870,
+      amountDue: 870,
+      paymentOption: "DEPOSIT",
     });
     renderDeposit(localOnBeginPayment);
     const user = userEvent.setup();
@@ -248,7 +249,8 @@ describe("DepositCheckout — booking conversion retry", () => {
         bookingId: 2,
         clientSecret: "secret",
         paymentIntentId: "pi_2",
-        depositAmount: 750,
+        amountDue: 750,
+        paymentOption: "DEPOSIT",
       });
     renderDeposit(localOnBeginPayment);
     const user = userEvent.setup();
@@ -316,5 +318,93 @@ describe("DepositCheckout — booking conversion retry", () => {
       await screen.findByText(/too many requests, please try again/i),
     ).toBeInTheDocument();
     expect(screen.queryByText(/price updated/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DepositCheckout — pay in full option (HR-213)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to Deposit and updates the summary breakdown when Pay in Full is selected", async () => {
+    vi.stubEnv("MODE", "mock");
+    render(
+      <DepositCheckout
+        cart={[item]}
+        userName="Alex Tan"
+        paymentIntentId="pi_test"
+        onClose={noop}
+        onBeginPayment={onBeginPayment}
+        onPaid={onPaid}
+      />,
+    );
+    // Deposit (30% of S$2,900) is selected by default.
+    expect(screen.getByRole("button", { name: /deposit \(30%\)/i })).toHaveClass(
+      "bg-primary",
+    );
+    expect(screen.getByText("S$870")).toBeInTheDocument();
+    expect(screen.getByText(/deposit due now/i)).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /pay in full/i }));
+
+    // Full Total Payable (2900 × 1.09 = 3161) is now the amount due, with S$0 balance —
+    // "S$3,161" appears twice (Total Payable row + Amount Due Now, now equal).
+    expect(screen.getByText(/amount due now/i)).toBeInTheDocument();
+    expect(screen.getAllByText("S$3,161").length).toBe(2);
+    expect(screen.getByText("S$0")).toBeInTheDocument();
+  });
+
+  it("threads the selected payment option through to the mock-mode payment step", async () => {
+    vi.stubEnv("MODE", "mock");
+    render(
+      <DepositCheckout
+        cart={[item]}
+        userName="Alex Tan"
+        paymentIntentId="pi_test"
+        onClose={noop}
+        onBeginPayment={onBeginPayment}
+        onPaid={onPaid}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /pay in full/i }));
+    await user.click(screen.getByRole("button", { name: /continue to payment/i }));
+
+    expect(await screen.findByText(/step 2 of 2/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /pay s\$3,161 in full/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("passes the chosen paymentOption to onBeginPayment in API mode", async () => {
+    vi.stubEnv("MODE", "api");
+    const localOnBeginPayment = vi.fn().mockResolvedValue({
+      bookingId: 3,
+      clientSecret: "secret",
+      paymentIntentId: "pi_3",
+      amountDue: 3161,
+      paymentOption: "FULL",
+    });
+    render(
+      <DepositCheckout
+        cart={[item]}
+        userName="Alex Tan"
+        paymentIntentId="pi_test"
+        onClose={noop}
+        onBeginPayment={localOnBeginPayment}
+        onPaid={onPaid}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /pay in full/i }));
+    await user.click(screen.getByRole("button", { name: /continue to payment/i }));
+
+    expect(await screen.findByText(/step 2 of 2/i)).toBeInTheDocument();
+    expect(localOnBeginPayment).toHaveBeenCalledWith("FULL");
+    // Toggle locks once the real booking + intent exist for this option — switching back
+    // to Deposit here couldn't produce a matching PaymentIntent without a fresh call.
+    await user.click(screen.getByRole("button", { name: /back/i }));
+    expect(screen.getByRole("button", { name: /deposit \(30%\)/i })).toBeDisabled();
   });
 });

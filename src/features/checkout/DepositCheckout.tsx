@@ -221,11 +221,6 @@ export function DepositCheckout({
   // Deposit stays the default/primary flow — "Pay in Full" (HR-213) is an opt-in
   // alternative that settles the whole Total Payable (subtotal + GST) in one shot.
   const [paymentOption, setPaymentOption] = useState<PaymentOption>("DEPOSIT");
-  const deposit = apiPayment
-    ? apiPayment.paymentOption === "DEPOSIT"
-      ? apiPayment.amountDue
-      : Math.round(displayTotal * 0.3)
-    : Math.round(displayTotal * 0.3);
   const amountDue =
     apiPayment && apiPayment.paymentOption === paymentOption
       ? apiPayment.amountDue
