@@ -14,6 +14,10 @@ import { mono, display, sans } from "../../lib/styles";
 import { formatDateRange, daysBetweenISO } from "../../lib/dateFormat";
 import { getStripe } from "../../app/stripe";
 import stripeLogo from "../../assets/stripe.svg";
+import {
+  QuoteStaleError,
+  type QuoteStalenessReason,
+} from "./quoteStaleness";
 
 // ─── DEPOSIT CHECKOUT ─────────────────────────────────────────────────────────
 
@@ -104,6 +108,11 @@ export function DepositCheckout({
   // Real-backend-only (MODE === "api"): creates the real booking + Stripe
   // PaymentIntent when the user leaves the summary step. A no-op returning
   // null in mock mode, where booking creation still happens inside onPaid.
+  // May reject with a QuoteStaleError (quote_not_ready/quote_expired) instead of a
+  // plain Error — handled specially below via an explicit "price changed, please
+  // confirm" step rather than the generic beginError surface. Calling this again
+  // after the customer confirms takes the same happy-path branch, since the plan
+  // is freshly QUOTED server-side by then.
   onBeginPayment: () => Promise<ApiDepositPayment | null>;
   // Real-backend-only (MODE === "api"): fetches the authoritative quote for the
   // active RentalPlan purely so the summary can show a "smart priced" badge when
@@ -167,19 +176,32 @@ export function DepositCheckout({
   // list above, rather than trusted directly off quote.totalAmount — the two can drift
   // out of sync (seen live: totalAmount came back as a single item's dailyRate instead
   // of dailyRate×days), which desyncs the Subtotal from the line item shown right above it.
-  const displayTotal = cart.reduce(
-    (s, c) =>
-      s +
-      daysBetweenISO(c.startDate, c.endDate) *
-        displayDailyRate(c.equipment.id, c.equipment.baseDailyRate),
-    0,
-  );
+  // Factored out so the same math can price a candidate re-quote (staleQuote below)
+  // for the "price changed" preview, without duplicating the per-item fallback logic.
+  const totalFromQuote = (q: RentalPlanResponse | null) =>
+    cart.reduce((s, c) => {
+      const rate =
+        q?.items.find((i) => i.assetId === c.equipment.id)?.dailyRate ??
+        c.equipment.baseDailyRate;
+      return s + daysBetweenISO(c.startDate, c.endDate) * rate;
+    }, 0);
+  const displayTotal = totalFromQuote(quote);
   const deposit = apiPayment
     ? apiPayment.depositAmount
     : Math.round(displayTotal * 0.3);
   const [step, setStep] = useState<
-    "summary" | "payment" | "processing" | "failed"
+    "summary" | "price_changed" | "payment" | "processing" | "failed"
   >("summary");
+  // Set only when onBeginPayment rejects with a QuoteStaleError — a candidate re-quote
+  // the customer hasn't confirmed yet. Never written into `quote` until they explicitly
+  // confirm (handleConfirmStalePrice below), so the summary screen's displayed price
+  // never silently changes out from under them.
+  const [staleQuote, setStaleQuote] = useState<RentalPlanResponse | null>(
+    null,
+  );
+  const [staleReason, setStaleReason] = useState<QuoteStalenessReason | null>(
+    null,
+  );
   const [card, setCard] = useState({
     number: "",
     name: userName,
@@ -195,22 +217,54 @@ export function DepositCheckout({
   // the user leaves the summary step (STRIPE_INTEGRATION_HANDOFF.md §4/§5 — the
   // backend has no server-side re-initiation guard yet, so this doubles as the
   // client-side guard against creating a second PaymentIntent for the same booking).
-  const handleContinue = async () => {
-    if (!isApiMode || apiPayment) {
-      setStep("payment");
-      return;
-    }
+  // Shared by the initial "Continue to Payment" click and the post-confirm retry from
+  // the "price changed" step — both just call onBeginPayment() again, since a confirmed
+  // stale quote has already been re-quoted server-side by the time this re-runs.
+  const attemptBeginPayment = async () => {
     setBeginError(null);
     setBeginningPayment(true);
     try {
       const result = await onBeginPayment();
       if (result) setApiPayment(result);
+      setStaleQuote(null);
+      setStaleReason(null);
       setStep("payment");
     } catch (err) {
-      setBeginError(err instanceof Error ? err.message : String(err));
+      if (err instanceof QuoteStaleError) {
+        setStaleQuote(err.refreshedQuote);
+        setStaleReason(err.reason);
+        setStep("price_changed");
+      } else {
+        setStep("summary");
+        setBeginError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBeginningPayment(false);
     }
+  };
+
+  const handleContinue = async () => {
+    if (!isApiMode || apiPayment) {
+      setStep("payment");
+      return;
+    }
+    await attemptBeginPayment();
+  };
+
+  // Syncs `quote` (the source of truth for Subtotal/GST/Total Payable/Balance Due
+  // everywhere else in this component) to the confirmed re-quote BEFORE retrying, so by
+  // the time the retry succeeds every displayed figure — not just the deposit — already
+  // matches what's about to be charged.
+  const handleConfirmStalePrice = async () => {
+    if (!staleQuote) return;
+    setQuote(staleQuote);
+    await attemptBeginPayment();
+  };
+
+  const handleDeclineStalePrice = () => {
+    setStaleQuote(null);
+    setStaleReason(null);
+    setStep("summary");
   };
 
   const fmtCard = (v: string) =>
@@ -312,12 +366,16 @@ export function DepositCheckout({
               className="text-xs text-primary font-semibold tracking-widest uppercase"
               style={mono}
             >
-              {step === "summary"
+              {step === "summary" || step === "price_changed"
                 ? "Step 1 of 2 · Review"
                 : "Step 2 of 2 · Payment"}
             </p>
             <h2 className="text-2xl font-black text-foreground" style={display}>
-              {step === "summary" ? "BOOKING SUMMARY" : "PAY DEPOSIT"}
+              {step === "price_changed"
+                ? "PRICE UPDATED"
+                : step === "summary"
+                  ? "BOOKING SUMMARY"
+                  : "PAY DEPOSIT"}
             </h2>
           </div>
           <button
@@ -458,6 +516,83 @@ export function DepositCheckout({
             >
               {beginningPayment ? "Creating booking…" : "Continue to Payment →"}
             </button>
+          </div>
+        )}
+
+        {/* Step 1b — Price changed (quote_not_ready/quote_expired on conversion) */}
+        {step === "price_changed" && (
+          <div className="p-6 flex flex-col gap-5">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 bg-primary/10 border border-primary/30 flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} className="text-primary" />
+              </div>
+              <div>
+                <h3
+                  className="text-lg font-black text-foreground leading-tight"
+                  style={display}
+                >
+                  Price Updated
+                </h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {staleReason === "quote_expired"
+                    ? "Your quote has expired — here's the current price."
+                    : "We need to confirm current pricing for your rental plan before continuing."}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-secondary/30 border border-border p-4 flex flex-col gap-1">
+                <p
+                  className="text-xs font-semibold text-muted-foreground tracking-widest uppercase"
+                  style={mono}
+                >
+                  Previous
+                </p>
+                <p className="text-sm text-foreground" style={mono}>
+                  Subtotal S${displayTotal.toLocaleString()}
+                </p>
+                <p className="text-lg font-bold text-foreground" style={mono}>
+                  Deposit S${deposit.toLocaleString()}
+                </p>
+              </div>
+              <div className="bg-primary/5 border border-primary/30 p-4 flex flex-col gap-1">
+                <p
+                  className="text-xs font-semibold text-primary tracking-widest uppercase"
+                  style={mono}
+                >
+                  Updated
+                </p>
+                <p className="text-sm text-foreground" style={mono}>
+                  Subtotal S${totalFromQuote(staleQuote).toLocaleString()}
+                </p>
+                <p className="text-lg font-bold text-primary" style={mono}>
+                  Deposit S$
+                  {Math.round(
+                    totalFromQuote(staleQuote) * 0.3,
+                  ).toLocaleString()}
+                </p>
+              </div>
+            </div>
+
+            {beginError && <p className="text-xs text-red-400">{beginError}</p>}
+            <div className="flex gap-3 pt-2 border-t border-border">
+              <button
+                onClick={handleDeclineStalePrice}
+                className="flex-1 py-2.5 border border-border text-muted-foreground text-xs font-bold tracking-widest uppercase hover:text-foreground transition-all"
+              >
+                ← Back to Summary
+              </button>
+              <button
+                onClick={handleConfirmStalePrice}
+                disabled={beginningPayment}
+                className="flex-1 py-2.5 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-50"
+              >
+                {beginningPayment
+                  ? "Confirming…"
+                  : "Confirm New Price & Continue"}
+              </button>
+            </div>
           </div>
         )}
 

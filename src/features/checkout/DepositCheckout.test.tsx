@@ -1,7 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { stubEquipment } from "../../test/equipment";
 import { DepositCheckout } from "./DepositCheckout";
+import { QuoteStaleError } from "./quoteStaleness";
 import type { RentalPlanResponse } from "../../app/types";
 import type { CartItem } from "../cart/CartContext";
 
@@ -190,5 +192,127 @@ describe("DepositCheckout — dynamic pricing", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+  });
+});
+
+describe("DepositCheckout — booking conversion retry", () => {
+  beforeEach(() => {
+    vi.stubEnv("MODE", "api");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const refreshedPlan: RentalPlanResponse = {
+    ...basePlan,
+    totalAmount: 2500,
+    items: [{ ...basePlan.items[0], dailyRate: 500, subtotal: 2500 }],
+    updatedAt: "2026-08-16T09:00:00",
+  };
+
+  const renderDeposit = (localOnBeginPayment: ReturnType<typeof vi.fn>) =>
+    render(
+      <DepositCheckout
+        cart={[item]}
+        userName="Alex Tan"
+        paymentIntentId="pi_test"
+        onClose={noop}
+        onBeginPayment={localOnBeginPayment}
+        onPaid={onPaid}
+      />,
+    );
+
+  it("happy path: converts on the first attempt with no price-changed step", async () => {
+    const localOnBeginPayment = vi.fn().mockResolvedValue({
+      bookingId: 1,
+      clientSecret: "secret",
+      paymentIntentId: "pi_1",
+      depositAmount: 870,
+    });
+    renderDeposit(localOnBeginPayment);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /continue to payment/i }));
+
+    expect(await screen.findByText(/step 2 of 2/i)).toBeInTheDocument();
+    expect(localOnBeginPayment).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/price updated/i)).not.toBeInTheDocument();
+  });
+
+  it("quote_expired: shows a price-changed step, then retries and succeeds on confirm", async () => {
+    const localOnBeginPayment = vi
+      .fn()
+      .mockRejectedValueOnce(new QuoteStaleError(refreshedPlan, "quote_expired"))
+      .mockResolvedValueOnce({
+        bookingId: 2,
+        clientSecret: "secret",
+        paymentIntentId: "pi_2",
+        depositAmount: 750,
+      });
+    renderDeposit(localOnBeginPayment);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /continue to payment/i }));
+
+    expect(
+      await screen.findByRole("heading", { level: 3, name: /price updated/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/your quote has expired/i)).toBeInTheDocument();
+    expect(screen.getByText("Subtotal S$2,900")).toBeInTheDocument(); // previous
+    expect(screen.getByText("Subtotal S$2,500")).toBeInTheDocument(); // updated
+
+    await user.click(
+      screen.getByRole("button", { name: /confirm new price & continue/i }),
+    );
+
+    expect(await screen.findByText(/step 2 of 2/i)).toBeInTheDocument();
+    expect(localOnBeginPayment).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("S$750")).toBeInTheDocument(); // server-confirmed deposit
+  });
+
+  it("quote_not_ready: shows the not-ready-specific copy", async () => {
+    const localOnBeginPayment = vi
+      .fn()
+      .mockRejectedValueOnce(new QuoteStaleError(refreshedPlan, "quote_not_ready"));
+    renderDeposit(localOnBeginPayment);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /continue to payment/i }));
+
+    expect(
+      await screen.findByRole("heading", { level: 3, name: /price updated/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/confirm current pricing for your rental plan/i),
+    ).toBeInTheDocument();
+  });
+
+  it("declining the updated price returns to the summary step, unchanged", async () => {
+    const localOnBeginPayment = vi
+      .fn()
+      .mockRejectedValueOnce(new QuoteStaleError(refreshedPlan, "quote_expired"));
+    renderDeposit(localOnBeginPayment);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /continue to payment/i }));
+    expect(
+      await screen.findByRole("heading", { level: 3, name: /price updated/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /back to summary/i }));
+
+    expect(await screen.findByText(/step 1 of 2/i)).toBeInTheDocument();
+    expect(screen.getByText("S$870")).toBeInTheDocument(); // original deposit, unchanged
+    expect(localOnBeginPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("a generic rejection (e.g. conflict) still surfaces via the existing error message, not a price-changed step", async () => {
+    const localOnBeginPayment = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Too many requests, please try again."));
+    renderDeposit(localOnBeginPayment);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /continue to payment/i }));
+
+    expect(
+      await screen.findByText(/too many requests, please try again/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/price updated/i)).not.toBeInTheDocument();
   });
 });
