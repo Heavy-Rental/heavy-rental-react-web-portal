@@ -161,7 +161,13 @@ export function AssetsTab({
     }
   };
 
-  const isOnRent = (a: AssetRecord) => onRentAssetIds.has(a.id);
+  // Needs-repair overrides on-rent/available for status purposes, matching the Overview
+  // and Fleet Board tabs' `buildFleetAssets` convention (a needs-repair asset is always
+  // "Maintenance," even if it also has an active booking today) — keeps the three states
+  // mutually exclusive and the counts consistent across every admin tab.
+  const isMaintenance = (a: AssetRecord) => a.condition === "NEEDS_REPAIR";
+  const isOnRent = (a: AssetRecord) => onRentAssetIds.has(a.id) && !isMaintenance(a);
+  const isAvailable = (a: AssetRecord) => !onRentAssetIds.has(a.id) && !isMaintenance(a);
 
   const filteredAssets = assets.filter((a) => {
     const q = assetSearch.toLowerCase();
@@ -225,8 +231,8 @@ export function AssetsTab({
             ASSET RECORDS
           </h1>
           <p className="text-muted-foreground mt-2 text-sm">
-            {assets.length} assets · {assets.filter((a) => !isOnRent(a)).length} available ·{" "}
-            {assets.filter((a) => a.condition === "NEEDS_REPAIR").length} need service
+            {assets.length} assets · {assets.filter(isAvailable).length} available ·{" "}
+            {assets.filter(isMaintenance).length} need service
           </p>
         </div>
         <button
@@ -280,7 +286,7 @@ export function AssetsTab({
           { label: "Total Assets", value: assets.length, color: "text-foreground" },
           {
             label: "Available",
-            value: assets.filter((a) => !isOnRent(a)).length,
+            value: assets.filter(isAvailable).length,
             color: "text-green-400",
           },
           {
@@ -290,7 +296,7 @@ export function AssetsTab({
           },
           {
             label: "Need Service",
-            value: assets.filter((a) => a.condition === "NEEDS_REPAIR").length,
+            value: assets.filter(isMaintenance).length,
             color: "text-red-400",
           },
         ].map(({ label, value, color }) => (
@@ -363,9 +369,9 @@ export function AssetsTab({
                   </td>
                   <td className="px-4 py-3">
                     <span
-                      className={`px-2 py-0.5 text-xs font-semibold border ${!isOnRent(a) ? "bg-green-500/10 text-green-400 border-green-500/30" : "bg-amber-500/10 text-amber-400 border-amber-500/30"}`}
+                      className={`px-2 py-0.5 text-xs font-semibold border ${isMaintenance(a) ? "bg-red-500/10 text-red-400 border-red-500/30" : isOnRent(a) ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-green-500/10 text-green-400 border-green-500/30"}`}
                     >
-                      {isOnRent(a) ? "On Rent" : "Available"}
+                      {isMaintenance(a) ? "Maintenance" : isOnRent(a) ? "On Rent" : "Available"}
                     </span>
                   </td>
                   <td className="px-4 py-3">
