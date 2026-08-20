@@ -385,6 +385,16 @@ All in `src/features/customer/CustomerPortal.tsx`.
    already covers "the price shown might be stale" the same way it already covers the existing
    item-add/remove revert case.
 
+   **Correction (2026-08-20, HR-205):** the unconditional re-quote this point relies on was removed —
+   it was itself the cause of a separate bug (a silently different price could get charged than the one
+   displayed; see `Spec-dynamic-pricing-e2e.md` §4.5's 2026-08-20 entry). The revert-to-`DRAFT` case this
+   point describes is still covered, but reactively now: `createBookingFromPlan` gets a `409
+   quote_not_ready` against a plan that reverted to `DRAFT`, which is caught and turned into an explicit
+   "Price Updated" confirmation step (`Spec-dynamic-pricing-e2e.md` §4.6) rather than a silent re-quote.
+   The sequencing claim above (PATCH-before-quote is satisfied by construction, since `onSave` always
+   precedes `DepositCheckout`) still holds — it just now applies to the *reactive* re-quote inside
+   `onBeginPayment`'s catch branch instead of an unconditional one before every attempt.
+
 **Tests:** same call as Phase 1's Sub-task 4/5 — `CustomerPortal.tsx` has no automated test harness, so this
 is manual-verification territory (below), not new automated coverage. `api.test.ts` coverage for the new
 `updateSiteAddress` client function (Sub-task 7) is the automated piece.
@@ -434,3 +444,10 @@ caller goes through it instead of calling `rentalPlanCartApi.quote()` directly; 
 awaited and shared instead of duplicated, and a fresh one only starts once the previous has settled. Verified
 live: before the fix, every checkout attempt showed one `200` and one `409` on `/quote` (order
 nondeterministic, matching the race); after, exactly one call.
+
+**Update (2026-08-20, HR-205):** `onBeginPayment`'s trigger for calling `quoteRentalPlan()` changed — it no
+longer fires on every "Continue to Payment" click, only reactively on a `409 quote_not_ready`/`quote_expired`
+rejection from `createBookingFromPlan` (`Spec-dynamic-pricing-e2e.md` §4.5). This makes the race window
+described above much narrower in practice (the two call sites overlap far less often now), but the
+`quoteRentalPlan()` dedup wrapper documented here remains in place and is still the correct mechanism should
+they ever overlap — nothing about this fix removed the need for it.
