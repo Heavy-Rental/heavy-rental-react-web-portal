@@ -298,9 +298,19 @@ export interface CreateDepositIntentResponse {
   paymentIntentId: string;
 }
 
+// Same response shape as the deposit intent (clientSecret + paymentIntentId) —
+// only the charged amount differs server-side (booking.totalAmount vs
+// booking.depositAmount). Backend endpoint: HR-213.
+export type CreateFullPaymentIntentResponse = CreateDepositIntentResponse;
+
 export const paymentApi = {
   createDepositIntent: (bookingId: number) =>
     request<CreateDepositIntentResponse>("/payments/deposit-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId }),
+    }),
+  createFullPaymentIntent: (bookingId: number) =>
+    request<CreateFullPaymentIntentResponse>("/payments/full-payment-intent", {
       method: "POST",
       body: JSON.stringify({ bookingId }),
     }),

@@ -78,6 +78,10 @@ export interface RentalPlan {
 
 export type BookingStatus = "PENDING_DEPOSIT" | "PENDING_CONFIRMED" | "CONFIRMED" | "MOBILISED" | "COMPLETED" | "CANCELLED";
 export type PaidStatus = "UNPAID" | "DEPOSIT" | "FULL";
+// Which way the customer chooses to pay at checkout (DepositCheckout.tsx) — DEPOSIT
+// remains the default/primary flow, FULL is an opt-in alternative that settles the
+// booking (PaidStatus "FULL") in one shot instead of deposit-now/balance-later.
+export type PaymentOption = "DEPOSIT" | "FULL";
 
 export interface Booking {
   id: number;

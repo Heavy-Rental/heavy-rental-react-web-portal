@@ -1,4 +1,5 @@
 import type { CartItem } from "../cart/CartContext";
+import type { PaymentOption } from "../../app/types";
 
 const STORAGE_KEY = "hr_pending_deposit_payment";
 
@@ -6,7 +7,10 @@ export interface PendingDepositPayment {
   bookingId: number;
   paymentIntentId: string;
   clientSecret: string;
-  depositAmount: number;
+  // The amount actually charged for this PaymentIntent — the deposit amount when
+  // paymentOption is "DEPOSIT", or the full total when "FULL" (HR-213).
+  amountDue: number;
+  paymentOption: PaymentOption;
   cart: CartItem[];
 }
 
