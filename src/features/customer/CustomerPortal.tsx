@@ -58,8 +58,7 @@ import { generateFakePaymentIntentId } from "../checkout/payment";
 import { DepositCheckout } from "../checkout/DepositCheckout";
 import { CartDrawer } from "../checkout/CartDrawer";
 import { ConfirmationScreen } from "../checkout/ConfirmationScreen";
-import { buildRentalPlanViews, type RentalPlan } from "../checkout/rentalPlan";
-import { RentalPlanDetail } from "../checkout/RentalPlanDetail";
+import { buildMyBookings } from "./myBookings";
 import { CustomerProfilePage } from "./CustomerProfilePage";
 import { EquipmentDetailPage } from "./EquipmentDetailPage";
 
@@ -135,7 +134,6 @@ export function CustomerPortal({
   // Simulated Stripe PaymentIntent id — minted client-side per checkout attempt so both the
   // DepositCheckout failure screen and the confirmation screen can reference the same id.
   const [paymentIntentId, setPaymentIntentId] = useState("");
-  const [selectedPlan, setSelectedPlan] = useState<RentalPlan | null>(null);
   // API-mode only: set on mount if the app was just returned to from a Stripe redirect
   // (a 3DS challenge or redirect-based payment method that `confirmPayment({ redirect:
   // "if_required" })` can still trigger) whose outcome isn't a clean "show the normal
@@ -264,13 +262,17 @@ export function CustomerPortal({
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
   const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const depots = depotsRes.data ?? [];
+  // Still fetched (not just for the reload below) — buildMyBookings' mock-mode branch
+  // joins Booking.rentalPlanId -> RentalPlan.userId through this data, since the mock
+  // server's bookings have no customer name of their own to filter by.
   const rentalPlansRes = useApiResource((signal) => rentalPlanApi.list(signal));
-  const rentalPlans = useMemo(
+  const bookingsRes = useApiResource((signal) => bookingApi.list(signal));
+  const myBookings = useMemo(
     () =>
-      rentalPlansRes.status === "success" && userId !== null
-        ? buildRentalPlanViews(rentalPlansRes.data, equipment, userId)
+      bookingsRes.status === "success"
+        ? buildMyBookings(bookingsRes.data, rentalPlansRes.data ?? [], equipment, userId)
         : [],
-    [rentalPlansRes.status, rentalPlansRes.data, equipment, userId],
+    [bookingsRes.status, bookingsRes.data, rentalPlansRes.data, equipment, userId],
   );
 
   const [highlightId, setHighlightId] = useState<number | null>(null);
@@ -709,7 +711,6 @@ export function CustomerPortal({
     setEditMode(false);
     setConfirmed(false);
     setConfirmedOrder(null);
-    setSelectedPlan(null);
   };
 
   if (resumeNotice) {
@@ -773,19 +774,6 @@ export function CustomerPortal({
     );
   }
 
-  // ── RENTAL PLAN DETAIL PAGE ──────────────────────────────────────────────────
-  if (selectedPlan) {
-    return (
-      <RentalPlanDetail
-        plan={selectedPlan}
-        userName={userName}
-        onHome={goHome}
-        onBack={() => setSelectedPlan(null)}
-        onLogout={onLogout}
-      />
-    );
-  }
-
   // ── USER PROFILE PAGE ────────────────────────────────────────────────────────
   if (profileOpen) {
     return (
@@ -797,12 +785,8 @@ export function CustomerPortal({
         setProfileForm={setProfileForm}
         editMode={editMode}
         setEditMode={setEditMode}
-        rentalPlans={rentalPlans}
+        bookings={myBookings}
         onBack={() => setProfileOpen(false)}
-        onSelectPlan={(plan) => {
-          setProfileOpen(false);
-          setSelectedPlan(plan);
-        }}
       />
     );
   }
@@ -903,11 +887,9 @@ export function CustomerPortal({
             className="text-xs text-primary font-semibold tracking-widest uppercase mb-2"
             style={mono}
           >
-            {onboardingMode === "browse"
-              ? "Browsing · No pressure"
-              : onboardingMode === "specs"
-                ? "Based on your specs"
-                : `Welcome back, ${userName.split(" ")[0]}`}
+            {onboardingMode === "specs"
+              ? "Based on your specs"
+              : `Welcome back, ${userName.split(" ")[0]}`}
           </p>
           <h1
             className="text-5xl font-black text-foreground leading-none"
@@ -1299,6 +1281,7 @@ export function CustomerPortal({
             });
             const rid = `RNT-${String(booking.id).padStart(4, "0")}`;
             rentalPlansRes.reload();
+            bookingsRes.reload();
             setReservationId(rid);
             setConfirmedOrder({
               items: cart,
