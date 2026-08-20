@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | **Feature** | Admin Dashboard — Real Backend (API Mode) Compatibility Fixes |
-| **Status** | Implemented — FIX-01 through FIX-03 committed; FIX-04 and FIX-05 added in a later pass on this branch, also committed; FIX-06 added in a further pass, also committed |
+| **Status** | Implemented — FIX-01 through FIX-03 committed; FIX-04 and FIX-05 added in a later pass on this branch, also committed; FIX-06 added in a further pass, also committed; CHANGE-03 (Bookings tab default sort order) added in a further pass, also committed |
 | **Module** | `heavy-rental-react-web-portal` |
 | **Primary surface** | Admin dashboard (`src/features/admin/`), shared API client (`src/app/api.ts`), shared data-fetch hook (`src/app/useApiResource.ts`) |
 | **Method** | Live debugging against the real Spring Boot backend (`heavy-rental-rest-api`) in `npm run dev:api` mode, driven by browser console/network errors |
@@ -195,6 +195,14 @@ The Admin Dashboard's "Pricing" tab (`src/features/admin/pricing/PricingTab.tsx`
 
 Both fixes are additive/opt-in on `ChartTip` (`unit`/`valueFormatter` both default to unset), so neither one affects the other two charts sharing that component.
 
+### CHANGE-03: Admin Bookings tab now sorts newest-first
+
+**GIVEN** `BookingsTab.tsx`'s `filteredBookings` derivation previously ran only a search/status `.filter(...)` over the `bookings` prop, preserving whatever order `bookingApi.list()` returned the underlying records in (ascending by `apiId` — oldest booking first)
+**WHEN** an admin opens the Bookings tab
+**THEN** the most recent bookings are on the last page (page 22 of 22 in a 110-booking sample) instead of the first, forcing admins to page all the way through to see current activity.
+
+**Fix**: added `.sort((a, b) => b.apiId - a.apiId)` after the existing `.filter(...)` in `filteredBookings` (`BookingsTab.tsx`), so the table — and its pagination — now lists bookings newest-first. Sorts on `apiId` (the raw numeric booking id backing the zero-padded `RNT-XXXX` display id) rather than the display string, so ordering stays numerically correct past 4-digit ids. Applies identically under `dev:mock` and `dev:api`, since it operates on the already-normalized `BookingRow[]` regardless of which shape (`buildBookingRows`) built it from.
+
 ---
 
 ## 9. Change control
@@ -207,3 +215,4 @@ Both fixes are additive/opt-in on `ChartTip` (`unit`/`valueFormatter` both defau
 | 0.4.0 | 2026-08-13 | Added FIX-04 (admin Bookings equipment column / search crash, `assetName` → `items: BookingItemLine[]` after a backend shape change) and FIX-05 (`BookingStatus` widened from 5 to the real 6 values; "Paid" column/filter removed after the backend dropped `PaidStatus` entirely) — both found while continuing to exercise the admin Bookings tab against the real backend. §4 item 2 marked resolved by FIX-05 rather than removed, to keep the other items' numbering stable for existing cross-references. |
 | 0.5.0 | 2026-08-14 | Restored FIX-04/FIX-05's writeups (a prior save had left placeholder text — `[... FIX-04 body as above ...]` — in their place; replaced with the actual GIVEN/WHEN/THEN content). Added FIX-06 to §3: redefined the admin Users tab's Active/Inactive status from a dead mock-only rental-plan check to real in-progress bookings, replaced the always-zero "Active" stat card with an "Admin" role count, and fixed Add Customer to surface the backend's one-time generated `temporaryPassword` instead of discarding it — all found while auditing the Users tab's CRUD completeness against the real backend. |
 | 0.6.0 | 2026-08-14 | Corrected FIX-05's `BOOKING_STAT_GROUPS` description: it no longer lives only in `BookingsTab.tsx` — it was relocated to a shared export in `adminFormat.ts` so the Overview tab's Booking Status panel could adopt the identical Pending/Confirmed/Mobilised/Completed/Cancelled grouping instead of listing all 6 raw statuses. See the new `Spec-admin-overview-real-data-wiring.md` (CHANGE-04) for the full writeup of that change, plus three other Overview-tab fixes (Alerts → Top Customers, Recent Activity wired to real bookings in place of hardcoded fake lifecycle data, and Fleet Health/Fleet Board deployment status wired to real bookings + condition instead of a round-robin placeholder). |
+| 0.7.0 | 2026-08-20 | Added CHANGE-03 to §8: the admin Bookings tab's `filteredBookings` now sorts by `apiId` descending, so the table and its pagination show newest bookings first instead of oldest-first. Not API-mode specific — kept in §8 alongside CHANGE-01/CHANGE-02. |
