@@ -56,6 +56,7 @@ import { EquipmentGrid } from "../browse/EquipmentGrid";
 import { SiteAddressModal } from "../checkout/SiteAddressModal";
 import { generateFakePaymentIntentId } from "../checkout/payment";
 import { DepositCheckout } from "../checkout/DepositCheckout";
+import { QuoteStaleError, isQuoteStaleCode } from "../checkout/quoteStaleness";
 import { CartDrawer } from "../checkout/CartDrawer";
 import { ConfirmationScreen } from "../checkout/ConfirmationScreen";
 import { buildMyBookings } from "./myBookings";
@@ -1136,18 +1137,15 @@ export function CustomerPortal({
                 "Your rental plan couldn't be found — please refresh and try again.",
               );
             }
-            // Re-quote immediately before converting the plan (re-quoting a QUOTED plan is
-            // explicitly allowed — it's the stale-quote recovery path) so the plan is
-            // guaranteed QUOTED and the amount about to be charged is the freshest one.
-            // Goes through quoteRentalPlan(), not rentalPlanCartApi.quote() directly, so if
-            // DepositCheckout's own display-only quote (onGetQuote above) is still in
-            // flight, this awaits that same call instead of firing a concurrent one that
-            // would 409 — this is what keeps the charged amount from silently reverting to
-            // flat base-rate math once dynamic pricing is live (specification/frontend-handoff.md),
-            // and what keeps "Continue to Payment" from ever failing on a lock conflict
-            // that was never a real conflict, just two legitimate callers.
+            // Attempt conversion directly against whatever quote is already active
+            // server-side — no forced pre-emptive re-quote. This is the happy path for
+            // the overwhelming majority of checkouts: it succeeds at the exact price
+            // already shown on the summary step, so the customer never sees a second,
+            // silently different price on the Stripe payment step. Only on a confirmed
+            // 409 quote_not_ready/quote_expired rejection do we re-quote — see the catch
+            // block below, which surfaces that as a QuoteStaleError for DepositCheckout
+            // to show an explicit "price updated, please confirm" step before retrying.
             try {
-              await quoteRentalPlan(planId);
               const booking = await createBookingFromPlan({
                 rentalPlanId: planId,
                 siteAddress,
@@ -1163,6 +1161,16 @@ export function CustomerPortal({
                 depositAmount: booking.depositAmount,
               };
             } catch (err) {
+              // Plan genuinely was never quoted, or its quote is >24h stale. Re-quote once
+              // — via quoteRentalPlan() so this dedupes against any still-in-flight
+              // DepositCheckout onGetQuote() call instead of firing a concurrent one that
+              // would itself 409 — and hand the fresh plan back as a QuoteStaleError rather
+              // than retrying automatically: the customer must see and confirm the new
+              // price before we charge it.
+              if (err instanceof ApiError && isQuoteStaleCode(err.code)) {
+                const refreshed = await quoteRentalPlan(planId);
+                throw new QuoteStaleError(refreshed, err.code);
+              }
               // Both quote() and createBookingFromPlan() 409 with "already_converted" if this
               // plan already turned into a Booking in an earlier attempt (e.g. this same
               // checkout succeeded once but the client never got to clear its cart — a
