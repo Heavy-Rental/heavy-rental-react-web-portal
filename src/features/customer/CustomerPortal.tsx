@@ -1,5 +1,13 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { User, Upload, ShoppingCart, LogOut, CheckCircle, X } from "lucide-react";
+import {
+  User,
+  Upload,
+  ShoppingCart,
+  LogOut,
+  CheckCircle,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 import { CustomerOnboarding } from "../browse/CustomerOnboarding";
 import { equipmentImageSrc } from "../browse/equipmentImageSrc";
 import type { Asset as EquipmentItem, OnboardingMode, RentalPlanResponse } from "../../app/types";
@@ -13,8 +21,14 @@ import {
   calcFullPaymentDueDate,
   createBookingFromPlan,
   paymentApi,
+  waitForBookingConfirmed,
   ApiError,
 } from "../../app/api";
+import { getStripe } from "../../app/stripe";
+import {
+  loadPendingDepositPayment,
+  clearPendingDepositPayment,
+} from "../checkout/pendingDepositPayment";
 import { useApiResource } from "../../app/useApiResource";
 import { mono, display, sans } from "../../lib/styles";
 import {
@@ -45,8 +59,7 @@ import { DepositCheckout } from "../checkout/DepositCheckout";
 import { QuoteStaleError, isQuoteStaleCode } from "../checkout/quoteStaleness";
 import { CartDrawer } from "../checkout/CartDrawer";
 import { ConfirmationScreen } from "../checkout/ConfirmationScreen";
-import { buildRentalPlanViews, type RentalPlan } from "../checkout/rentalPlan";
-import { RentalPlanDetail } from "../checkout/RentalPlanDetail";
+import { buildMyBookings } from "./myBookings";
 import { CustomerProfilePage } from "./CustomerProfilePage";
 import { EquipmentDetailPage } from "./EquipmentDetailPage";
 
@@ -122,7 +135,104 @@ export function CustomerPortal({
   // Simulated Stripe PaymentIntent id — minted client-side per checkout attempt so both the
   // DepositCheckout failure screen and the confirmation screen can reference the same id.
   const [paymentIntentId, setPaymentIntentId] = useState("");
-  const [selectedPlan, setSelectedPlan] = useState<RentalPlan | null>(null);
+  // API-mode only: set on mount if the app was just returned to from a Stripe redirect
+  // (a 3DS challenge or redirect-based payment method that `confirmPayment({ redirect:
+  // "if_required" })` can still trigger) whose outcome isn't a clean "show the normal
+  // confirmation screen" — either because the payment didn't succeed, or because it did
+  // but the pre-redirect cart snapshot (sessionStorage) is missing so there's nothing to
+  // render ConfirmationScreen from.
+  const [resumeNotice, setResumeNotice] = useState<{
+    status: "processing" | "failed";
+    message: string;
+  } | null>(null);
+
+  // Resumes a checkout interrupted by a Stripe redirect. Runs once on mount, before
+  // anything else has a chance to render — a real browser navigation (not the in-page
+  // confirmPayment() resolution the common case takes) clears every bit of in-memory
+  // React state this component would otherwise rely on, so this reconstructs what it can
+  // from Stripe's own return-URL params + the clientSecret-matched sessionStorage
+  // snapshot saved just before the redirect (DepositCheckout.tsx).
+  useEffect(() => {
+    if (!isApiMode) return;
+    const params = new URLSearchParams(window.location.search);
+    const clientSecret = params.get("payment_intent_client_secret");
+    const redirectStatus = params.get("redirect_status");
+    if (!clientSecret || !redirectStatus) return;
+
+    // Strip Stripe's return params immediately so a later refresh doesn't re-run this.
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.hash,
+    );
+
+    (async () => {
+      const stripe = await getStripe();
+      if (!stripe) return;
+      const { paymentIntent } = await stripe.retrievePaymentIntent(clientSecret);
+      if (!paymentIntent) return;
+
+      const pending = loadPendingDepositPayment();
+      const matchesPending = pending?.clientSecret === clientSecret;
+
+      if (paymentIntent.status === "succeeded") {
+        if (!matchesPending) {
+          // Stripe's client-side PaymentIntent carries no metadata/booking reference
+          // (that's server-side-only), and the sessionStorage snapshot that would
+          // normally supply it is gone — cleared storage, or the redirect landed in a
+          // different tab/browser than the one that started checkout. Nothing left to
+          // reconstruct a booking from; give the customer a reference number instead.
+          setResumeNotice({
+            status: "processing",
+            message: `Your payment went through (reference ${paymentIntent.id}), but we couldn't automatically match it to a booking on this device. Check My Rental Plans, or contact support if it doesn't appear shortly.`,
+          });
+          return;
+        }
+        const booking = await waitForBookingConfirmed(pending.bookingId).catch(
+          () => null,
+        );
+        clearPendingDepositPayment();
+        setReservationId(`RNT-${String(pending.bookingId).padStart(4, "0")}`);
+        setConfirmedOrder({
+          items: pending.cart,
+          totalCost: pending.cart.reduce(
+            (s, c) =>
+              s +
+              daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate,
+            0,
+          ),
+          depositPaid: booking?.depositAmount ?? pending.depositAmount,
+        });
+        setPaymentIntentId(paymentIntent.id);
+        setCheckoutOpen(false);
+        setConfirmed(true);
+        setCart([]);
+        setPlanId(null);
+        setPlanItemIds({});
+        return;
+      }
+
+      if (paymentIntent.status === "processing") {
+        setResumeNotice({
+          status: "processing",
+          message:
+            "Your payment is still being processed by your bank. We'll confirm your booking as soon as it clears — no need to retry.",
+        });
+        return;
+      }
+
+      // requires_payment_method, canceled, etc. — nothing left to resume.
+      clearPendingDepositPayment();
+      setResumeNotice({
+        status: "failed",
+        message:
+          "Your payment wasn't completed. Please try again from My Rental Plans, or contact support if you believe you were charged.",
+      });
+    })();
+    // Deliberately once-on-mount: this reacts to the URL Stripe redirected back to, not
+    // to any state this component itself manages.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Shared date-range bar (Spec-frontend-ui-changes.md Screen 6) — every cart item is
   // selected against this one range, instead of each machine picking its own dates.
@@ -153,13 +263,17 @@ export function CustomerPortal({
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
   const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const depots = depotsRes.data ?? [];
+  // Still fetched (not just for the reload below) — buildMyBookings' mock-mode branch
+  // joins Booking.rentalPlanId -> RentalPlan.userId through this data, since the mock
+  // server's bookings have no customer name of their own to filter by.
   const rentalPlansRes = useApiResource((signal) => rentalPlanApi.list(signal));
-  const rentalPlans = useMemo(
+  const bookingsRes = useApiResource((signal) => bookingApi.list(signal));
+  const myBookings = useMemo(
     () =>
-      rentalPlansRes.status === "success" && userId !== null
-        ? buildRentalPlanViews(rentalPlansRes.data, equipment, userId)
+      bookingsRes.status === "success"
+        ? buildMyBookings(bookingsRes.data, rentalPlansRes.data ?? [], equipment, userId)
         : [],
-    [rentalPlansRes.status, rentalPlansRes.data, equipment, userId],
+    [bookingsRes.status, bookingsRes.data, rentalPlansRes.data, equipment, userId],
   );
 
   const [highlightId, setHighlightId] = useState<number | null>(null);
@@ -598,8 +712,53 @@ export function CustomerPortal({
     setEditMode(false);
     setConfirmed(false);
     setConfirmedOrder(null);
-    setSelectedPlan(null);
   };
+
+  if (resumeNotice) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div
+          className="bg-card border border-border w-full max-w-md p-6 flex flex-col gap-5"
+          style={sans}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`w-9 h-9 border flex items-center justify-center shrink-0 ${
+                resumeNotice.status === "failed"
+                  ? "bg-red-500/10 border-red-500/30"
+                  : "bg-primary/10 border-primary/30"
+              }`}
+            >
+              {resumeNotice.status === "failed" ? (
+                <AlertTriangle size={18} className="text-red-400" />
+              ) : (
+                <CheckCircle size={18} className="text-primary" />
+              )}
+            </div>
+            <div>
+              <h3
+                className="text-lg font-black text-foreground leading-tight"
+                style={display}
+              >
+                {resumeNotice.status === "failed"
+                  ? "Payment Not Completed"
+                  : "Payment Update"}
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                {resumeNotice.message}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setResumeNotice(null)}
+            className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (confirmed && confirmedOrder) {
     return (
@@ -616,19 +775,6 @@ export function CustomerPortal({
     );
   }
 
-  // ── RENTAL PLAN DETAIL PAGE ──────────────────────────────────────────────────
-  if (selectedPlan) {
-    return (
-      <RentalPlanDetail
-        plan={selectedPlan}
-        userName={userName}
-        onHome={goHome}
-        onBack={() => setSelectedPlan(null)}
-        onLogout={onLogout}
-      />
-    );
-  }
-
   // ── USER PROFILE PAGE ────────────────────────────────────────────────────────
   if (profileOpen) {
     return (
@@ -640,12 +786,8 @@ export function CustomerPortal({
         setProfileForm={setProfileForm}
         editMode={editMode}
         setEditMode={setEditMode}
-        rentalPlans={rentalPlans}
+        bookings={myBookings}
         onBack={() => setProfileOpen(false)}
-        onSelectPlan={(plan) => {
-          setProfileOpen(false);
-          setSelectedPlan(plan);
-        }}
       />
     );
   }
@@ -746,11 +888,9 @@ export function CustomerPortal({
             className="text-xs text-primary font-semibold tracking-widest uppercase mb-2"
             style={mono}
           >
-            {onboardingMode === "browse"
-              ? "Browsing · No pressure"
-              : onboardingMode === "specs"
-                ? "Based on your specs"
-                : `Welcome back, ${userName.split(" ")[0]}`}
+            {onboardingMode === "specs"
+              ? "Based on your specs"
+              : `Welcome back, ${userName.split(" ")[0]}`}
           </p>
           <h1
             className="text-5xl font-black text-foreground leading-none"
@@ -1048,6 +1188,27 @@ export function CustomerPortal({
                   { cause: err },
                 );
               }
+              // createDepositIntent's booking-already-has-a-deposit 409 (PaymentService's
+              // generic ResponseStatusException — falls under the same "conflict" code as
+              // any other 409, so the message is what actually identifies it). Reachable
+              // once the booking above is created but the deposit-intent call that follows
+              // it fails: a previous attempt for this same booking already initiated or
+              // completed a deposit payment. Same self-heal as already_converted — retrying
+              // "Continue to Payment" against this planId can't succeed either way, since
+              // the plan converted the moment the booking was created.
+              if (
+                err instanceof ApiError &&
+                err.code === "conflict" &&
+                /deposit/i.test(err.message)
+              ) {
+                setCart([]);
+                setPlanItemIds({});
+                setPlanId(null);
+                throw new Error(
+                  "A deposit payment for this booking was already started on a previous attempt — your cart has been cleared. If that payment didn't go through, please contact support before trying again so you aren't charged twice.",
+                  { cause: err },
+                );
+              }
               throw err;
             }
           }}
@@ -1128,6 +1289,7 @@ export function CustomerPortal({
             });
             const rid = `RNT-${String(booking.id).padStart(4, "0")}`;
             rentalPlansRes.reload();
+            bookingsRes.reload();
             setReservationId(rid);
             setConfirmedOrder({
               items: cart,

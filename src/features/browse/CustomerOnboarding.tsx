@@ -72,6 +72,7 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
       eq: toEquipment(item.equipment),
       reason: item.reason,
       lineTotal: item.lineTotal,
+      quantity: item.quantity,
       rankOrder: item.rankOrder,
       matchScore: item.matchScore,
     }));
@@ -110,7 +111,6 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
     <ChooseModeScreen
       userName={userName}
       onKnowWhatIWant={() => onDone("know")}
-      onBrowse={() => onDone("browse")}
       onUploadSpecs={() => setStep("upload")}
     />
   );
