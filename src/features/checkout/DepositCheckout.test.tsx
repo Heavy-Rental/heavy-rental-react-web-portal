@@ -348,14 +348,11 @@ describe("DepositCheckout — pay in full option (HR-213)", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /pay in full/i }));
 
-    // Full is 100% of the S$2,900 pre-GST subtotal (matching Booking.totalAmount — GST
-    // is display-only, never actually charged), with S$0 balance — "S$2,900" now appears
-    // three times (equipment line item + Subtotal row + Amount Due Now, all equal).
-    // Total Payable (S$3,161, GST-inclusive) stays purely informational and unaffected
-    // by the toggle.
+    // Full is GST-inclusive (2900 × 1.09 = 3161, real money unlike the deposit/balance
+    // split), so it now matches the Total Payable row exactly — "S$3,161" appears twice
+    // (Total Payable + Amount Due Now) — with S$0 balance.
     expect(screen.getByText(/amount due now/i)).toBeInTheDocument();
-    expect(screen.getAllByText("S$2,900").length).toBe(3);
-    expect(screen.getByText("S$3,161")).toBeInTheDocument();
+    expect(screen.getAllByText("S$3,161").length).toBe(2);
     expect(screen.getByText("S$0")).toBeInTheDocument();
   });
 
@@ -377,7 +374,7 @@ describe("DepositCheckout — pay in full option (HR-213)", () => {
 
     expect(await screen.findByText(/step 2 of 2/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /pay s\$2,900 in full/i }),
+      screen.getByRole("button", { name: /pay s\$3,161 in full/i }),
     ).toBeInTheDocument();
   });
 
@@ -387,7 +384,7 @@ describe("DepositCheckout — pay in full option (HR-213)", () => {
       bookingId: 3,
       clientSecret: "secret",
       paymentIntentId: "pi_3",
-      amountDue: 2900,
+      amountDue: 3161,
       paymentOption: "FULL",
     });
     render(

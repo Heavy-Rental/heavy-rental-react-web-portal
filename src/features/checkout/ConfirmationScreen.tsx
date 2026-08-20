@@ -110,6 +110,17 @@ export function ConfirmationScreen({
                 S${confirmedTotal.toLocaleString()}
               </span>
             </div>
+            {isFullPayment && (
+              // Derived from depositPaid − confirmedTotal (rather than recomputing
+              // × 0.09 independently) so this always reconciles exactly with the
+              // "Paid in Full" row below, regardless of rounding.
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">GST (9%)</span>
+                <span className="font-semibold text-foreground" style={mono}>
+                  S${(depositPaid - confirmedTotal).toLocaleString()}
+                </span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-sm">
               <span className="text-green-400 font-semibold">
                 {isFullPayment ? "Paid in Full" : "Deposit Paid (30%)"}

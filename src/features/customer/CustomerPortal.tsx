@@ -202,14 +202,15 @@ export function CustomerPortal({
               daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate,
             0,
           ),
-          // Booking.depositAmount always reflects the standard 30% split regardless of
-          // which intent was actually paid (backend keeps computing it that way at
-          // booking-creation time) — for a full payment the authoritative charged amount
-          // is Booking.totalAmount instead, so only trust the server figure for the
-          // matching paymentOption and fall back to the pre-redirect snapshot otherwise.
+          // Booking.depositAmount is live server truth (dynamic pricing can move it between
+          // the pre-redirect snapshot and now), so prefer it over the snapshot for deposits.
+          // Full payment has no equivalent live field to re-fetch — the GST-inclusive charged
+          // amount is computed once by the full-payment-intent endpoint and never persisted
+          // on the booking itself (Booking.totalAmount stays pre-GST) — so the pre-redirect
+          // snapshot (sourced from that same intent response) is the only figure available.
           depositPaid:
             pending.paymentOption === "FULL"
-              ? (booking?.totalAmount ?? pending.amountDue)
+              ? pending.amountDue
               : (booking?.depositAmount ?? pending.amountDue),
           paymentOption: pending.paymentOption,
         });
@@ -1162,20 +1163,29 @@ export function CustomerPortal({
                 deliveryNotes: deliveryNotes || undefined,
               });
               // Deposit is the default/primary flow (HR-213) — Pay in Full charges the
-              // booking's full totalAmount in one shot via a sibling intent endpoint
-              // instead of the 30% depositAmount.
-              const intent =
-                paymentOption === "FULL"
-                  ? await paymentApi.createFullPaymentIntent(booking.bookingId)
-                  : await paymentApi.createDepositIntent(booking.bookingId);
+              // booking's totalAmount plus GST in one shot via a sibling intent endpoint,
+              // instead of the (GST-free) 30% depositAmount. Unlike the deposit amount
+              // (already known from the booking response), the GST-inclusive full amount
+              // only exists once the backend computes and returns it — it's never
+              // persisted on the booking itself — so it's read off the intent response.
+              if (paymentOption === "FULL") {
+                const intent = await paymentApi.createFullPaymentIntent(
+                  booking.bookingId,
+                );
+                return {
+                  bookingId: booking.bookingId,
+                  clientSecret: intent.clientSecret,
+                  paymentIntentId: intent.paymentIntentId,
+                  amountDue: intent.amount,
+                  paymentOption,
+                };
+              }
+              const intent = await paymentApi.createDepositIntent(booking.bookingId);
               return {
                 bookingId: booking.bookingId,
                 clientSecret: intent.clientSecret,
                 paymentIntentId: intent.paymentIntentId,
-                amountDue:
-                  paymentOption === "FULL"
-                    ? booking.totalAmount
-                    : booking.depositAmount,
+                amountDue: booking.depositAmount,
                 paymentOption,
               };
             } catch (err) {
@@ -1278,11 +1288,12 @@ export function CustomerPortal({
                   c.equipment.baseDailyRate,
               0,
             );
-            // Deposit is the default/primary flow (HR-213) — Pay in Full settles 100% of
-            // `cost` (Booking.totalAmount) in one payment instead of the 30% deposit.
-            // Matches DepositCheckout's own amountDue calc: GST is a display-only line on
-            // the checkout summary, never actually part of what's charged or stored here.
-            const amountPaid = paymentOption === "FULL" ? cost : calcDeposit(cost);
+            // Deposit is the default/primary flow (HR-213) — Pay in Full settles `cost`
+            // plus GST in one payment instead of the (GST-free) 30% deposit. Matches
+            // DepositCheckout's own amountDue calc and the intent.amount the real backend
+            // will return for this flow.
+            const amountPaid =
+              paymentOption === "FULL" ? Math.round(cost * 1.09) : calcDeposit(cost);
             const plan = await rentalPlanApi.create({
               userId,
               status: "active",

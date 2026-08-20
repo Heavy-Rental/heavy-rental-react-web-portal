@@ -219,19 +219,18 @@ export function DepositCheckout({
     }, 0);
   const displayTotal = totalFromQuote(quote);
   // Deposit stays the default/primary flow — "Pay in Full" (HR-213) is an opt-in
-  // alternative that settles the whole booking in one shot. Priced off displayTotal
-  // (the pre-GST subtotal, same base calcDeposit's 30% already uses) rather than the
-  // GST-inclusive "Total Payable" row below — GST here is display-only and never
-  // actually charged (see the cost-breakdown comment further down), and the real
-  // booking's totalAmount/depositAmount fields are pre-GST too, so this must match
-  // apiPayment.amountDue (server-trusted booking.totalAmount) once that's created,
-  // or "Amount Due Now" would visibly jump between the summary and payment steps.
+  // alternative that settles the whole booking in one shot, GST included (unlike the
+  // deposit/balance split, which never actually collects the GST shown in the cost
+  // breakdown below — full payment is the one flow where it's real money, charged
+  // server-side on top of totalAmount). This client-side estimate must use the same
+  // 9% rate the backend actually charges, or "Amount Due Now" would visibly jump
+  // once apiPayment.amountDue (the server-trusted charged amount) comes back.
   const [paymentOption, setPaymentOption] = useState<PaymentOption>("DEPOSIT");
   const amountDue =
     apiPayment && apiPayment.paymentOption === paymentOption
       ? apiPayment.amountDue
       : paymentOption === "FULL"
-        ? Math.round(displayTotal)
+        ? Math.round(displayTotal * 1.09)
         : Math.round(displayTotal * 0.3);
   const [step, setStep] = useState<
     "summary" | "price_changed" | "payment" | "processing" | "failed"
@@ -596,7 +595,7 @@ export function DepositCheckout({
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {paymentOption === "FULL"
-                      ? "100% of subtotal (pre-GST) — settles the booking in full"
+                      ? "Subtotal + 9% GST — settles the booking in full"
                       : "30% of subtotal (pre-GST) — holds your reservation"}
                   </p>
                 </div>
@@ -677,7 +676,7 @@ export function DepositCheckout({
                 <p className="text-lg font-bold text-primary" style={mono}>
                   {paymentOption === "FULL" ? "Full Payment" : "Deposit"} S$
                   {Math.round(
-                    totalFromQuote(staleQuote) * (paymentOption === "FULL" ? 1 : 0.3),
+                    totalFromQuote(staleQuote) * (paymentOption === "FULL" ? 1.09 : 0.3),
                   ).toLocaleString()}
                 </p>
               </div>

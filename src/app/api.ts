@@ -298,10 +298,15 @@ export interface CreateDepositIntentResponse {
   paymentIntentId: string;
 }
 
-// Same response shape as the deposit intent (clientSecret + paymentIntentId) —
-// only the charged amount differs server-side (booking.totalAmount vs
-// booking.depositAmount). Backend endpoint: HR-213.
-export type CreateFullPaymentIntentResponse = CreateDepositIntentResponse;
+// Unlike the deposit intent, this carries its own `amount` — full payment is GST-inclusive
+// (totalAmount × 1.09), a premium computed server-side and never persisted on Booking (which
+// stays pre-GST throughout, matching the deposit/balance split), so the client has no other
+// way to learn the real charged amount to display. Backend endpoint: HR-213.
+export interface CreateFullPaymentIntentResponse {
+  clientSecret: string;
+  paymentIntentId: string;
+  amount: number;
+}
 
 export const paymentApi = {
   createDepositIntent: (bookingId: number) =>
