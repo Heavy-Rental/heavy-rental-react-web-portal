@@ -102,6 +102,12 @@ export function OverviewTab({
   const pendingBookings = bookings.filter((b) => b.paidStatus === "UNPAID").length;
   const needsRepair = fleet.filter((a) => a.condition === "NEEDS_REPAIR").length;
   const pendingActions = pendingBookings + needsRepair;
+  const pendingActionsSub = [
+    needsRepair > 0 ? `${needsRepair} maintenance` : null,
+    pendingBookings > 0 ? `${pendingBookings} bookings` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ") || "All clear";
 
   const fleetHealthData: { name: string; value: number; color: string }[] = [
     { name: "Available", value: availableCount, color: "#4ade80" },
@@ -194,7 +200,7 @@ export function OverviewTab({
             icon: AlertTriangle,
             label: "Pending Actions",
             value: pendingActions,
-            sub: `${needsRepair} maintenance · ${pendingBookings} bookings`,
+            sub: pendingActionsSub,
             accent: pendingActions > 0,
           },
         ].map(({ icon: Icon, label, value, sub, accent }) => (
