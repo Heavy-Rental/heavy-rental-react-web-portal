@@ -143,6 +143,8 @@ function AdminDashboardContent({
           <BookingsTab
             bookings={data.bookings}
             setBookings={data.setBookings}
+            refreshBookings={data.refreshBookings}
+            bookingsRefreshing={data.bookingsRefreshing}
             showToast={data.showToast}
           />
         )}

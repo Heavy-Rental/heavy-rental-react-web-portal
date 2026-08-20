@@ -126,7 +126,12 @@ export function OverviewTab({
     color: BOOKING_STAT_DOT_COLORS[label],
   }));
 
-  const totalDeposits = bookings.reduce((s, b) => s + b.deposit, 0);
+  // PENDING_DEPOSIT means the deposit hasn't actually been paid yet (b.deposit is the
+  // required amount, not evidence of payment) — excluded so "Total Deposits Collected"
+  // doesn't count money that was never received.
+  const totalDeposits = bookings
+    .filter((b) => b.status !== "PENDING_DEPOSIT")
+    .reduce((s, b) => s + b.deposit, 0);
   const totalBookingValue = bookings.reduce((s, b) => s + b.total, 0);
 
   const topCustomers = [...users].sort((a, b) => b.spent - a.spent).slice(0, 3);
