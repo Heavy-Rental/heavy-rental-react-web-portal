@@ -35,7 +35,11 @@ export const BOOKING_STAT_GROUPS: { label: string; statuses: BookingStatus[] }[]
 
 export function bookingStatusColor(s: BookingStatus): string {
   return {
-    PENDING_DEPOSIT: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    // Distinct from PENDING_CONFIRMED on purpose — this one has no money in yet
+    // (no deposit paid), while PENDING_CONFIRMED means the deposit cleared and it's
+    // just waiting on admin review. Sharing amber made them look like the same kind
+    // of "needs attention" at a glance, when only one of them has actually been paid.
+    PENDING_DEPOSIT: "text-slate-400 bg-slate-500/10 border-slate-500/30",
     PENDING_CONFIRMED: "text-amber-400 bg-amber-500/10 border-amber-500/30",
     CONFIRMED: "text-green-400 bg-green-500/10 border-green-500/30",
     MOBILISED: "text-violet-400 bg-violet-500/10 border-violet-500/30",

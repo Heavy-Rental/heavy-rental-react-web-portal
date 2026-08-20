@@ -13,6 +13,11 @@ import { CheckoutInputField } from "./CheckoutInputField";
 import { mono, display, sans } from "../../lib/styles";
 import { formatDateRange, daysBetweenISO } from "../../lib/dateFormat";
 import { getStripe } from "../../app/stripe";
+import { waitForBookingConfirmed } from "../../app/api";
+import {
+  savePendingDepositPayment,
+  clearPendingDepositPayment,
+} from "./pendingDepositPayment";
 import stripeLogo from "../../assets/stripe.svg";
 
 // ─── DEPOSIT CHECKOUT ─────────────────────────────────────────────────────────
@@ -53,8 +58,15 @@ function StripeDepositForm({
   const handleSubmit = async () => {
     if (!stripe || !elements || submitting) return;
     setSubmitting(true);
+    // `redirect: "if_required"` keeps most payment methods (incl. most 3DS
+    // challenges) resolving in-page without ever navigating away — but some
+    // payment methods/3DS flows require a real redirect regardless, and those
+    // need somewhere to send the customer back to. return_url is this same SPA
+    // route; CustomerPortal's resume-on-mount effect picks the flow back up from
+    // the payment_intent_client_secret/redirect_status params Stripe appends here.
     const { error, paymentIntent } = await stripe.confirmPayment({
       elements,
+      confirmParams: { return_url: window.location.href },
       redirect: "if_required",
     });
     if (error) {
@@ -116,6 +128,10 @@ export function DepositCheckout({
 }) {
   const isApiMode = import.meta.env.MODE === "api";
   const [apiPayment, setApiPayment] = useState<ApiDepositPayment | null>(null);
+  // True from the moment Stripe reports success until this booking's status is either
+  // confirmed off PENDING_DEPOSIT or the brief wait for that times out — see the
+  // "confirming" overlay below and onSuccess's use of waitForBookingConfirmed.
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [beginningPayment, setBeginningPayment] = useState(false);
   const [beginError, setBeginError] = useState<string | null>(null);
   const [quote, setQuote] = useState<RentalPlanResponse | null>(null);
@@ -213,6 +229,21 @@ export function DepositCheckout({
     }
   };
 
+  // Persists the moment a real PaymentIntent exists, not just on submit — a
+  // redirect-based payment method can whisk the customer away before they even
+  // finish filling in the PaymentElement, so this can't wait for handleSubmit.
+  useEffect(() => {
+    if (!isApiMode || !apiPayment) return;
+    savePendingDepositPayment({
+      bookingId: apiPayment.bookingId,
+      paymentIntentId: apiPayment.paymentIntentId,
+      clientSecret: apiPayment.clientSecret,
+      depositAmount: apiPayment.depositAmount,
+      cart,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiPayment]);
+
   const fmtCard = (v: string) =>
     v
       .replace(/\D/g, "")
@@ -293,11 +324,13 @@ export function DepositCheckout({
         style={sans}
       >
         {/* Processing overlay */}
-        {step === "processing" && (
+        {(step === "processing" || awaitingConfirmation) && (
           <div className="absolute inset-0 bg-card/95 z-10 flex flex-col items-center justify-center gap-4">
             <div className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             <p className="text-sm font-semibold text-foreground">
-              Processing your deposit…
+              {awaitingConfirmation
+                ? "Confirming your booking…"
+                : "Processing your deposit…"}
             </p>
             <p className="text-xs text-muted-foreground">
               Please do not close this window
@@ -480,12 +513,24 @@ export function DepositCheckout({
                 >
                   <StripeDepositForm
                     deposit={deposit}
-                    onSuccess={(piId) => {
+                    onSuccess={async (piId) => {
+                      // Stripe confirming the charge only means Stripe accepted it — the
+                      // backend's webhook still has to flip this booking's own status.
+                      // Give it a brief head start (best-effort: a network hiccup here
+                      // must not block the confirmation the customer already paid for)
+                      // before trusting it, rather than showing "confirmed" the instant
+                      // this promise settles.
+                      setAwaitingConfirmation(true);
+                      await waitForBookingConfirmed(apiPayment.bookingId).catch(
+                        () => {},
+                      );
+                      clearPendingDepositPayment();
                       onPaid({
                         bookingId: apiPayment.bookingId,
                         paymentIntentId: piId,
                         depositAmount: apiPayment.depositAmount,
                       }).catch((err) => {
+                        setAwaitingConfirmation(false);
                         setPayment({
                           amount: deposit,
                           paymentType: "DEPOSIT",
