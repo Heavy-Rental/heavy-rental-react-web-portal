@@ -1278,12 +1278,11 @@ export function CustomerPortal({
                   c.equipment.baseDailyRate,
               0,
             );
-            // Deposit is the default/primary flow (HR-213) — Pay in Full settles the
-            // whole GST-inclusive total in one payment instead of the 30% deposit.
-            const amountPaid =
-              paymentOption === "FULL"
-                ? Math.round(cost * 1.09)
-                : calcDeposit(cost);
+            // Deposit is the default/primary flow (HR-213) — Pay in Full settles 100% of
+            // `cost` (Booking.totalAmount) in one payment instead of the 30% deposit.
+            // Matches DepositCheckout's own amountDue calc: GST is a display-only line on
+            // the checkout summary, never actually part of what's charged or stored here.
+            const amountPaid = paymentOption === "FULL" ? cost : calcDeposit(cost);
             const plan = await rentalPlanApi.create({
               userId,
               status: "active",
