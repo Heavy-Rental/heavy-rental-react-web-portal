@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { stubEquipment } from "../../test/equipment";
-import { DepositCheckout } from "./DepositCheckout";
+import { DepositCheckout, type ApiDepositPayment } from "./DepositCheckout";
 import { QuoteStaleError } from "./quoteStaleness";
 import type { RentalPlanResponse } from "../../app/types";
 import type { CartItem } from "../cart/CartContext";
@@ -210,7 +210,9 @@ describe("DepositCheckout — booking conversion retry", () => {
     updatedAt: "2026-08-16T09:00:00",
   };
 
-  const renderDeposit = (localOnBeginPayment: ReturnType<typeof vi.fn>) =>
+  const renderDeposit = (
+    localOnBeginPayment: Mock<() => Promise<ApiDepositPayment>>,
+  ) =>
     render(
       <DepositCheckout
         cart={[item]}
