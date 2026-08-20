@@ -1,6 +1,7 @@
-import { ChevronLeft, ChevronRight, User, LogOut } from "lucide-react";
+import { ChevronLeft, User, LogOut } from "lucide-react";
 import { mono, display, sans } from "../../lib/styles";
-import type { RentalPlan } from "../checkout/rentalPlan";
+import type { MyBooking } from "./myBookings";
+import { formatBookingStatus, bookingStatusColor } from "../admin/adminFormat";
 
 export interface ProfileForm {
   name: string;
@@ -17,9 +18,8 @@ export function CustomerProfilePage({
   setProfileForm,
   editMode,
   setEditMode,
-  rentalPlans,
+  bookings,
   onBack,
-  onSelectPlan,
 }: {
   userName: string;
   goHome: () => void;
@@ -28,9 +28,8 @@ export function CustomerProfilePage({
   setProfileForm: (update: (prev: ProfileForm) => ProfileForm) => void;
   editMode: boolean;
   setEditMode: (open: boolean) => void;
-  rentalPlans: RentalPlan[];
+  bookings: MyBooking[];
   onBack: () => void;
-  onSelectPlan: (plan: RentalPlan) => void;
 }) {
   const initials = userName
     .split(" ")
@@ -196,17 +195,14 @@ export function CustomerProfilePage({
               </p>
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { label: "Total Plans", value: rentalPlans.length },
+                  { label: "Total Bookings", value: bookings.length },
                   {
                     label: "Days Rented",
-                    value: rentalPlans.reduce(
-                      (s, r) => s + r.items.reduce((x, i) => x + i.days, 0),
-                      0,
-                    ),
+                    value: bookings.reduce((s, b) => s + b.days, 0),
                   },
                   {
                     label: "Total Spent",
-                    value: `S$${rentalPlans.reduce((s, r) => s + r.depositPaid, 0).toLocaleString()}`,
+                    value: `S$${bookings.reduce((s, b) => s + b.deposit, 0).toLocaleString()}`,
                   },
                 ].map(({ label, value }) => (
                   <div
@@ -230,36 +226,35 @@ export function CustomerProfilePage({
 
           {/* Right col */}
           <div className="lg:col-span-2 flex flex-col gap-5">
-            {/* Rental Plans */}
+            {/* My Bookings */}
             <div className="bg-card border border-border">
               <div className="px-5 py-4 border-b border-border flex items-center justify-between">
                 <p
                   className="text-xs font-semibold text-muted-foreground tracking-widest uppercase"
                   style={mono}
                 >
-                  Rental Plan
+                  My Bookings
                 </p>
                 <span className="text-xs text-muted-foreground">
-                  {rentalPlans.length}{" "}
-                  {rentalPlans.length === 1 ? "plan" : "plans"}
+                  {bookings.length}{" "}
+                  {bookings.length === 1 ? "booking" : "bookings"}
                 </span>
               </div>
-              {rentalPlans.length === 0 ? (
+              {bookings.length === 0 ? (
                 <div className="px-5 py-10 text-center">
                   <p className="text-muted-foreground text-sm">
-                    No rental plans yet.
+                    No bookings yet.
                   </p>
                   <p className="text-xs text-muted-foreground/60 mt-1">
-                    Rental plans are created after you complete a payment.
+                    Bookings appear here once you complete a deposit payment.
                   </p>
                 </div>
               ) : (
                 <div className="divide-y divide-border">
-                  {rentalPlans.map((plan) => (
-                    <button
-                      key={plan.id}
-                      onClick={() => onSelectPlan(plan)}
-                      className="w-full px-5 py-4 flex items-center justify-between gap-4 hover:bg-muted/30 transition-colors text-left group"
+                  {bookings.map((b) => (
+                    <div
+                      key={b.id}
+                      className="px-5 py-4 flex items-center justify-between gap-4"
                     >
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
@@ -267,23 +262,33 @@ export function CustomerProfilePage({
                             className="text-sm font-black text-foreground tracking-wide"
                             style={mono}
                           >
-                            {plan.id}
+                            {b.id}
                           </p>
                           <span
-                            className={`px-1.5 py-0.5 text-xs font-semibold border ${plan.status === "Active" ? "bg-primary/10 text-primary border-primary/30" : "bg-green-500/10 text-green-400 border-green-500/20"}`}
+                            className={`px-1.5 py-0.5 text-xs font-semibold border ${bookingStatusColor(b.status)}`}
                           >
-                            {plan.status}
+                            {formatBookingStatus(b.status)}
                           </span>
                         </div>
                         <p className="text-xs text-muted-foreground truncate">
-                          {plan.items.map((i) => i.equipmentName).join(", ")}
+                          {b.equipment}
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {plan.items.reduce((s, i) => s + i.days, 0)} days ·
-                          Paid {plan.paidAt}
+                          {b.dates}
                         </p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <p className="text-xs text-muted-foreground">
+                            Deposit
+                          </p>
+                          <p
+                            className="text-sm font-black text-foreground"
+                            style={display}
+                          >
+                            S${b.deposit.toLocaleString()}
+                          </p>
+                        </div>
                         <div className="text-right">
                           <p className="text-xs text-muted-foreground">
                             Total
@@ -292,15 +297,11 @@ export function CustomerProfilePage({
                             className="text-lg font-black text-foreground"
                             style={display}
                           >
-                            S${plan.totalCost.toLocaleString()}
+                            S${b.total.toLocaleString()}
                           </p>
                         </div>
-                        <ChevronRight
-                          size={16}
-                          className="text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all"
-                        />
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}

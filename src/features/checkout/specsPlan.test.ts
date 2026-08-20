@@ -45,9 +45,8 @@ describe("shouldPromptDeliveryDetails", () => {
     expect(shouldPromptDeliveryDetails("specs")).toBe(false);
   });
 
-  it("still prompts on Know / Browse / unset", () => {
+  it("still prompts on Know / unset", () => {
     expect(shouldPromptDeliveryDetails("know")).toBe(true);
-    expect(shouldPromptDeliveryDetails("browse")).toBe(true);
     expect(shouldPromptDeliveryDetails(null)).toBe(true);
   });
 });

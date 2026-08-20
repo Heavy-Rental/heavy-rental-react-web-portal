@@ -110,7 +110,6 @@ function CustomerOnboarding({ userName, onDone, initialStep = "choose" }: { user
     <ChooseModeScreen
       userName={userName}
       onKnowWhatIWant={() => onDone("know")}
-      onBrowse={() => onDone("browse")}
       onUploadSpecs={() => setStep("upload")}
     />
   );

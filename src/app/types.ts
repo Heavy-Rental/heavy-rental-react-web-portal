@@ -2,7 +2,7 @@
 
 export type Role = "customer" | "employee" | "admin";
 export type View = "portal" | "customer" | "dashboard" | "admin" | "safety" | "about" | "projects";
-export type OnboardingMode = "know" | "browse" | "specs" | null;
+export type OnboardingMode = "know" | "specs" | null;
 
 // Client-simulated bearer-token session (Spec-frontend-authentication.md) —
 // token/issuedAt/expiresAt are generated and enforced entirely client-side.

@@ -1,15 +1,13 @@
-import { Search, ArrowRight, Wrench, CheckCircle } from "lucide-react";
+import { ArrowRight, Wrench, CheckCircle } from "lucide-react";
 import { mono, display, sans } from "../../../lib/styles";
 
 export function ChooseModeScreen({
   userName,
   onKnowWhatIWant,
-  onBrowse,
   onUploadSpecs,
 }: {
   userName: string;
   onKnowWhatIWant: () => void;
-  onBrowse: () => void;
   onUploadSpecs: () => void;
 }) {
   return (
@@ -32,7 +30,6 @@ export function ChooseModeScreen({
         <div className="flex flex-col gap-3">
           {[
             { icon: CheckCircle, accent: true, title: "I KNOW WHAT I WANT", sub: "Take me straight to the equipment catalogue to browse and book.", onClick: onKnowWhatIWant },
-            { icon: Search, accent: false, title: "I'M JUST BROWSING", sub: "Explore the full fleet at my own pace — no pressure, no commitment.", onClick: onBrowse },
             { icon: Wrench, accent: false, title: "I HAVE SPECS, NEED A RECOMMENDATION", sub: "Upload your project specs — we'll match the right machines for you.", onClick: onUploadSpecs },
           ].map(({ icon: Icon, accent, title, sub, onClick }) => (
             <button key={title} onClick={onClick}
