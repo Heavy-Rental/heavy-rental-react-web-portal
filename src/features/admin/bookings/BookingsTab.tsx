@@ -51,16 +51,18 @@ export function BookingsTab({
     }
   };
 
-  const filteredBookings = bookings.filter((b) => {
-    const q = bookingSearch.toLowerCase();
-    return (
-      (bookingStatusFilter === "All" || b.status === bookingStatusFilter) &&
-      (!q ||
-        b.id.toLowerCase().includes(q) ||
-        b.customer.toLowerCase().includes(q) ||
-        b.equipment.toLowerCase().includes(q))
-    );
-  });
+  const filteredBookings = bookings
+    .filter((b) => {
+      const q = bookingSearch.toLowerCase();
+      return (
+        (bookingStatusFilter === "All" || b.status === bookingStatusFilter) &&
+        (!q ||
+          b.id.toLowerCase().includes(q) ||
+          b.customer.toLowerCase().includes(q) ||
+          b.equipment.toLowerCase().includes(q))
+      );
+    })
+    .sort((a, b) => b.apiId - a.apiId);
   const totalBookingPages = Math.max(1, Math.ceil(filteredBookings.length / PAGE_SIZE));
   const pagedBookings = filteredBookings.slice(
     (bookingPage - 1) * PAGE_SIZE,
