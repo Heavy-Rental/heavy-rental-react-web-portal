@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { CustomerOnboarding } from "../browse/CustomerOnboarding";
 import { equipmentImageSrc } from "../browse/equipmentImageSrc";
-import type { Asset as EquipmentItem, OnboardingMode, RentalPlanResponse } from "../../app/types";
+import type { Asset as EquipmentItem, OnboardingMode, PaymentOption, RentalPlanResponse } from "../../app/types";
 import {
   assetApi,
   depotApi,
@@ -131,6 +131,7 @@ export function CustomerPortal({
     items: CartItem[];
     totalCost: number;
     depositPaid: number;
+    paymentOption: PaymentOption;
   } | null>(null);
   // Simulated Stripe PaymentIntent id — minted client-side per checkout attempt so both the
   // DepositCheckout failure screen and the confirmation screen can reference the same id.
@@ -201,7 +202,17 @@ export function CustomerPortal({
               daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate,
             0,
           ),
-          depositPaid: booking?.depositAmount ?? pending.depositAmount,
+          // Booking.depositAmount is live server truth (dynamic pricing can move it between
+          // the pre-redirect snapshot and now), so prefer it over the snapshot for deposits.
+          // Full payment has no equivalent live field to re-fetch — the GST-inclusive charged
+          // amount is computed once by the full-payment-intent endpoint and never persisted
+          // on the booking itself (Booking.totalAmount stays pre-GST) — so the pre-redirect
+          // snapshot (sourced from that same intent response) is the only figure available.
+          depositPaid:
+            pending.paymentOption === "FULL"
+              ? pending.amountDue
+              : (booking?.depositAmount ?? pending.amountDue),
+          paymentOption: pending.paymentOption,
         });
         setPaymentIntentId(paymentIntent.id);
         setCheckoutOpen(false);
@@ -1125,7 +1136,7 @@ export function CustomerPortal({
               ? () => quoteRentalPlan(planId)
               : undefined
           }
-          onBeginPayment={async () => {
+          onBeginPayment={async (paymentOption) => {
             // Real backend only (STRIPE_INTEGRATION_HANDOFF.md §2/§5) — DepositCheckout
             // only calls this when MODE === "api"; mock mode still creates its booking
             // inside onPaid below, after the simulated payment "succeeds". Unlike the
@@ -1151,14 +1162,31 @@ export function CustomerPortal({
                 siteAddress,
                 deliveryNotes: deliveryNotes || undefined,
               });
-              const intent = await paymentApi.createDepositIntent(
-                booking.bookingId,
-              );
+              // Deposit is the default/primary flow (HR-213) — Pay in Full charges the
+              // booking's totalAmount plus GST in one shot via a sibling intent endpoint,
+              // instead of the (GST-free) 30% depositAmount. Unlike the deposit amount
+              // (already known from the booking response), the GST-inclusive full amount
+              // only exists once the backend computes and returns it — it's never
+              // persisted on the booking itself — so it's read off the intent response.
+              if (paymentOption === "FULL") {
+                const intent = await paymentApi.createFullPaymentIntent(
+                  booking.bookingId,
+                );
+                return {
+                  bookingId: booking.bookingId,
+                  clientSecret: intent.clientSecret,
+                  paymentIntentId: intent.paymentIntentId,
+                  amountDue: intent.amount,
+                  paymentOption,
+                };
+              }
+              const intent = await paymentApi.createDepositIntent(booking.bookingId);
               return {
                 bookingId: booking.bookingId,
                 clientSecret: intent.clientSecret,
                 paymentIntentId: intent.paymentIntentId,
-                depositAmount: booking.depositAmount,
+                amountDue: booking.depositAmount,
+                paymentOption,
               };
             } catch (err) {
               // Plan genuinely was never quoted, or its quote is >24h stale. Re-quote once
@@ -1188,41 +1216,43 @@ export function CustomerPortal({
                   { cause: err },
                 );
               }
-              // createDepositIntent's booking-already-has-a-deposit 409 (PaymentService's
-              // generic ResponseStatusException — falls under the same "conflict" code as
-              // any other 409, so the message is what actually identifies it). Reachable
-              // once the booking above is created but the deposit-intent call that follows
-              // it fails: a previous attempt for this same booking already initiated or
-              // completed a deposit payment. Same self-heal as already_converted — retrying
-              // "Continue to Payment" against this planId can't succeed either way, since
-              // the plan converted the moment the booking was created.
+              // createDepositIntent/createFullPaymentIntent's booking-already-has-a-payment
+              // 409 (PaymentService's generic ResponseStatusException — falls under the
+              // same "conflict" code as any other 409, so the message is what actually
+              // identifies it). Reachable once the booking above is created but the
+              // payment-intent call that follows it fails: a previous attempt for this
+              // same booking already initiated or completed a deposit or full payment.
+              // Same self-heal as already_converted — retrying "Continue to Payment"
+              // against this planId can't succeed either way, since the plan converted
+              // the moment the booking was created.
               if (
                 err instanceof ApiError &&
                 err.code === "conflict" &&
-                /deposit/i.test(err.message)
+                /deposit|payment/i.test(err.message)
               ) {
                 setCart([]);
                 setPlanItemIds({});
                 setPlanId(null);
                 throw new Error(
-                  "A deposit payment for this booking was already started on a previous attempt — your cart has been cleared. If that payment didn't go through, please contact support before trying again so you aren't charged twice.",
+                  "A payment for this booking was already started on a previous attempt — your cart has been cleared. If that payment didn't go through, please contact support before trying again so you aren't charged twice.",
                   { cause: err },
                 );
               }
               throw err;
             }
           }}
-          onPaid={async (result) => {
+          onPaid={async (paymentOption, result) => {
             if (result) {
               // Real backend: booking + Stripe PaymentIntent already exist (onBeginPayment
-              // above) and the payment just succeeded — trust the server's depositAmount
+              // above) and the payment just succeeded — trust the server's amountDue
               // rather than recomputing it client-side.
               const rid = `RNT-${String(result.bookingId).padStart(4, "0")}`;
               setReservationId(rid);
               setConfirmedOrder({
                 items: cart,
                 totalCost,
-                depositPaid: result.depositAmount,
+                depositPaid: result.amountDue,
+                paymentOption: result.paymentOption,
               });
               setCheckoutOpen(false);
               setConfirmed(true);
@@ -1258,7 +1288,12 @@ export function CustomerPortal({
                   c.equipment.baseDailyRate,
               0,
             );
-            const deposit = calcDeposit(cost);
+            // Deposit is the default/primary flow (HR-213) — Pay in Full settles `cost`
+            // plus GST in one payment instead of the (GST-free) 30% deposit. Matches
+            // DepositCheckout's own amountDue calc and the intent.amount the real backend
+            // will return for this flow.
+            const amountPaid =
+              paymentOption === "FULL" ? Math.round(cost * 1.09) : calcDeposit(cost);
             const plan = await rentalPlanApi.create({
               userId,
               status: "active",
@@ -1279,10 +1314,10 @@ export function CustomerPortal({
               deliveryDate: startDate,
               returnDate: endDate,
               totalAmount: cost,
-              depositAmount: deposit,
+              depositAmount: amountPaid,
               fullPaymentDueDate: calcFullPaymentDueDate(startDate),
               status: "CONFIRMED",
-              paidStatus: "DEPOSIT",
+              paidStatus: paymentOption === "FULL" ? "FULL" : "DEPOSIT",
               siteAddress,
               sitePostalCode,
               deliveryNotes,
@@ -1294,7 +1329,8 @@ export function CustomerPortal({
             setConfirmedOrder({
               items: cart,
               totalCost: cost,
-              depositPaid: deposit,
+              depositPaid: amountPaid,
+              paymentOption,
             });
             setCheckoutOpen(false);
             setConfirmed(true);
