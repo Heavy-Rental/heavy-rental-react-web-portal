@@ -85,8 +85,7 @@ jobs:
       aws_environment: AWS_ACTUAL
       image_ref: ${{ inputs.image_ref }}
       image_http_url: ${{ inputs.image_http_url }}
-    # OIDC only (AWS_ROLE_TO_ASSUME on Environment AWS_ACTUAL). Do not inherit
-    # repository secrets; the reusable workflow must not receive Vocareum keys.
+    secrets: inherit
     permissions:
       contents: read
       id-token: write
