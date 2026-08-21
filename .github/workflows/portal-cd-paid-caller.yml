@@ -85,7 +85,7 @@ jobs:
       aws_environment: AWS_ACTUAL
       image_ref: ${{ inputs.image_ref }}
       image_http_url: ${{ inputs.image_http_url }}
-    secrets: inherit
+    # OIDC only (vars.AWS_ROLE_TO_ASSUME). Do not inherit repository secrets.
     permissions:
       contents: read
       id-token: write
