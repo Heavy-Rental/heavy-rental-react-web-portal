@@ -5,6 +5,13 @@ type AsyncState<T> =
   | { status: "success"; data: T; error: null }
   | { status: "error"; data: null; error: string };
 
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAYS_MS = [500, 1000];
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function useApiResource<T>(fetcher: (signal: AbortSignal) => Promise<T>, deps: DependencyList = []) {
   const [state, setState] = useState<AsyncState<T>>({ status: "loading", data: null, error: null });
   const [reloadKey, setReloadKey] = useState(0);
@@ -12,17 +19,26 @@ export function useApiResource<T>(fetcher: (signal: AbortSignal) => Promise<T>, 
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    fetcher(controller.signal)
-      .then((data) => {
+
+    const attemptFetch = async (attempt: number): Promise<void> => {
+      try {
+        const data = await fetcher(controller.signal);
         if (!cancelled) setState({ status: "success", data, error: null });
-      })
-      .catch((err) => {
+      } catch (err) {
         // Aborting on cleanup (below) rejects this same promise — not a real
         // failure, so don't surface it as one.
-        if (!cancelled && err?.name !== "AbortError") {
-          setState({ status: "error", data: null, error: err instanceof Error ? err.message : String(err) });
+        if (cancelled || (err as { name?: string })?.name === "AbortError") return;
+        if (attempt < MAX_ATTEMPTS) {
+          await delay(RETRY_DELAYS_MS[attempt - 1]);
+          if (!cancelled) await attemptFetch(attempt + 1);
+          return;
         }
-      });
+        setState({ status: "error", data: null, error: err instanceof Error ? err.message : String(err) });
+      }
+    };
+
+    attemptFetch(1);
+
     return () => {
       cancelled = true;
       controller.abort();

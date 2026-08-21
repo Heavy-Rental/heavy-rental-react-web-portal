@@ -368,6 +368,7 @@ function buildFleetAssets(
 interface AdminDataValue {
   dataStatus: "loading" | "success" | "error";
   dataError: string | null;
+  retryAll: () => void;
   categories: string[];
   assets: AssetRecord[];
   setAssets: Dispatch<SetStateAction<AssetRecord[]>>;
@@ -539,12 +540,21 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     rentalPlansRes.error ??
     monthlyUtilRes.error ??
     null;
+  const retryAll = () => {
+    equipmentRes.reload();
+    depotsRes.reload();
+    usersRes.reload();
+    bookingsRes.reload();
+    rentalPlansRes.reload();
+    monthlyUtilRes.reload();
+  };
 
   return (
     <AdminDataContext.Provider
       value={{
         dataStatus,
         dataError,
+        retryAll,
         categories,
         assets,
         setAssets,

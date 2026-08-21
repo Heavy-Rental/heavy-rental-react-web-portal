@@ -32,8 +32,14 @@ function AdminDashboardContent({
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6 text-center" style={sans}>
         <div>
-          <p className="text-foreground font-semibold mb-2">Couldn't reach the mock API.</p>
-          <p className="text-sm text-muted-foreground">{data.dataError}</p>
+          <p className="text-foreground font-semibold mb-2">Couldn't load dashboard data.</p>
+          <p className="text-sm text-muted-foreground mb-4">{data.dataError}</p>
+          <button
+            onClick={data.retryAll}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mx-auto"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
