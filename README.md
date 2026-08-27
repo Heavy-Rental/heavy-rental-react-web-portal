@@ -2,6 +2,8 @@
 
 React + TypeScript + Vite frontend for a heavy machinery rental business.
 
+Canonical GitHub repository: [`Heavy-Rental/heavy-rental-react-web-portal`](https://github.com/Heavy-Rental/heavy-rental-react-web-portal).
+
 UI mockup merged from a **Figma Make / Figma AI** design (see `ATTRIBUTIONS.md` for photo credits).
 
 ## Features (design prototype)
@@ -35,7 +37,7 @@ Any non-empty password works in this mockup.
 npm install
 npm run dev      # local dev server, proxied to the mock API (same as dev:mock)
 npm run dev:mock # local dev server, proxied to the mock API server (127.0.0.1:4010)
-npm run dev:api  # local dev server, proxied to a Spring Boot backend (localhost:8080)
+npm run dev:api  # local dev server, proxied to VITE_API_TARGET (heavy-rental-rest-api:8080)
 npm run build    # production build
 npm run preview  # preview production build
 ```
@@ -44,14 +46,32 @@ npm run preview  # preview production build
 
 ```
 src/
-  App.tsx                 # Main app shell & public portal
-  app/
-    CustomerOnboarding.tsx
-    AdminDashboard.tsx
-    SafetyPage.tsx
-    AboutPage.tsx
-    ProjectsPage.tsx
-    shared.ts             # Shared equipment data / types
+  App.tsx
+  app/                    # API client, auth, session, shared pages
+  features/               # admin, auth, browse, cart, checkout, customer, employee, marketing
+  components/             # shared UI
+  lib/                    # date/postal helpers
   styles/theme.css        # Dark industrial design tokens
-  index.css               # Tailwind + fonts entry
 ```
+
+## Documentation
+
+| Layer | Path | Standard |
+| --- | --- | --- |
+| Behavior (what) | [`openspec/specs/`](openspec/specs/) | OpenSpec `spec-driven-with-adr` |
+| Design contract (how) | [`spdd/prompt/`](spdd/prompt/) | OpenSPDD REASONS Canvas |
+| Architecture (why) | [`adr/`](adr/) | MADR-short ADRs |
+| Feature SDD | [`specification/`](specification/) | Product specs + [index](specification/README.md) |
+| Environment / CI/CD SDD | [`specification/Spec-project-environment.md`](specification/Spec-project-environment.md) | Matches `openspec/specs/ci-pipelines` and `portal-cd` |
+
+Conflict rule: workflow YAML / code, then OpenSpec, then `specification/`.
+
+## Delivery pipelines (summary)
+
+- **Fast Feedback** — feature-branch push; Integration only.
+- **CI** — PR / push to `develop`; Integration Check (reuses Fast Feedback when possible), QC, Security, CodeQL, REST tests.
+- **Release** — manual `workflow_dispatch` on `master`; package + DAST + public GHCR + GitHub Release.
+- **Security Report** — weekly summary of existing Code Scanning alerts.
+- **Portal CD** — Academy or paid `workflow_dispatch`; `resolve-aws-profile`; health is guest `GET /` (not ALB target-group config).
+
+Defaults: Node 22, `DEFAULT_APP_REPOSITORY=Heavy-Rental/heavy-rental-react-web-portal`. Paid CD uses `secrets: inherit`.
