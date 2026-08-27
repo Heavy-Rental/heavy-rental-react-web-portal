@@ -1,5 +1,7 @@
 # Align portal pipeline documentation to OpenSpec, OpenSPDD, and MADR
 
+> **SYNC 2026-08-27:** Paid CD `secrets: inherit` is **not** in force. That decision was superseded by ADR-0006 and canvas [`HR-239-202608272000-[Fix]-ci-paid-cd-no-secrets-inherit.md`](HR-239-202608272000-[Fix]-ci-paid-cd-no-secrets-inherit.md). Do not restore inherit from this file.
+
 ## Requirements
 
 Establish a durable, agent-readable documentation contract for the React web portal so HR-239 pipeline caller behavior and the existing product SDD stay accurate and consistent.
@@ -100,7 +102,7 @@ DurableADR --> CapabilitySpec : constrains
 
 3. Business / operator rules:
    - Canonical repo `Heavy-Rental/heavy-rental-react-web-portal`.
-   - Paid CD `secrets: inherit`; Academy CD passes Vocareum keys as inputs.
+   - Paid CD MUST NOT use `secrets: inherit` (ADR-0006; Semgrep `secrets-inherit`). Academy CD passes Vocareum keys as inputs.
    - CD health = guest `GET /` 200/301/302 via SSM; `/api` is not the gate.
 
 ## Structure
@@ -138,10 +140,10 @@ DurableADR --> CapabilitySpec : constrains
 2. Capabilities: `documentation-system`, `project-environment`, `ci-pipelines`, `portal-cd`, `product-features`.
 3. Logic: Match live YAML (including Fast Feedback default repo after edit).
 
-### Create ADRs - `adr/0001` through `adr/0005`
+### Create ADRs - `adr/0001` through `adr/0006`
 
-1. Responsibility: MADR-short records for documentation stack, canonical repo, split CD, paid inherit, guest health.
-2. Constraints: Status accepted; immutable after write; listed in `adr/README.md`.
+1. Responsibility: MADR-short records for documentation stack, canonical repo, split CD, guest health, and paid secrets (0006 supersedes 0004 inherit).
+2. Constraints: Status accepted; immutable after write; listed in `adr/README.md`. Do not restore ADR-0004 as in-force.
 
 ### Create OpenSpec change archive - `openspec/changes/archive/2026-08-27-hr-239-portal-pipeline-docs/`
 
@@ -155,7 +157,7 @@ DurableADR --> CapabilitySpec : constrains
 
 ### Update environment SDD - `specification/Spec-project-environment.md`
 
-1. Responsibility: Replace "three caller pairs" with Fast Feedback, Integration, Release, Security Report, Academy CD, paid CD; document paid `secrets: inherit` and Heavy-Rental default.
+1. Responsibility: Replace "three caller pairs" with Fast Feedback, Integration, Release, Security Report, Academy CD, paid CD; document paid CD as OIDC without `secrets: inherit` (ADR-0006) and Heavy-Rental default.
 2. Logic: Append Change Log 2026-08-27 pointing at OpenSpec capabilities and ADRs.
 
 ### Create specification index - `specification/README.md`
@@ -173,14 +175,14 @@ DurableADR --> CapabilitySpec : constrains
 2. ADRs use MADR-short: title, status/date, context, decision, consequences. Sequence `NNNN` is monotonic.
 3. OpenSPDD prompt files use `{JIRA}-{TIMESTAMP}-[{ACTION}]-{scope}-{description}.md`.
 4. Do not edit accepted ADR files. Supersede with a new file.
-5. Workflow comments that operators copy MUST match YAML (Academy: `resolve-aws-profile`; paid: `secrets: inherit`).
+5. Workflow comments that operators copy MUST match YAML (Academy: `resolve-aws-profile`; paid: no `secrets: inherit`).
 6. Markdown in `specification/` keeps existing SDD section names so git history stays reviewable.
 
 ## Safeguards
 
 1. Functional: Do not rewrite application TypeScript as part of this documentation change.
 2. Functional: Do not add ALB `elbv2` modify-target-group steps to portal CD.
-3. Security: Do not commit `sk_` / `whsec_` / Vocareum session tokens. Paid CD inherit does not authorize logging secrets.
+3. Security: Do not commit `sk_` / `whsec_` / Vocareum session tokens. Paid CD MUST NOT use `secrets: inherit` and MUST NOT log secrets.
 4. Security: Do not wire `resolve-vocareum-aws` into portal CD.
 5. Consistency: `DEFAULT_APP_REPOSITORY` MUST be identical in Fast Feedback, Integration, and Release (`Heavy-Rental/heavy-rental-react-web-portal`).
 6. Consistency: If `Spec-project-environment.md` and `openspec/specs/ci-pipelines/spec.md` disagree, treat YAML as truth and fix both markdown files in one change.

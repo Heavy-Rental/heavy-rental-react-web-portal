@@ -2,7 +2,9 @@
 
 ## Original business requirements
 
-Bring all documentation and specifications up to date, accurate, and consistent using OpenSpec, OpenSPDD, and ADR standards, covering HR-239 portal pipeline caller work (canonical GitHub org, Academy `resolve-aws-profile` copy notes, paid CD `secrets: inherit`) and the existing product SDD tree.
+Bring all documentation and specifications up to date, accurate, and consistent using OpenSpec, OpenSPDD, and ADR standards, covering HR-239 portal pipeline caller work (canonical GitHub org, Academy `resolve-aws-profile` copy notes, paid CD **without** `secrets: inherit` — ADR-0006) and the existing product SDD tree.
+
+> **SYNC 2026-08-27:** Paid secrets inherit is superseded. See `spdd/analysis/HR-239-202608272000-paid-cd-no-secrets-inherit.md` and ADR-0006.
 
 ## Domain concepts
 

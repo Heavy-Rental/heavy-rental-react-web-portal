@@ -72,6 +72,6 @@ Conflict rule: workflow YAML / code, then OpenSpec, then `specification/`.
 - **CI** — PR / push to `develop`; Integration Check (reuses Fast Feedback when possible), QC, Security, CodeQL, REST tests.
 - **Release** — manual `workflow_dispatch` on `master`; package + DAST + public GHCR + GitHub Release.
 - **Security Report** — weekly summary of existing Code Scanning alerts.
-- **Portal CD** — Academy or paid `workflow_dispatch`; `resolve-aws-profile`; health is guest `GET /` (not ALB target-group config).
+- **Portal CD** — Academy or paid `workflow_dispatch`; `resolve-aws-profile`; paid is OIDC with no `secrets: inherit`; health is guest `GET /` (not ALB target-group config).
 
-Defaults: Node 22, `DEFAULT_APP_REPOSITORY=Heavy-Rental/heavy-rental-react-web-portal`. Paid CD uses `secrets: inherit`.
+Defaults: Node 22, `DEFAULT_APP_REPOSITORY=Heavy-Rental/heavy-rental-react-web-portal`. Paid CD uses GitHub OIDC and MUST NOT use `secrets: inherit`.

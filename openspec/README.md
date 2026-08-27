@@ -17,8 +17,9 @@ openspec/
 
 Artifact order for a new change: `proposal → specs → design → adr → tasks`.
 
-- Durable ADRs: `adr/NNNN-kebab-title.md` (not inside this folder).
+- Durable ADRs: `adr/NNNN-kebab-title.md` (not inside this folder). Walk `Supersedes:` — ADR-0004 is historical; ADR-0006 is in force for paid secrets.
 - Change-local `adr.md` is a review manifest only.
 - Product UI detail stays in `specification/`; `specs/product-features` indexes it.
+- Archived changes are history. Current behavior is `specs/` only. Latest pipeline-secrets archive: `changes/archive/2026-08-27-hr-239-paid-cd-no-secrets-inherit/`.
 
 See [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) and [spec-driven-with-adr](https://github.com/intent-driven-dev/openspec-schemas/tree/main/openspec/schemas/spec-driven-with-adr).

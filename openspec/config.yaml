@@ -20,7 +20,9 @@ context: |
     (never SA62-team1/heavy-rental-react-web-portal).
   - Portal CD uses `.github/actions/resolve-aws-profile` for both Academy and paid.
     Do not wire `.github/actions/resolve-vocareum-aws` into portal CD.
-  - Paid CD caller (`portal-cd-paid-caller.yml`) uses `secrets: inherit`.
+  - Paid CD caller (`portal-cd-paid-caller.yml`) MUST NOT use `secrets: inherit`.
+    Auth is GitHub OIDC (`vars.AWS_ROLE_TO_ASSUME`). Mixed Vocareum keys are
+    refused on the caller (`refuse-non-paid`).
   - Academy CD caller passes Vocareum keys as workflow_dispatch inputs.
   - Portal CD health (`verify`) is SSM GET / on asg-portal guests (200/301/302).
     ALB target-group health-check settings live in infra, not this repo.

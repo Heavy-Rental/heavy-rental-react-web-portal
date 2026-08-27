@@ -18,7 +18,7 @@ Canonical GitHub repository: `Heavy-Rental/heavy-rental-react-web-portal`.
 
 | Spec | Role | OpenSpec capability |
 | --- | --- | --- |
-| [Spec-project-environment.md](Spec-project-environment.md) | Node 22, npm scripts, GitHub Flow CI/CD + portal CD | `project-environment`, `ci-pipelines`, `portal-cd` |
+| [Spec-project-environment.md](Spec-project-environment.md) | Node 22, npm scripts, GitHub Flow CI/CD + portal CD (paid CD: OIDC, no `secrets: inherit`, ADR-0006) | `project-environment`, `ci-pipelines`, `portal-cd` |
 
 ## Product UI and booking
 

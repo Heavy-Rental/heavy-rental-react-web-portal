@@ -14,13 +14,21 @@ These files are the **why** of the system. OpenSpec specs (`openspec/specs/`) ar
 
 ## In-force index
 
+Walk `Supersedes:`. Only accepted ADRs that are **not** superseded constrain design.
+
 | ID | File | Decision |
 | --- | --- | --- |
 | ADR-0001 | [0001-adopt-openspec-openspdd-and-madr.md](0001-adopt-openspec-openspdd-and-madr.md) | OpenSpec `spec-driven-with-adr` + OpenSPDD + MADR |
 | ADR-0002 | [0002-canonical-github-repository-heavy-rental.md](0002-canonical-github-repository-heavy-rental.md) | Canonical repo is `Heavy-Rental/heavy-rental-react-web-portal` |
 | ADR-0003 | [0003-split-portal-cd-academy-and-paid-via-resolve-aws-profile.md](0003-split-portal-cd-academy-and-paid-via-resolve-aws-profile.md) | Split CD callers; shared `resolve-aws-profile` |
-| ADR-0004 | [0004-paid-portal-cd-inherits-github-secrets.md](0004-paid-portal-cd-inherits-github-secrets.md) | Paid CD caller uses `secrets: inherit` |
 | ADR-0005 | [0005-portal-cd-health-is-guest-http-not-alb-target-group.md](0005-portal-cd-health-is-guest-http-not-alb-target-group.md) | Portal CD `verify` is guest `GET /`, not ALB TG config |
+| ADR-0006 | [0006-paid-portal-cd-does-not-inherit-repository-secrets.md](0006-paid-portal-cd-does-not-inherit-repository-secrets.md) | Paid CD must not use `secrets: inherit` (OIDC + Semgrep) |
+
+## Superseded (historical only)
+
+| ID | File | Superseded by |
+| --- | --- | --- |
+| ADR-0004 | [0004-paid-portal-cd-inherits-github-secrets.md](0004-paid-portal-cd-inherits-github-secrets.md) | ADR-0006. File is frozen. Do not restore `secrets: inherit` from it. |
 
 ## New ADR
 
