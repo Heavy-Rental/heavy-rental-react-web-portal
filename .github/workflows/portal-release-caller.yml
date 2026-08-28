@@ -18,8 +18,8 @@
 # When this runs
 # --------------
 #   workflow_dispatch only (Actions → this workflow → Run workflow).
-#   The operator keys in release_name; it is the GitHub Release title and
-#   the Actions run name. GHCR still uses the auto patch-bumped semver tag.
+#   The operator keys in run_name; that string is this workflow run's name
+#   in the Actions list. GitHub Release title and GHCR tags are unchanged.
 #
 #   Does NOT run on:
 #     - published GitHub Release (this pipeline creates that Release)
@@ -47,13 +47,13 @@
 
 name: Release
 
-run-name: Release ${{ inputs.release_name }}
+run-name: ${{ inputs.run_name }}
 
 on:
   workflow_dispatch:
     inputs:
-      release_name:
-        description: GitHub Release title (also the Actions run name)
+      run_name:
+        description: Name shown for this run in the Actions list (e.g. "Release v1.1.0").
         required: true
         type: string
 
@@ -74,5 +74,3 @@ jobs:
   release-pipeline:
     name: Release pipeline
     uses: ./.github/workflows/release-pipeline.yml
-    with:
-      release_name: ${{ inputs.release_name }}
