@@ -298,13 +298,60 @@ export interface CreateDepositIntentResponse {
   paymentIntentId: string;
 }
 
+// Unlike the deposit intent, this carries its own `amount` — full payment is GST-inclusive
+// (totalAmount × 1.09), a premium computed server-side and never persisted on Booking (which
+// stays pre-GST throughout, matching the deposit/balance split), so the client has no other
+// way to learn the real charged amount to display. Backend endpoint: HR-213.
+export interface CreateFullPaymentIntentResponse {
+  clientSecret: string;
+  paymentIntentId: string;
+  amount: number;
+}
+
 export const paymentApi = {
   createDepositIntent: (bookingId: number) =>
     request<CreateDepositIntentResponse>("/payments/deposit-intent", {
       method: "POST",
       body: JSON.stringify({ bookingId }),
     }),
+  createFullPaymentIntent: (bookingId: number) =>
+    request<CreateFullPaymentIntentResponse>("/payments/full-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId }),
+    }),
 };
+
+// Fetches the real backend's authoritative view of a booking — used to confirm
+// `bookingStatus` actually flipped off PENDING_DEPOSIT after a Stripe payment
+// succeeds client-side (the webhook that does this runs asynchronously, see
+// Spec-stripe-payment-checkout.md's post-2026-08-20 change log) and to rebuild the
+// confirmation screen after a Stripe redirect-based payment method sends the
+// customer back to the app with no client-held cart state left in memory.
+export function getBooking(bookingId: number): Promise<CreateBookingResponse> {
+  return request<CreateBookingResponse>(`/bookings/${bookingId}`);
+}
+
+// Gives the deposit-succeeded webhook a brief head start before the frontend trusts
+// its own "confirmed" screen: polls GET /bookings/{id} until `bookingStatus` moves off
+// PENDING_DEPOSIT or the timeout elapses. Best-effort — on timeout this still returns
+// the last (possibly still-PENDING_DEPOSIT) booking rather than throwing, since the
+// caller has already decided to proceed on the trust-Stripe-but-wait-briefly model
+// (Spec-stripe-payment-checkout.md) rather than blocking the customer indefinitely on
+// a webhook delivery this environment can't guarantee.
+export async function waitForBookingConfirmed(
+  bookingId: number,
+  options?: { timeoutMs?: number; intervalMs?: number },
+): Promise<CreateBookingResponse> {
+  const timeoutMs = options?.timeoutMs ?? 8000;
+  const intervalMs = options?.intervalMs ?? 1500;
+  const deadline = Date.now() + timeoutMs;
+  let booking = await getBooking(bookingId);
+  while (booking.bookingStatus === "PENDING_DEPOSIT" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    booking = await getBooking(bookingId);
+  }
+  return booking;
+}
 
 // ─── Project-spec recommendations ──────────────────────────────────────────
 // POST /api/recommendations/project-spec (Call 1). Two hops on the same path:

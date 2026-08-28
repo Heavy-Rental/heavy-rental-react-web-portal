@@ -1,5 +1,6 @@
 import { CheckCircle } from "lucide-react";
 import type { CartItem } from "../cart/CartContext";
+import type { PaymentOption } from "../../app/types";
 import { mono, display, sans } from "../../lib/styles";
 import { formatDateRange, daysBetweenISO } from "../../lib/dateFormat";
 
@@ -16,6 +17,7 @@ export function ConfirmationScreen({
     items: CartItem[];
     totalCost: number;
     depositPaid: number;
+    paymentOption: PaymentOption;
   };
   reservationId: string;
   paymentIntentId: string;
@@ -26,7 +28,9 @@ export function ConfirmationScreen({
     items: confirmedItems,
     totalCost: confirmedTotal,
     depositPaid,
+    paymentOption,
   } = confirmedOrder;
+  const isFullPayment = paymentOption === "FULL";
   return (
     <div
       className="min-h-screen bg-background flex items-center justify-center p-6"
@@ -42,7 +46,9 @@ export function ConfirmationScreen({
             className="text-xs text-green-400 font-semibold tracking-widest uppercase mb-2"
             style={mono}
           >
-            Deposit Received · Equipment Held
+            {isFullPayment
+              ? "Payment Received · Equipment Held"
+              : "Deposit Received · Equipment Held"}
           </p>
           <h2
             className="text-5xl font-black text-foreground leading-none mb-2"
@@ -104,25 +110,38 @@ export function ConfirmationScreen({
                 S${confirmedTotal.toLocaleString()}
               </span>
             </div>
+            {isFullPayment && (
+              // Derived from depositPaid − confirmedTotal (rather than recomputing
+              // × 0.09 independently) so this always reconciles exactly with the
+              // "Paid in Full" row below, regardless of rounding.
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">GST (9%)</span>
+                <span className="font-semibold text-foreground" style={mono}>
+                  S${(depositPaid - confirmedTotal).toLocaleString()}
+                </span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-sm">
               <span className="text-green-400 font-semibold">
-                Deposit Paid (30%)
+                {isFullPayment ? "Paid in Full" : "Deposit Paid (30%)"}
               </span>
               <span className="font-black text-green-400" style={mono}>
                 −S${depositPaid.toLocaleString()}
               </span>
             </div>
-            <div className="flex items-center justify-between text-sm pt-1.5 border-t border-border">
-              <span className="text-muted-foreground">
-                Balance Due on Delivery
-              </span>
-              <span
-                className="font-black text-foreground text-lg"
-                style={display}
-              >
-                S${(confirmedTotal - depositPaid).toLocaleString()}
-              </span>
-            </div>
+            {!isFullPayment && (
+              <div className="flex items-center justify-between text-sm pt-1.5 border-t border-border">
+                <span className="text-muted-foreground">
+                  Balance Due on Delivery
+                </span>
+                <span
+                  className="font-black text-foreground text-lg"
+                  style={display}
+                >
+                  S${(confirmedTotal - depositPaid).toLocaleString()}
+                </span>
+              </div>
+            )}
             {paymentIntentId && (
               <div className="flex items-center justify-between text-xs pt-1.5 border-t border-border">
                 <span className="text-muted-foreground">Payment Ref</span>
@@ -156,10 +175,14 @@ export function ConfirmationScreen({
                 step: "02",
                 text: "Our logistics team will contact you within 2 hours to arrange delivery.",
               },
-              {
-                step: "03",
-                text: "Remaining balance collected on equipment delivery. Cash, card, or bank transfer accepted.",
-              },
+              ...(isFullPayment
+                ? []
+                : [
+                    {
+                      step: "03",
+                      text: "Remaining balance collected on equipment delivery. Cash, card, or bank transfer accepted.",
+                    },
+                  ]),
             ].map(({ step, text }) => (
               <div key={step} className="flex gap-3">
                 <span

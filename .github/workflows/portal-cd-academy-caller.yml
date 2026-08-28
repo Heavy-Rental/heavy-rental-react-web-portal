@@ -5,10 +5,11 @@
 # Also copy:
 #   deploy-pipeline/web-portal-cd-academy.yml
 #     → .github/workflows/web-portal-cd-academy.yml
-#   deploy-pipeline/resolve-vocareum-aws/action.yml
-#     → .github/actions/resolve-vocareum-aws/action.yml
+#   deploy-pipeline/resolve-aws-profile/action.yml
+#     → .github/actions/resolve-aws-profile/action.yml
 #   deploy-pipeline/ansible/
 #     → deploy-pipeline/ansible/   (keep this path)
+# Do not copy resolve-vocareum-aws/ — portal CD uses resolve-aws-profile.
 #
 # Portal app CD (Academy) — branch 2 compose (HR-165).
 # Not CI. Not terraform. Re-runs guest_base + portal on existing asg-portal.
@@ -65,11 +66,33 @@ concurrency:
 
 permissions:
   contents: read
+  # Required to call web-portal-cd-academy.yml (shared with paid OIDC).
+  # Academy still authenticates with Vocareum keys, not GitHub OIDC.
+  id-token: write
 
 jobs:
+  refuse-non-academy:
+    name: Assert Environment academy
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Refuse non-academy
+        env:
+          ENV_NAME: ${{ inputs.aws_environment }}
+        run: |
+          set -euo pipefail
+          if [ "${ENV_NAME}" != "academy" ]; then
+            echo "::error::This Action is AWS Academy / Vocareum only (got '${ENV_NAME}'). Use Web Portal CD (paid) with Environment AWS_ACTUAL."
+            exit 1
+          fi
+
   portal-cd:
     name: Portal CD pipeline
+    needs: [refuse-non-academy]
     uses: ./.github/workflows/web-portal-cd-academy.yml
+    permissions:
+      contents: read
+      id-token: write
     with:
       action: ${{ inputs.action }}
       aws_environment: ${{ inputs.aws_environment }}

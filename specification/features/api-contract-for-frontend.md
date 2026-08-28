@@ -127,6 +127,8 @@ All error responses share the shape `{"error": "<code>", "message": "<human-read
 
 `quote_not_ready` and `quote_expired` did not exist before this change and previously would have come back as generic `"error":"conflict"` with only the message text to go on — worth updating any existing error-handling code that might have been written against that assumption. `already_converted`/`already_cancelled` are new alongside them and only ever come from `POST .../cancel` — no other route returns them.
 
+**Frontend consumption (2026-08-20, HR-205):** `quote_not_ready`/`quote_expired` are now branched on by the web portal — see `Spec-dynamic-pricing-e2e.md` §4.5/§4.6. This branching depends on the live backend actually returning these two codes as distinct from `conflict`, per the caveat above — not independently re-verified against a live backend from the frontend side; see that spec's Manual Validation Checklist.
+
 ## 7. `GET /rentalPlans` — no server-side "active plan" filter
 
 There's no query param to fetch "just my current active plan." A customer has at most one plan at a time whose status is not `"CONVERTED"` **or `"CANCELLED"`** (enforced server-side, `SPEC-rental-plan-quote.md` BR-06/FR-RP-001), so filter client-side: the plan (if any) where `status` is not in `("CONVERTED", "CANCELLED")`. Both terminal statuses free up the one-active-plan slot equally — cancelling, like converting, immediately unblocks a new `POST /rentalPlans`.

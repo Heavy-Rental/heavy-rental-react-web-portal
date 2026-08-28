@@ -9,6 +9,7 @@ export interface RecItem {
   eq: EquipmentItem;
   reason: string;
   lineTotal: number;
+  quantity: number;
   rankOrder: number; // RecommendationItem.rank_order (1-based)
   matchScore: number; // RecommendationItem.match_score — 0–1 decimal, e.g. 0.95 = 95% match
 }
@@ -175,7 +176,7 @@ export function QuoteResultScreen({
 
                     {/* Qty — read-only; AI-recommended quantities aren't user-adjustable here */}
                     <span className="px-2.5 py-1 text-xs font-bold text-muted-foreground bg-secondary/40 border border-border" style={mono}>
-                      Qty: 1
+                      Qty: {r.quantity}
                     </span>
 
                     {/* Price */}

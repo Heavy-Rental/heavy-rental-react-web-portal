@@ -375,6 +375,8 @@ interface AdminDataValue {
   setUsers: Dispatch<SetStateAction<UserRow[]>>;
   bookings: BookingRow[];
   setBookings: Dispatch<SetStateAction<BookingRow[]>>;
+  refreshBookings: () => Promise<void>;
+  bookingsRefreshing: boolean;
   onRentAssetIds: Set<number>;
   fleet: FleetAsset[];
   setFleet: Dispatch<SetStateAction<FleetAsset[]>>;
@@ -471,6 +473,42 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     );
   }
 
+  // `bookings` above is seeded from bookingsRes exactly once (userBookingsSeeded never
+  // resets) — deliberately, so an admin's own in-flight edits (handleBookingStatus's
+  // optimistic setBookings) aren't clobbered by an unrelated refetch elsewhere on the
+  // page. That also means bookingsRes.reload() alone would never actually update what's
+  // on screen. This is the one explicit, admin-triggered escape hatch: refetch and
+  // rebuild `bookings` from the fresh response, bypassing the seed-once gate on purpose —
+  // the main way a stuck `PENDING_DEPOSIT` row (its status changed by the async Stripe
+  // webhook, not by anything this tab did) is ever going to show up without a full page
+  // reload.
+  const [bookingsRefreshing, setBookingsRefreshing] = useState(false);
+  const refreshBookings = async () => {
+    if (!rentalPlansRes.data || !usersRes.data || !equipmentRes.data || !depotsRes.data) {
+      return;
+    }
+    setBookingsRefreshing(true);
+    try {
+      const fresh = await bookingApi.list();
+      setBookings(
+        buildBookingRows(
+          fresh,
+          rentalPlansRes.data,
+          usersRes.data,
+          equipmentRes.data,
+          depotsRes.data,
+        ),
+      );
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to refresh bookings.",
+        "error",
+      );
+    } finally {
+      setBookingsRefreshing(false);
+    }
+  };
+
   const [toast, setToast] = useState<{
     msg: string;
     type?: "success" | "error";
@@ -514,6 +552,8 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
         setUsers,
         bookings,
         setBookings,
+        refreshBookings,
+        bookingsRefreshing,
         onRentAssetIds,
         fleet,
         setFleet,

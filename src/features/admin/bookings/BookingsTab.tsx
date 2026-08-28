@@ -1,5 +1,5 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X, RefreshCw, Info } from "lucide-react";
 import { bookingApi } from "../../../app/api";
 import type { BookingStatus } from "../../../app/types";
 import { mono, display } from "../../../lib/styles";
@@ -26,10 +26,14 @@ const STAT_GROUP_COLORS: Record<string, string> = {
 export function BookingsTab({
   bookings,
   setBookings,
+  refreshBookings,
+  bookingsRefreshing,
   showToast,
 }: {
   bookings: BookingRow[];
   setBookings: Dispatch<SetStateAction<BookingRow[]>>;
+  refreshBookings: () => Promise<void>;
+  bookingsRefreshing: boolean;
   showToast: (msg: string, type?: "success" | "error") => void;
 }) {
   const [bookingSearch, setBookingSearch] = useState("");
@@ -51,16 +55,18 @@ export function BookingsTab({
     }
   };
 
-  const filteredBookings = bookings.filter((b) => {
-    const q = bookingSearch.toLowerCase();
-    return (
-      (bookingStatusFilter === "All" || b.status === bookingStatusFilter) &&
-      (!q ||
-        b.id.toLowerCase().includes(q) ||
-        b.customer.toLowerCase().includes(q) ||
-        b.equipment.toLowerCase().includes(q))
-    );
-  });
+  const filteredBookings = bookings
+    .filter((b) => {
+      const q = bookingSearch.toLowerCase();
+      return (
+        (bookingStatusFilter === "All" || b.status === bookingStatusFilter) &&
+        (!q ||
+          b.id.toLowerCase().includes(q) ||
+          b.customer.toLowerCase().includes(q) ||
+          b.equipment.toLowerCase().includes(q))
+      );
+    })
+    .sort((a, b) => b.apiId - a.apiId);
   const totalBookingPages = Math.max(1, Math.ceil(filteredBookings.length / PAGE_SIZE));
   const pagedBookings = filteredBookings.slice(
     (bookingPage - 1) * PAGE_SIZE,
@@ -69,17 +75,37 @@ export function BookingsTab({
 
   return (
     <>
-      <div className="mb-8">
-        <p className="text-xs text-red-400 font-semibold tracking-widest uppercase mb-2" style={mono}>
-          Admin · Booking Management
-        </p>
-        <h1 className="text-5xl font-black text-foreground leading-none" style={display}>
-          BOOKINGS
-        </h1>
-        <p className="text-muted-foreground mt-2 text-sm">
-          {bookings.length} total bookings · S$
-          {bookings.reduce((s, b) => s + b.deposit, 0).toLocaleString()} deposits collected
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs text-red-400 font-semibold tracking-widest uppercase mb-2" style={mono}>
+            Admin · Booking Management
+          </p>
+          <h1 className="text-5xl font-black text-foreground leading-none" style={display}>
+            BOOKINGS
+          </h1>
+          <p className="text-muted-foreground mt-2 text-sm">
+            {bookings.length} total bookings · S$
+            {bookings
+              .filter((b) => b.status !== "PENDING_DEPOSIT")
+              .reduce((s, b) => s + b.deposit, 0)
+              .toLocaleString()}{" "}
+            deposits collected
+          </p>
+        </div>
+        {/* Bookings are seeded once on load, not polled — a deposit payment's status
+            change (driven by an async Stripe webhook, not anything in this tab) never
+            shows up here on its own. This is the only way to see it without a full page
+            reload. */}
+        <button
+          onClick={() => {
+            void refreshBookings();
+          }}
+          disabled={bookingsRefreshing}
+          className="shrink-0 flex items-center gap-2 px-3 py-2 border border-border text-xs font-bold tracking-widest uppercase text-muted-foreground hover:text-foreground hover:border-primary/40 transition-all disabled:opacity-50"
+        >
+          <RefreshCw size={13} className={bookingsRefreshing ? "animate-spin" : ""} />
+          {bookingsRefreshing ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
 
       {/* Stats */}
@@ -179,17 +205,33 @@ export function BookingsTab({
                     S${b.total.toLocaleString()}
                   </td>
                   <td className="px-4 py-3">
-                    <select
-                      value={b.status}
-                      onChange={(e) => handleBookingStatus(b.apiId, e.target.value as BookingStatus)}
-                      className={`px-2 py-0.5 text-xs font-semibold border outline-none bg-transparent ${bookingStatusColor(b.status)}`}
-                    >
-                      {BOOKING_STATUSES.map((s) => (
-                        <option key={s} value={s} className="bg-card text-foreground">
-                          {formatBookingStatus(s)}
-                        </option>
-                      ))}
-                    </select>
+                    {b.status === "PENDING_DEPOSIT" ? (
+                      // No backend route can move a booking off PENDING_DEPOSIT by admin
+                      // action — only the Stripe webhook does (PaymentWebhookService).
+                      // Showing the same editable dropdown here would just fail silently
+                      // against the real API, so this is a plain badge instead: honest
+                      // about there being no manual override yet, with the one thing an
+                      // admin actually can do about a booking stuck here.
+                      <span
+                        title="No deposit received yet. If the customer already paid and this hasn't updated, try Refresh — if it's still PENDING_DEPOSIT after that, the payment webhook likely isn't reaching this environment; check Stripe Dashboard → Developers → Webhooks."
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold border cursor-help ${bookingStatusColor(b.status)}`}
+                      >
+                        {formatBookingStatus(b.status)}
+                        <Info size={11} />
+                      </span>
+                    ) : (
+                      <select
+                        value={b.status}
+                        onChange={(e) => handleBookingStatus(b.apiId, e.target.value as BookingStatus)}
+                        className={`px-2 py-0.5 text-xs font-semibold border outline-none bg-transparent ${bookingStatusColor(b.status)}`}
+                      >
+                        {BOOKING_STATUSES.map((s) => (
+                          <option key={s} value={s} className="bg-card text-foreground">
+                            {formatBookingStatus(s)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                 </tr>
               ))}

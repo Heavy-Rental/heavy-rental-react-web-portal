@@ -102,6 +102,12 @@ export function OverviewTab({
   const pendingBookings = bookings.filter((b) => b.paidStatus === "UNPAID").length;
   const needsRepair = fleet.filter((a) => a.condition === "NEEDS_REPAIR").length;
   const pendingActions = pendingBookings + needsRepair;
+  const pendingActionsSub = [
+    needsRepair > 0 ? `${needsRepair} maintenance` : null,
+    pendingBookings > 0 ? `${pendingBookings} bookings` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ") || "All clear";
 
   const fleetHealthData: { name: string; value: number; color: string }[] = [
     { name: "Available", value: availableCount, color: "#4ade80" },
@@ -126,7 +132,12 @@ export function OverviewTab({
     color: BOOKING_STAT_DOT_COLORS[label],
   }));
 
-  const totalDeposits = bookings.reduce((s, b) => s + b.deposit, 0);
+  // PENDING_DEPOSIT means the deposit hasn't actually been paid yet (b.deposit is the
+  // required amount, not evidence of payment) — excluded so "Total Deposits Collected"
+  // doesn't count money that was never received.
+  const totalDeposits = bookings
+    .filter((b) => b.status !== "PENDING_DEPOSIT")
+    .reduce((s, b) => s + b.deposit, 0);
   const totalBookingValue = bookings.reduce((s, b) => s + b.total, 0);
 
   const topCustomers = [...users].sort((a, b) => b.spent - a.spent).slice(0, 3);
@@ -194,7 +205,7 @@ export function OverviewTab({
             icon: AlertTriangle,
             label: "Pending Actions",
             value: pendingActions,
-            sub: `${needsRepair} maintenance · ${pendingBookings} bookings`,
+            sub: pendingActionsSub,
             accent: pendingActions > 0,
           },
         ].map(({ icon: Icon, label, value, sub, accent }) => (

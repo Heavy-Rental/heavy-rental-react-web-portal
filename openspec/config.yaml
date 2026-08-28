@@ -1,0 +1,45 @@
+schema: spec-driven-with-adr
+
+context: |
+  Project: Heavy Rental React Web Portal
+  Canonical GitHub repository: Heavy-Rental/heavy-rental-react-web-portal
+  Runtime: Node.js 22, npm (package-lock.json lockfileVersion 3)
+  App stack: React 19 + TypeScript + Vite 8 + Tailwind CSS v4
+  GitHub Flow: feature branch → PR into develop (CI) → merge to master → manual Release
+
+  Documentation stack (must stay consistent):
+  - OpenSpec (`openspec/`) is the living behavior contract (what the system does).
+  - OpenSPDD (`spdd/`) holds REASONS Canvas design contracts (how to implement).
+  - ADRs (`adr/NNNN-kebab-title.md`) are the durable architecture log (why).
+  - `specification/` holds historical feature SDD specs. They remain valid product
+    detail; OpenSpec product-features maps each file. If a fact conflicts, prefer
+    the workflow YAML / code, then OpenSpec specs, then update specification/.
+
+  CI/CD facts that must not drift:
+  - Default app repository for reusable CI is Heavy-Rental/heavy-rental-react-web-portal
+    (never SA62-team1/heavy-rental-react-web-portal).
+  - Portal CD uses `.github/actions/resolve-aws-profile` for both Academy and paid.
+    Do not wire `.github/actions/resolve-vocareum-aws` into portal CD.
+  - Paid CD caller (`portal-cd-paid-caller.yml`) MUST NOT use `secrets: inherit`.
+    Auth is GitHub OIDC (`vars.AWS_ROLE_TO_ASSUME`). Mixed Vocareum keys are
+    refused on the caller (`refuse-non-paid`).
+  - Academy CD caller passes Vocareum keys as workflow_dispatch inputs.
+  - Portal CD health (`verify`) is SSM GET / on asg-portal guests (200/301/302).
+    ALB target-group health-check settings live in infra, not this repo.
+
+rules:
+  specs:
+    - Use RFC 2119 MUST/SHALL/SHOULD/MAY.
+    - Requirements describe observable behavior (workflow outcomes, HTTP status,
+      branch protection checks), not internal class names.
+    - Every requirement has at least one #### Scenario with GIVEN/WHEN/THEN.
+    - Keep product UI/business rules in specification/; OpenSpec references them.
+  design:
+    - Read every in-force ADR under adr/ before proposing architecture.
+    - Do not edit an accepted ADR; supersede it with a new numbered ADR.
+  tasks:
+    - Checkbox tasks (`- [ ] N.N ...`) only.
+    - Honor in-force ADRs and OpenSPDD Safeguards.
+  adr:
+    - Durable ADRs live at repo-root adr/NNNN-kebab-title.md (MADR-short).
+    - Change-local openspec/changes/<change>/adr.md is the review manifest only.

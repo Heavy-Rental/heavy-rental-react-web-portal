@@ -1,8 +1,16 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { User, Upload, ShoppingCart, LogOut, CheckCircle, X } from "lucide-react";
+import {
+  User,
+  Upload,
+  ShoppingCart,
+  LogOut,
+  CheckCircle,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 import { CustomerOnboarding } from "../browse/CustomerOnboarding";
 import { equipmentImageSrc } from "../browse/equipmentImageSrc";
-import type { Asset as EquipmentItem, OnboardingMode, RentalPlanResponse } from "../../app/types";
+import type { Asset as EquipmentItem, OnboardingMode, PaymentOption, RentalPlanResponse } from "../../app/types";
 import {
   assetApi,
   depotApi,
@@ -13,8 +21,14 @@ import {
   calcFullPaymentDueDate,
   createBookingFromPlan,
   paymentApi,
+  waitForBookingConfirmed,
   ApiError,
 } from "../../app/api";
+import { getStripe } from "../../app/stripe";
+import {
+  loadPendingDepositPayment,
+  clearPendingDepositPayment,
+} from "../checkout/pendingDepositPayment";
 import { useApiResource } from "../../app/useApiResource";
 import { mono, display, sans } from "../../lib/styles";
 import {
@@ -42,10 +56,10 @@ import { EquipmentGrid } from "../browse/EquipmentGrid";
 import { SiteAddressModal } from "../checkout/SiteAddressModal";
 import { generateFakePaymentIntentId } from "../checkout/payment";
 import { DepositCheckout } from "../checkout/DepositCheckout";
+import { QuoteStaleError, isQuoteStaleCode } from "../checkout/quoteStaleness";
 import { CartDrawer } from "../checkout/CartDrawer";
 import { ConfirmationScreen } from "../checkout/ConfirmationScreen";
-import { buildRentalPlanViews, type RentalPlan } from "../checkout/rentalPlan";
-import { RentalPlanDetail } from "../checkout/RentalPlanDetail";
+import { buildMyBookings } from "./myBookings";
 import { CustomerProfilePage } from "./CustomerProfilePage";
 import { EquipmentDetailPage } from "./EquipmentDetailPage";
 
@@ -117,11 +131,119 @@ export function CustomerPortal({
     items: CartItem[];
     totalCost: number;
     depositPaid: number;
+    paymentOption: PaymentOption;
   } | null>(null);
   // Simulated Stripe PaymentIntent id — minted client-side per checkout attempt so both the
   // DepositCheckout failure screen and the confirmation screen can reference the same id.
   const [paymentIntentId, setPaymentIntentId] = useState("");
-  const [selectedPlan, setSelectedPlan] = useState<RentalPlan | null>(null);
+  // API-mode only: set on mount if the app was just returned to from a Stripe redirect
+  // (a 3DS challenge or redirect-based payment method that `confirmPayment({ redirect:
+  // "if_required" })` can still trigger) whose outcome isn't a clean "show the normal
+  // confirmation screen" — either because the payment didn't succeed, or because it did
+  // but the pre-redirect cart snapshot (sessionStorage) is missing so there's nothing to
+  // render ConfirmationScreen from.
+  const [resumeNotice, setResumeNotice] = useState<{
+    status: "processing" | "failed";
+    message: string;
+  } | null>(null);
+
+  // Resumes a checkout interrupted by a Stripe redirect. Runs once on mount, before
+  // anything else has a chance to render — a real browser navigation (not the in-page
+  // confirmPayment() resolution the common case takes) clears every bit of in-memory
+  // React state this component would otherwise rely on, so this reconstructs what it can
+  // from Stripe's own return-URL params + the clientSecret-matched sessionStorage
+  // snapshot saved just before the redirect (DepositCheckout.tsx).
+  useEffect(() => {
+    if (!isApiMode) return;
+    const params = new URLSearchParams(window.location.search);
+    const clientSecret = params.get("payment_intent_client_secret");
+    const redirectStatus = params.get("redirect_status");
+    if (!clientSecret || !redirectStatus) return;
+
+    // Strip Stripe's return params immediately so a later refresh doesn't re-run this.
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.hash,
+    );
+
+    (async () => {
+      const stripe = await getStripe();
+      if (!stripe) return;
+      const { paymentIntent } = await stripe.retrievePaymentIntent(clientSecret);
+      if (!paymentIntent) return;
+
+      const pending = loadPendingDepositPayment();
+      const matchesPending = pending?.clientSecret === clientSecret;
+
+      if (paymentIntent.status === "succeeded") {
+        if (!matchesPending) {
+          // Stripe's client-side PaymentIntent carries no metadata/booking reference
+          // (that's server-side-only), and the sessionStorage snapshot that would
+          // normally supply it is gone — cleared storage, or the redirect landed in a
+          // different tab/browser than the one that started checkout. Nothing left to
+          // reconstruct a booking from; give the customer a reference number instead.
+          setResumeNotice({
+            status: "processing",
+            message: `Your payment went through (reference ${paymentIntent.id}), but we couldn't automatically match it to a booking on this device. Check My Rental Plans, or contact support if it doesn't appear shortly.`,
+          });
+          return;
+        }
+        const booking = await waitForBookingConfirmed(pending.bookingId).catch(
+          () => null,
+        );
+        clearPendingDepositPayment();
+        setReservationId(`RNT-${String(pending.bookingId).padStart(4, "0")}`);
+        setConfirmedOrder({
+          items: pending.cart,
+          totalCost: pending.cart.reduce(
+            (s, c) =>
+              s +
+              daysBetweenISO(c.startDate, c.endDate) * c.equipment.baseDailyRate,
+            0,
+          ),
+          // Booking.depositAmount is live server truth (dynamic pricing can move it between
+          // the pre-redirect snapshot and now), so prefer it over the snapshot for deposits.
+          // Full payment has no equivalent live field to re-fetch — the GST-inclusive charged
+          // amount is computed once by the full-payment-intent endpoint and never persisted
+          // on the booking itself (Booking.totalAmount stays pre-GST) — so the pre-redirect
+          // snapshot (sourced from that same intent response) is the only figure available.
+          depositPaid:
+            pending.paymentOption === "FULL"
+              ? pending.amountDue
+              : (booking?.depositAmount ?? pending.amountDue),
+          paymentOption: pending.paymentOption,
+        });
+        setPaymentIntentId(paymentIntent.id);
+        setCheckoutOpen(false);
+        setConfirmed(true);
+        setCart([]);
+        setPlanId(null);
+        setPlanItemIds({});
+        return;
+      }
+
+      if (paymentIntent.status === "processing") {
+        setResumeNotice({
+          status: "processing",
+          message:
+            "Your payment is still being processed by your bank. We'll confirm your booking as soon as it clears — no need to retry.",
+        });
+        return;
+      }
+
+      // requires_payment_method, canceled, etc. — nothing left to resume.
+      clearPendingDepositPayment();
+      setResumeNotice({
+        status: "failed",
+        message:
+          "Your payment wasn't completed. Please try again from My Rental Plans, or contact support if you believe you were charged.",
+      });
+    })();
+    // Deliberately once-on-mount: this reacts to the URL Stripe redirected back to, not
+    // to any state this component itself manages.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Shared date-range bar (Spec-frontend-ui-changes.md Screen 6) — every cart item is
   // selected against this one range, instead of each machine picking its own dates.
@@ -152,13 +274,17 @@ export function CustomerPortal({
   const equipment = useMemo(() => equipmentRes.data ?? [], [equipmentRes.data]);
   const depotsRes = useApiResource((signal) => depotApi.list(signal));
   const depots = depotsRes.data ?? [];
+  // Still fetched (not just for the reload below) — buildMyBookings' mock-mode branch
+  // joins Booking.rentalPlanId -> RentalPlan.userId through this data, since the mock
+  // server's bookings have no customer name of their own to filter by.
   const rentalPlansRes = useApiResource((signal) => rentalPlanApi.list(signal));
-  const rentalPlans = useMemo(
+  const bookingsRes = useApiResource((signal) => bookingApi.list(signal));
+  const myBookings = useMemo(
     () =>
-      rentalPlansRes.status === "success" && userId !== null
-        ? buildRentalPlanViews(rentalPlansRes.data, equipment, userId)
+      bookingsRes.status === "success"
+        ? buildMyBookings(bookingsRes.data, rentalPlansRes.data ?? [], equipment, userId)
         : [],
-    [rentalPlansRes.status, rentalPlansRes.data, equipment, userId],
+    [bookingsRes.status, bookingsRes.data, rentalPlansRes.data, equipment, userId],
   );
 
   const [highlightId, setHighlightId] = useState<number | null>(null);
@@ -597,8 +723,53 @@ export function CustomerPortal({
     setEditMode(false);
     setConfirmed(false);
     setConfirmedOrder(null);
-    setSelectedPlan(null);
   };
+
+  if (resumeNotice) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div
+          className="bg-card border border-border w-full max-w-md p-6 flex flex-col gap-5"
+          style={sans}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`w-9 h-9 border flex items-center justify-center shrink-0 ${
+                resumeNotice.status === "failed"
+                  ? "bg-red-500/10 border-red-500/30"
+                  : "bg-primary/10 border-primary/30"
+              }`}
+            >
+              {resumeNotice.status === "failed" ? (
+                <AlertTriangle size={18} className="text-red-400" />
+              ) : (
+                <CheckCircle size={18} className="text-primary" />
+              )}
+            </div>
+            <div>
+              <h3
+                className="text-lg font-black text-foreground leading-tight"
+                style={display}
+              >
+                {resumeNotice.status === "failed"
+                  ? "Payment Not Completed"
+                  : "Payment Update"}
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                {resumeNotice.message}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setResumeNotice(null)}
+            className="w-full py-2.5 bg-primary text-primary-foreground text-xs font-black tracking-widest uppercase hover:brightness-110 transition-all"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (confirmed && confirmedOrder) {
     return (
@@ -615,19 +786,6 @@ export function CustomerPortal({
     );
   }
 
-  // ── RENTAL PLAN DETAIL PAGE ──────────────────────────────────────────────────
-  if (selectedPlan) {
-    return (
-      <RentalPlanDetail
-        plan={selectedPlan}
-        userName={userName}
-        onHome={goHome}
-        onBack={() => setSelectedPlan(null)}
-        onLogout={onLogout}
-      />
-    );
-  }
-
   // ── USER PROFILE PAGE ────────────────────────────────────────────────────────
   if (profileOpen) {
     return (
@@ -639,12 +797,8 @@ export function CustomerPortal({
         setProfileForm={setProfileForm}
         editMode={editMode}
         setEditMode={setEditMode}
-        rentalPlans={rentalPlans}
+        bookings={myBookings}
         onBack={() => setProfileOpen(false)}
-        onSelectPlan={(plan) => {
-          setProfileOpen(false);
-          setSelectedPlan(plan);
-        }}
       />
     );
   }
@@ -745,11 +899,9 @@ export function CustomerPortal({
             className="text-xs text-primary font-semibold tracking-widest uppercase mb-2"
             style={mono}
           >
-            {onboardingMode === "browse"
-              ? "Browsing · No pressure"
-              : onboardingMode === "specs"
-                ? "Based on your specs"
-                : `Welcome back, ${userName.split(" ")[0]}`}
+            {onboardingMode === "specs"
+              ? "Based on your specs"
+              : `Welcome back, ${userName.split(" ")[0]}`}
           </p>
           <h1
             className="text-5xl font-black text-foreground leading-none"
@@ -984,7 +1136,7 @@ export function CustomerPortal({
               ? () => quoteRentalPlan(planId)
               : undefined
           }
-          onBeginPayment={async () => {
+          onBeginPayment={async (paymentOption) => {
             // Real backend only (STRIPE_INTEGRATION_HANDOFF.md §2/§5) — DepositCheckout
             // only calls this when MODE === "api"; mock mode still creates its booking
             // inside onPaid below, after the simulated payment "succeeds". Unlike the
@@ -996,33 +1148,57 @@ export function CustomerPortal({
                 "Your rental plan couldn't be found — please refresh and try again.",
               );
             }
-            // Re-quote immediately before converting the plan (re-quoting a QUOTED plan is
-            // explicitly allowed — it's the stale-quote recovery path) so the plan is
-            // guaranteed QUOTED and the amount about to be charged is the freshest one.
-            // Goes through quoteRentalPlan(), not rentalPlanCartApi.quote() directly, so if
-            // DepositCheckout's own display-only quote (onGetQuote above) is still in
-            // flight, this awaits that same call instead of firing a concurrent one that
-            // would 409 — this is what keeps the charged amount from silently reverting to
-            // flat base-rate math once dynamic pricing is live (specification/frontend-handoff.md),
-            // and what keeps "Continue to Payment" from ever failing on a lock conflict
-            // that was never a real conflict, just two legitimate callers.
+            // Attempt conversion directly against whatever quote is already active
+            // server-side — no forced pre-emptive re-quote. This is the happy path for
+            // the overwhelming majority of checkouts: it succeeds at the exact price
+            // already shown on the summary step, so the customer never sees a second,
+            // silently different price on the Stripe payment step. Only on a confirmed
+            // 409 quote_not_ready/quote_expired rejection do we re-quote — see the catch
+            // block below, which surfaces that as a QuoteStaleError for DepositCheckout
+            // to show an explicit "price updated, please confirm" step before retrying.
             try {
-              await quoteRentalPlan(planId);
               const booking = await createBookingFromPlan({
                 rentalPlanId: planId,
                 siteAddress,
                 deliveryNotes: deliveryNotes || undefined,
               });
-              const intent = await paymentApi.createDepositIntent(
-                booking.bookingId,
-              );
+              // Deposit is the default/primary flow (HR-213) — Pay in Full charges the
+              // booking's totalAmount plus GST in one shot via a sibling intent endpoint,
+              // instead of the (GST-free) 30% depositAmount. Unlike the deposit amount
+              // (already known from the booking response), the GST-inclusive full amount
+              // only exists once the backend computes and returns it — it's never
+              // persisted on the booking itself — so it's read off the intent response.
+              if (paymentOption === "FULL") {
+                const intent = await paymentApi.createFullPaymentIntent(
+                  booking.bookingId,
+                );
+                return {
+                  bookingId: booking.bookingId,
+                  clientSecret: intent.clientSecret,
+                  paymentIntentId: intent.paymentIntentId,
+                  amountDue: intent.amount,
+                  paymentOption,
+                };
+              }
+              const intent = await paymentApi.createDepositIntent(booking.bookingId);
               return {
                 bookingId: booking.bookingId,
                 clientSecret: intent.clientSecret,
                 paymentIntentId: intent.paymentIntentId,
-                depositAmount: booking.depositAmount,
+                amountDue: booking.depositAmount,
+                paymentOption,
               };
             } catch (err) {
+              // Plan genuinely was never quoted, or its quote is >24h stale. Re-quote once
+              // — via quoteRentalPlan() so this dedupes against any still-in-flight
+              // DepositCheckout onGetQuote() call instead of firing a concurrent one that
+              // would itself 409 — and hand the fresh plan back as a QuoteStaleError rather
+              // than retrying automatically: the customer must see and confirm the new
+              // price before we charge it.
+              if (err instanceof ApiError && isQuoteStaleCode(err.code)) {
+                const refreshed = await quoteRentalPlan(planId);
+                throw new QuoteStaleError(refreshed, err.code);
+              }
               // Both quote() and createBookingFromPlan() 409 with "already_converted" if this
               // plan already turned into a Booking in an earlier attempt (e.g. this same
               // checkout succeeded once but the client never got to clear its cart — a
@@ -1040,20 +1216,43 @@ export function CustomerPortal({
                   { cause: err },
                 );
               }
+              // createDepositIntent/createFullPaymentIntent's booking-already-has-a-payment
+              // 409 (PaymentService's generic ResponseStatusException — falls under the
+              // same "conflict" code as any other 409, so the message is what actually
+              // identifies it). Reachable once the booking above is created but the
+              // payment-intent call that follows it fails: a previous attempt for this
+              // same booking already initiated or completed a deposit or full payment.
+              // Same self-heal as already_converted — retrying "Continue to Payment"
+              // against this planId can't succeed either way, since the plan converted
+              // the moment the booking was created.
+              if (
+                err instanceof ApiError &&
+                err.code === "conflict" &&
+                /deposit|payment/i.test(err.message)
+              ) {
+                setCart([]);
+                setPlanItemIds({});
+                setPlanId(null);
+                throw new Error(
+                  "A payment for this booking was already started on a previous attempt — your cart has been cleared. If that payment didn't go through, please contact support before trying again so you aren't charged twice.",
+                  { cause: err },
+                );
+              }
               throw err;
             }
           }}
-          onPaid={async (result) => {
+          onPaid={async (paymentOption, result) => {
             if (result) {
               // Real backend: booking + Stripe PaymentIntent already exist (onBeginPayment
-              // above) and the payment just succeeded — trust the server's depositAmount
+              // above) and the payment just succeeded — trust the server's amountDue
               // rather than recomputing it client-side.
               const rid = `RNT-${String(result.bookingId).padStart(4, "0")}`;
               setReservationId(rid);
               setConfirmedOrder({
                 items: cart,
                 totalCost,
-                depositPaid: result.depositAmount,
+                depositPaid: result.amountDue,
+                paymentOption: result.paymentOption,
               });
               setCheckoutOpen(false);
               setConfirmed(true);
@@ -1089,7 +1288,12 @@ export function CustomerPortal({
                   c.equipment.baseDailyRate,
               0,
             );
-            const deposit = calcDeposit(cost);
+            // Deposit is the default/primary flow (HR-213) — Pay in Full settles `cost`
+            // plus GST in one payment instead of the (GST-free) 30% deposit. Matches
+            // DepositCheckout's own amountDue calc and the intent.amount the real backend
+            // will return for this flow.
+            const amountPaid =
+              paymentOption === "FULL" ? Math.round(cost * 1.09) : calcDeposit(cost);
             const plan = await rentalPlanApi.create({
               userId,
               status: "active",
@@ -1110,21 +1314,23 @@ export function CustomerPortal({
               deliveryDate: startDate,
               returnDate: endDate,
               totalAmount: cost,
-              depositAmount: deposit,
+              depositAmount: amountPaid,
               fullPaymentDueDate: calcFullPaymentDueDate(startDate),
               status: "CONFIRMED",
-              paidStatus: "DEPOSIT",
+              paidStatus: paymentOption === "FULL" ? "FULL" : "DEPOSIT",
               siteAddress,
               sitePostalCode,
               deliveryNotes,
             });
             const rid = `RNT-${String(booking.id).padStart(4, "0")}`;
             rentalPlansRes.reload();
+            bookingsRes.reload();
             setReservationId(rid);
             setConfirmedOrder({
               items: cart,
               totalCost: cost,
-              depositPaid: deposit,
+              depositPaid: amountPaid,
+              paymentOption,
             });
             setCheckoutOpen(false);
             setConfirmed(true);
