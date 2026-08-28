@@ -17,7 +17,9 @@
 #
 # When this runs
 # --------------
-#   workflow_dispatch only (Actions → this workflow → Run workflow)
+#   workflow_dispatch only (Actions → this workflow → Run workflow).
+#   The operator keys in release_name; it is the GitHub Release title and
+#   the Actions run name. GHCR still uses the auto patch-bumped semver tag.
 #
 #   Does NOT run on:
 #     - published GitHub Release (this pipeline creates that Release)
@@ -45,8 +47,15 @@
 
 name: Release
 
+run-name: Release ${{ inputs.release_name }}
+
 on:
   workflow_dispatch:
+    inputs:
+      release_name:
+        description: GitHub Release title (also the Actions run name)
+        required: true
+        type: string
 
 concurrency:
   group: portal-release-${{ github.workflow }}-${{ github.repository }}
@@ -65,3 +74,5 @@ jobs:
   release-pipeline:
     name: Release pipeline
     uses: ./.github/workflows/release-pipeline.yml
+    with:
+      release_name: ${{ inputs.release_name }}

@@ -17,7 +17,7 @@
 # GitHub Flow
 # --------------------------------------------------------------------------
 # Invoked via portal-release-caller.yml on workflow_dispatch
-# (Actions → Release → Run workflow).
+# (Actions → Release → Run workflow; operator keys in release_name).
 # Do not use on: release — Publish creates the GitHub Release.
 # Feature-branch PR validation remains portal-ci-caller.yml (Integration first).
 #
@@ -53,6 +53,8 @@
 #
 # The caller invokes this workflow with:
 #   uses: ./.github/workflows/release-pipeline.yml
+#   with:
+#     release_name: ${{ inputs.release_name }}   # GitHub Release title
 #
 # Also mirrored in the pipeline-development repo for discovery/testing:
 #   .github/workflows/web-portal-release.yml
@@ -81,6 +83,13 @@ on:
         description: >
           Override git ref (branch/tag/SHA). Leave empty to use the calling
           workflow's commit (github.sha). Release checkout is master.
+        required: false
+        type: string
+        default: ""
+      release_name:
+        description: >
+          GitHub Release title from the caller. Empty falls back to v<semver>.
+          Does not change the GHCR image tag (still auto patch-bumped).
         required: false
         type: string
         default: ""
@@ -1855,6 +1864,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ needs.integration.outputs.app_repository }}
+          # Bind inputs here — never interpolate github/inputs directly in run: scripts
+          RELEASE_NAME_INPUT: ${{ inputs.release_name }}
         run: |
           set -euo pipefail
           META="${GITHUB_WORKSPACE}/${IMAGE_META}"
@@ -1870,9 +1881,13 @@ jobs:
             exit 1
           fi
           TAG="v${IMAGE_TAG}"
+          TITLE="$(printf '%s' "${RELEASE_NAME_INPUT:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          if [ -z "${TITLE}" ]; then
+            TITLE="${TAG}"
+          fi
           NOTES="$(
             printf '%s\n' \
-              "Release **${TAG}** from \`master\`." \
+              "Release **${TITLE}** (\`${TAG}\`) from \`master\`." \
               "" \
               "GHCR (public):" \
               "- \`docker pull ${IMAGE_REMOTE}\`" \
@@ -1885,7 +1900,7 @@ jobs:
           gh release create "${TAG}" \
             --repo "${GH_REPO}" \
             --target master \
-            --title "${TAG}" \
+            --title "${TITLE}" \
             --notes "${NOTES}" \
             "${ATTACH[@]}"
-          echo "Created GitHub Release ${TAG} on ${GH_REPO} (target master)."
+          echo "Created GitHub Release ${TITLE} (tag ${TAG}) on ${GH_REPO} (target master)."
