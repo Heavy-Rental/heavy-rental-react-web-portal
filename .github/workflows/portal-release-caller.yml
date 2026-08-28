@@ -54,6 +54,9 @@ concurrency:
 
 permissions:
   contents: write
+  # Nested reusable workflows cannot request more than the caller grants;
+  # omitted scopes become none.
+  pull-requests: read
   security-events: write
   actions: read
   packages: write
