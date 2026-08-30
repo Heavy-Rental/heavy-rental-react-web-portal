@@ -17,12 +17,18 @@ The product SDD set MUST match `specification/README.md`. Adding, renaming, or r
 
 ### Requirement: UI and booking business rules
 
-Customer and admin UI MUST follow `specification/Spec-ui-heavy-machinery-portal.md` (catalog types, one booking = one delivery and return, shared dates, 30% deposit, full payment two days before delivery, one rental plan per user).
+Customer and admin UI MUST follow `specification/Spec-ui-heavy-machinery-portal.md` (catalog types, one booking = one delivery and return, shared dates, 30% deposit, remaining balance due on delivery / mobilisation with optional Pay in Full, one active rental plan per user).
 
 #### Scenario: Deposit rate
 - GIVEN a quote total
 - WHEN deposit is calculated in the portal
 - THEN the amount is 30% of the rental value as specified in `Spec-ui-heavy-machinery-portal.md`
+
+#### Scenario: Checkout payment timing
+- GIVEN a customer on the deposit checkout summary
+- WHEN they have not chosen Pay in Full
+- THEN copy states the remaining balance is due on the day of delivery / upon mobilisation
+- AND the UI MUST NOT require full payment two days before delivery
 
 ### Requirement: API, auth, mock, and checkout contracts
 
@@ -36,7 +42,7 @@ Frontend API integration, authentication, mock server, REST reference, Stripe ch
 
 ### Requirement: Environment spec tracks pipelines
 
-`specification/Spec-project-environment.md` MUST describe the same pipeline set as `openspec/specs/ci-pipelines/spec.md` and `openspec/specs/portal-cd/spec.md` (Fast Feedback, Integration, Release, Security Report, Academy CD, paid CD). Paid CD MUST be documented as GitHub OIDC without `secrets: inherit` (ADR-0006).
+`specification/Spec-project-environment.md` MUST describe the same pipeline set as `openspec/specs/ci-pipelines/spec.md` and `openspec/specs/portal-cd/spec.md` (Fast Feedback, Integration, Release, Security Report, Academy CD, paid CD). Paid CD MUST be documented as GitHub OIDC without `secrets: inherit` (ADR-0006). Release MUST be documented as `vite build --mode api` with `.env.production` not copied into the nginx image.
 
 #### Scenario: Pipeline count
 - GIVEN `Spec-project-environment.md`

@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   // VITE_API_TARGET is set per npm script via .env.mock / .env.api (Spec-project-environment.md
-  // FR-011, Spec-frontend-api-integration.md FR-002) — chooses the mock server vs. a future
+  // FR-011, Spec-frontend-api-integration.md FR-002) — chooses the mock server vs. the
   // Spring Boot backend without touching src/app/api.ts's relative BASE = "/api".
   const env = loadEnv(mode, process.cwd(), '')
   return {

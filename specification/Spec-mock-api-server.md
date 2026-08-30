@@ -7,7 +7,7 @@
 
 ## Overview
 
-The portal has no live backend yet — the frontend runs entirely on local sample data, and business rules for the Singapore rental model (equipment catalog, booking model, deposits, rental plans, depots) exist only as UI behavior. This feature provides a local, HTTP-reachable **mock REST API** that mirrors those business rules, so frontend development and CI testing have a real API contract to work against ahead of an actual backend. It is built with the Thinker "Mock Server" VS Code extension (`@r35007/mock-server`), the tool already adopted for this project, and is wired to the project-local mock workspace at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`.
+The portal has a real Spring Boot backend (`npm run dev:api`) **and** this mock REST API (`npm run dev` / `dev:mock`). The mock mirrors Singapore rental business rules so frontend development can run without the Spring stack. It is built with the Thinker "Mock Server" VS Code extension and is wired to the project-local mock workspace at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`. The mock catalog resource is **`/api/assets`** (db key `"assets"`), matching `assetApi` — not `/api/equipment`.
 
 ## Clarifications
 
@@ -44,14 +44,14 @@ As a frontend developer or a CI test job working on the heavy machinery rental p
 
 ### Functional Requirements
 
-- **FR-001**: ~~The mock server MUST expose a health-check endpoint that responds successfully independent of any other resource being loaded, so external tooling can detect readiness.~~ **Superseded 2026-08-04**: no dedicated health route exists now that the server is launched only via the Thinker VS Code extension (see Change Log). External tooling MUST instead detect readiness via any resource endpoint (e.g. `GET /api/equipment`).
+- **FR-001**: ~~The mock server MUST expose a health-check endpoint that responds successfully independent of any other resource being loaded, so external tooling can detect readiness.~~ **Superseded 2026-08-04**: no dedicated health route exists now that the server is launched only via the Thinker VS Code extension (see Change Log). External tooling MUST instead detect readiness via any resource endpoint (e.g. `GET /api/assets`).
 - **FR-002**: The mock server MUST expose read and write endpoints for an equipment resource restricted to exactly the 4 approved types: Boom Lift, Scissors Lift, Fork Lift, Excavator.
 - **FR-003**: The mock server MUST expose read and write endpoints for a depot resource restricted to exactly the 4 approved Singapore locations: Jurong Port, Pioneer, Tuas, Marina South.
 - **FR-004**: The mock server MUST expose read and write endpoints for a user resource.
 - **FR-005**: The mock server MUST expose read and write endpoints for a rental-plan resource, where each plan belongs to exactly one user and carries a status that distinguishes an active plan from a completed one.
 - **FR-006**: The mock server MUST expose read and write endpoints for a booking resource, where each booking represents exactly one delivery event and one return event, and shares a single start/end date across every equipment item it references.
 - **FR-007**: Every booking record MUST carry a deposit amount equal to 30% of its total rental amount.
-- **FR-008**: Every booking record MUST carry a full-payment-due date equal to 2 days before its delivery date.
+- **FR-008**: Every mock booking record MUST carry a `fullPaymentDueDate` field. Seed data and `calcFullPaymentDueDate()` still store **2 days before delivery**; the checkout UI currently tells the customer the remaining balance is due **on the day of delivery** (`Spec-ui-heavy-machinery-portal.md` §2.5). Do not treat the mock field as the customer-facing payment rule.
 - **FR-009**: The mock server MUST expose read endpoints for the aggregate reporting data (monthly utilization and fleet status distribution) used by the admin dashboard.
 - **FR-010**: The mock server's host and port MUST be configurable via environment variables and workspace settings, defaulting to `127.0.0.1:4010` to match the CI pipeline's existing expectations. In this workspace, the Thinker extension is configured to use the local mock root at `/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock` and the database file at `mock/db.json`.
 - **FR-011**: Every resource endpoint MUST support standard REST operations: list, get-by-id, create, replace, partial-update, and delete.
@@ -70,9 +70,9 @@ As a frontend developer or a CI test job working on the heavy machinery rental p
 
 - Assumes the Thinker "Mock Server" VS Code extension as the mocking tool, run only through the extension's UI — the `@r35007/mock-server` npm package is deliberately **not** a project dependency (see Change Log: removed for a high-severity `npm audit` finding with no non-breaking fix). This also means there is no npm-invokable script to start the server headlessly.
 - Assumes the CI pipeline's `rest-endpoint-tests` job (`.github/workflows/integration-pipeline.yml`) as the eventual consumer of this server's host/port contract, once a `test:api`-family script and an npm-invokable mock-server script both exist; today that job has neither and stays in its documented placeholder/skip state regardless of this server's implementation.
-- Assumes no live backend exists yet — this server is a stand-in, not an integration with a real datastore.
-- Assumes the workspace-level VS Code settings for the Thinker extension are present so the "Mock it" action resolves to the project-local mock folder and `mock/db.json` instead of an external or default location.
-- Seed values for equipment and admin analytics are assumed to stay consistent with the frontend's existing canonical sample data, so the mock API and the UI's local fallback data don't visibly diverge.
+- Assumes this server is the **mock-mode** stand-in. The live Spring backend is a separate process (`Spec-rest-api-reference.md`); the two are never targeted in the same Vite `MODE`.
+- Assumes the workspace-level VS Code settings for the Thinker extension are present so **Mock Server: Start / Restart Server** resolves to the project-local mock folder and `mock/db.json` instead of an external or default location.
+- Seed values for assets and admin analytics are assumed to stay consistent with the frontend catalog. Mock rental-plan records still use the mock-only `active`/`completed` shape; API-mode plans use `DRAFT`/`QUOTED`/`CONVERTED`/`CANCELLED`. Mock booking `status` values are the UPPERCASE 6-value enum (`CONFIRMED`, `COMPLETED`, …), not kebab-case.
 
 ## Out of Scope
 
@@ -95,7 +95,7 @@ If the Thinker "Mock Server" extension isn't yet resolving to the project-local 
 
 ### Start the server
 
-Start the mock server from the **Thinker "Mock Server" VS Code extension** — there is no npm script for this (see Dependencies & Assumptions and the Change Log below for why). With the extension installed and the one-time setup above complete, click **"Mock it"** in the bottom-right of the VS Code status bar; the workspace's `.vscode/settings.json` and `.mockserverrc.cjs` are preconfigured to point it at the project-local mock root (`/workspaces/heavy-rental-web-portal/heavy-rental-react-web-portal/mock`) and `mock/db.json`, so it starts on `http://127.0.0.1:4010` with the `/api` base out of the box. Stop it via the same extension UI.
+Start the mock server from the **Thinker "Mock Server" VS Code extension** — there is no npm script for this (see Dependencies & Assumptions and the Change Log below for why). With the extension installed and the one-time setup above complete, open the Command Palette and run **"Mock Server: Start / Restart Server"** (command id `mock-server.startServer`). The workspace's `.vscode/settings.json` and `.mockserverrc.cjs` are preconfigured to point it at `mock/db.json` on `http://127.0.0.1:4010` with the `/api` base out of the box. Stop it via the same extension UI.
 
 ### Pointing the frontend at this mock server
 
@@ -104,17 +104,17 @@ Once the mock server is running (previous section), the frontend's Vite dev prox
 - `npm run dev` and `npm run dev:mock` → proxy `/api` to `http://127.0.0.1:4010`, i.e. **this** mock server — the default, unchanged from before this switch existed.
 - `npm run dev:api` → proxy `/api` to `http://heavy-rental-rest-api:8080`, a container-network hostname for the Spring Boot backend (not this mock server) — as of 2026-08-09 this is no longer `localhost:8080`; see the Change Log.
 
-This only changes where the frontend's dev-server proxy points — it does **not** add an npm script for the mock server itself. This server still starts exclusively via the Thinker VS Code extension's "Mock it" button (see "Start the server" above); `dev:mock` assumes you've already started it that way.
+This only changes where the frontend's dev-server proxy points — it does **not** add an npm script for the mock server itself. This server still starts exclusively via the Thinker VS Code extension (see "Start the server" above); `dev:mock` assumes you've already started it that way.
 
 ### Quick sanity check (curl)
 
 Optional, before opening Postman:
 
 ```bash
-curl http://127.0.0.1:4010/api/equipment
+curl http://127.0.0.1:4010/api/assets
 ```
 
-Note: the unprefixed `/health` route described elsewhere in this spec was custom middleware added by the now-removed npm-package wrapper script; the VS Code-extension-launched server does not serve it. Readiness checks (e.g. in CI) should fall back to a resource route like `/api/equipment` or the base URL instead.
+Note: the unprefixed `/health` route described elsewhere in this spec was custom middleware added by the now-removed npm-package wrapper script; the VS Code-extension-launched server does not serve it. Readiness checks (e.g. in CI) should fall back to a resource route like `/api/assets` or the base URL instead. Integration still defaults `MOCK_API_HEALTH_PATH=/health` for a future `test:api` job that does not exist yet.
 
 ### Testing with Postman (desktop)
 
@@ -123,12 +123,12 @@ Note: the unprefixed `/health` route described elsewhere in this spec was custom
 
    | Method | URL                           | Notes                                                                                                                                                |
    | ------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | GET    | `{{baseUrl}}/api/equipment`   | 4 items: Boom Lift, Scissors Lift, Fork Lift, Excavator                                                                                              |
-   | GET    | `{{baseUrl}}/api/equipment/1` | Single item by id                                                                                                                                    |
+   | GET    | `{{baseUrl}}/api/assets`      | 4 items: Boom Lift, Scissors Lift, Fork Lift, Excavator                                                                                              |
+   | GET    | `{{baseUrl}}/api/assets/1`    | Single item by id                                                                                                                                    |
    | GET    | `{{baseUrl}}/api/depots`      | 4 Singapore depots                                                                                                                                   |
-   | GET    | `{{baseUrl}}/api/bookings`    | Sample bookings                                                                                                                                      |
-   | POST   | `{{baseUrl}}/api/bookings`    | Body → raw/JSON, e.g. `{"rentalPlanId":1,"depotId":1,"equipmentIds":[2],"startDate":"2026-09-01","endDate":"2026-09-03","status":"pending-deposit"}` |
-   | PATCH  | `{{baseUrl}}/api/bookings/1`  | Body → e.g. `{"status":"completed"}`                                                                                                                 |
+   | GET    | `{{baseUrl}}/api/bookings`    | Sample bookings (`status` UPPERCASE, e.g. `CONFIRMED`)                                                                                                |
+   | POST   | `{{baseUrl}}/api/bookings`    | Body → raw/JSON, e.g. `{"rentalPlanId":1,"depotId":1,"equipmentIds":[2],"startDate":"2026-09-01","endDate":"2026-09-03","status":"PENDING_DEPOSIT"}` |
+   | PATCH  | `{{baseUrl}}/api/bookings/1`  | Body → e.g. `{"status":"COMPLETED"}`                                                                                                                 |
    | DELETE | `{{baseUrl}}/api/bookings/1`  | Removes the record                                                                                                                                   |
    | POST   | `{{baseUrl}}/api/recommendations/project-spec` | Instant Quotation DTO (JSON or multipart). Static mock from `db.json` route config. |
 
@@ -165,3 +165,4 @@ Note: the unprefixed `/health` route described elsewhere in this spec was custom
 - 2026-08-12: Renamed the rental-plan resource's route/db key from kebab-case (`/api/rental-plans`, `db.json`'s `"rental-plans"`) to camelCase (`/api/rentalPlans`, `"rentalPlans"`), matching the real Spring Boot backend's `RentalPlanController` mapping (`@RequestMapping("/api/rentalPlans")`) so `src/app/api.ts`'s `rentalPlanApi` can use one path under both `dev:mock` and `dev:api`.
 - 2026-08-13: Added Thinker route config `POST /api/recommendations/project-spec` in `mock/db.json` — a static Instant Quotation DTO so Instant Quote works under `dev`/`dev:mock` as well as `dev:api`.
 - 2026-08-13: The mock Instant Quotation DTO's `tentativeStartDate` (`2026-09-01`), `tentativeEndDate` (`2026-09-21`), and `days` (`21`) are consumed by the portal after Add All to Rental Plan to prefill the catalog DateRangeBar.
+- 2026-08-30: Docs alignment. Catalog resource is `/api/assets` (not `/api/equipment`). Start command is **Mock Server: Start / Restart Server**. Booking examples use UPPERCASE status. Overview no longer claims there is no live backend.

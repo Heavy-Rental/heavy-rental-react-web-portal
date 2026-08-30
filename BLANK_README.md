@@ -1,3 +1,4 @@
+<!-- UNUSED TEMPLATE LEFTOVER. The project README is README.md. Do not treat this file as current documentation. -->
 <!-- Improved compatibility of back to top link: See: https://github.com/othneildrew/Best-README-Template/pull/73 -->
 <a name="readme-top"></a>
 <!--

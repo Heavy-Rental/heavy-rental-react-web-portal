@@ -11,9 +11,10 @@ context: |
   - OpenSpec (`openspec/`) is the living behavior contract (what the system does).
   - OpenSPDD (`spdd/`) holds REASONS Canvas design contracts (how to implement).
   - ADRs (`adr/NNNN-kebab-title.md`) are the durable architecture log (why).
-  - `specification/` holds historical feature SDD specs. They remain valid product
-    detail; OpenSpec product-features maps each file. If a fact conflicts, prefer
-    the workflow YAML / code, then OpenSpec specs, then update specification/.
+  - `specification/` holds detailed product SDD. OpenSpec product-features maps
+    each file. If a fact conflicts, prefer the workflow YAML / code, then OpenSpec
+    specs, then update specification/. Demo logins are alex.tan@example.sg /
+    ravi.kumar@example.sg (not john@/sarah@). Catalog API is /api/assets.
 
   CI/CD facts that must not drift:
   - Default app repository for reusable CI is Heavy-Rental/heavy-rental-react-web-portal
@@ -26,6 +27,11 @@ context: |
   - Academy CD caller passes Vocareum keys as workflow_dispatch inputs.
   - Portal CD health (`verify`) is SSM GET / on asg-portal guests (200/301/302).
     ALB target-group health-check settings live in infra, not this repo.
+  - Stripe: VITE_STRIPE_PUBLISHABLE_KEY may be a committed pk_test in .env.api;
+    never commit sk_ / whsec_. Release injects vars.VITE_STRIPE_PUBLISHABLE_KEY
+    at vite build --mode api. Do not COPY .env.production into the nginx image.
+  - resolve-aws-profile already lives at .github/actions/resolve-aws-profile/;
+    this tree has no deploy-pipeline/resolve-aws-profile source path.
 
 rules:
   specs:

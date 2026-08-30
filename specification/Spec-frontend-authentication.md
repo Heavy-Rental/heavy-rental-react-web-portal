@@ -9,7 +9,9 @@
 
 `Spec-frontend-api-integration.md` wired the portal's `LoginModal` to resolve a real numeric `userId` from `/api/users` at login, but explicitly scoped out "Authentication and session security beyond the existing local demo-account login gate" — until this feature, a successful login produced only an in-memory `{ name, role, id }` object with no token, no expiry, and no persistence; any page reload silently logged the user out. `Spec-mock-api-server.md` separately lists "Authentication and authorization" as Out of Scope for the mock server itself, and its Change Log records that a prior custom middleware layer was removed after an `npm audit` high-severity finding — so the mock server must not gain any new server-side behavior.
 
-This feature adds a **client-simulated bearer-token session** on top of that same demo-account login gate. Login still resolves the account exactly as before (`ACCOUNTS` map + `userApi.list()` email match, unchanged); what's new is that a successful login now issues an opaque bearer token with a fixed 3600-second time-to-live, persists it across page reloads for the lifetime of the browser tab, attaches it to every subsequent API request, and reliably revokes the authenticated status — both proactively while the tab stays open, and retroactively on reload — once that TTL elapses. No backend ever issues or validates this token; the mock API is unaffected and remains fully unauthenticated, exactly as `Spec-mock-api-server.md` describes.
+This feature adds a **client-simulated bearer-token session** on top of that same demo-account login gate **in mock mode**. Login still starts from the demo `ACCOUNTS` map (`src/features/auth/accounts.ts`); what's new is that a successful login now issues an opaque bearer token with a fixed 3600-second time-to-live, persists it across page reloads for the lifetime of the browser tab, attaches it to every subsequent API request, and reliably revokes the authenticated status — both proactively while the tab stays open, and retroactively on reload — once that TTL elapses. The mock API is unaffected and remains fully unauthenticated, exactly as `Spec-mock-api-server.md` describes.
+
+**API mode (`npm run dev:api` / `MODE === "api"`) is different:** after the same demo-account password check, `App.tsx` `handleLogin` calls the real `login()` (`GET /api/auth/getBearerToken` then `POST /api/auth/login`) and stores the Spring access token / `expiresIn`. Logout in API mode calls `POST /api/auth/logout` then clears the local session (`Spec-admin-dashboard-api-mode-fixes.md` ADD-01). Customer/employee API-mode logins do **not** call `GET /api/users` (ROLE_ADMIN-only; `Spec-customer-portal-bugfixes.md` CHANGE-03).
 
 ## Clarifications
 
@@ -60,25 +62,29 @@ As a customer, employee, or admin, once I log in I stay signed in — including 
 - **FR-007**: On expiry detection — whether by the proactive timer or by finding an already-expired session on mount — the app MUST show a brief, auto-dismissing notice indicating the session expired, and MUST return the view to the logged-out portal state.
 - **FR-008**: Logout MUST clear the stored session, the in-memory auth token used for request injection, and any pending expiry timer immediately, leaving no residual `Authorization` header on subsequent requests.
 - **FR-009**: The mock API server MUST NOT be modified to add any authentication or authorization behavior, and the token MUST NOT be validated anywhere server-side (per `Spec-mock-api-server.md`'s Out of Scope).
-- **FR-010**: The login form MUST compare the entered password against a fixed expected value for the matched demo account (`ACCOUNTS` in `src/App.tsx`) and MUST reject the submission with a single generic error when either the email or the password doesn't match, without revealing which one was wrong.
+- **FR-010**: The login form MUST compare the entered password against a fixed expected value for the matched demo account (`ACCOUNTS` in `src/features/auth/accounts.ts`) and MUST reject the submission with a single generic error when either the email or the password doesn't match, without revealing which one was wrong.
+- **FR-011 (API mode, later)**: When `import.meta.env.MODE === "api"`, after FR-010 succeeds, login MUST call the real backend (`login()` in `src/app/api.ts`) and persist that access token instead of `issueSession()`. Logout MUST call `POST /api/auth/logout` (best-effort) then clear the local session. Mock mode MUST keep FR-001–FR-010 unchanged.
 
 ### Key Entities / Components
 
 - **`src/app/auth.ts`**: New module — `issueSession()`, `saveSession()`/`loadSession()`/`clearSession()` (sessionStorage read/write/clear under key `heavy-rental.session`), and `isExpired()`. The sole place a token is generated (`crypto.randomUUID()`) and the sole place TTL math happens (`AUTH_TTL_MS = 3600 * 1000`).
 - **`src/app/types.ts`**: `StoredSession` type (`token`, `id`, `name`, `role`, `issuedAt`, `expiresAt`) — replaces the previous ad hoc inline `{ name, role, id }` shape used for the logged-in `user` state.
 - **`src/app/api.ts`**: `setAuthToken()` plus conditional `Authorization` header injection inside `request()` — the single chokepoint every API call already passes through.
-- **`src/App.tsx`**: `restoreSession()` (mount-time lazy state initializer reading `sessionStorage`), `scheduleExpiry()` (proactive timer), updated `handleLogin`/`handleLogout`, the session-expired notice banner (reusing the existing local toast visual pattern already present in `EmployeeDashboard`/`AdminDashboard`), and the `ACCOUNTS` map + `LoginModal.handleSubmit` password comparison (FR-010).
+- **`src/features/auth/accounts.ts`**: Demo `ACCOUNTS` map (`alex.tan@example.sg` / `customer123` customer; `ravi.kumar@example.sg` / `admin123` admin). There is no employee demo account.
+- **`src/features/auth/LoginModal.tsx`**: Password comparison (FR-010) and the on-screen demo hints.
+- **`src/App.tsx`**: `restoreSession()` (via `src/app/session.ts`), `scheduleExpiry()` (proactive timer), `handleLogin`/`handleLogout` (mock vs API branch), session-expired notice banner.
+- **`src/app/api.ts`**: `login()` / `logout()` for API mode.
 
 ## Dependencies & Assumptions
 
 - Session helpers still use native `crypto.randomUUID()` and `sessionStorage`. The post-login overlay uses `@mui/material` (`Backdrop`, `CircularProgress`). Unit tests live in `src/app/auth.test.ts` and `src/components/AuthLoadingOverlay.test.tsx` (`npm test`). The 500ms minimum overlay time is still a manual check.
-- Assumes `Spec-frontend-api-integration.md`'s login-to-`userId` resolution remains the source of truth for *who* logs in; this spec only adds *what happens after* that resolution succeeds.
+- Assumes `Spec-frontend-api-integration.md`'s login-to-`userId` resolution remains the source of truth for *who* logs in in **mock mode**; API-mode customer/employee sessions keep `id: null` (CHANGE-03).
 - Assumes the mock server continues to have zero authentication, per `Spec-mock-api-server.md`.
 - Assumes a single-tab usage model for session continuity — `sessionStorage` does not synchronize the session across multiple tabs/windows.
 
 ## Out of Scope
 
-- A real backend authentication endpoint or any server-side token issuance/validation.
+- ~~A real backend authentication endpoint or any server-side token issuance/validation.~~ **Superseded for API mode**: `login()` / `logout()` call Spring `/api/auth/*`. Mock mode remains client-simulated.
 - ~~Password validation or hashing (still none — matches the existing demo-account gate).~~ **Superseded 2026-08-04**: password is now checked against a fixed per-account demo value (see FR-010) — but only as a plaintext client-side comparison; no hashing, no server-side check, no real secret storage, since the expected values ship in the client bundle.
 - Refresh tokens or silent renewal beyond the fixed 3600-second TTL.
 - Multi-tab session synchronization.
@@ -87,7 +93,7 @@ As a customer, employee, or admin, once I log in I stay signed in — including 
 
 ## Appendix: Manual Testing
 
-No test framework exists in this repo (`Spec-project-environment.md` FR-012), so verification is manual, against a running `npm run dev` (Vite, `localhost:5173`) with the mock API server (Thinker "Mock Server" extension, `127.0.0.1:4010`) also running.
+Session persist/restore/expiry and overlay render are covered by `npm test` (`src/app/auth.test.ts`, `src/components/AuthLoadingOverlay.test.tsx`). The click-through below is still the mock-mode walkthrough, against `npm run dev` (Vite, `localhost:5173`) with the mock API started via **Mock Server: Start / Restart Server** (`127.0.0.1:4010`). Full copy-paste procedure: `Spec-login-logout-manual-test-guide.md`.
 
 1. **Login**: click "Sign In", authenticate as `alex.tan@example.sg` / `customer123` (customer) or `ravi.kumar@example.sg` / `admin123` (admin) — the exact demo passwords shown in the modal's hint text.
 1a. **Wrong password rejected**: try `alex.tan@example.sg` with any other password (or an unknown email) → confirm the single generic error "Invalid email or password." appears and no `heavy-rental.session` entry is created.
@@ -127,3 +133,4 @@ No test framework exists in this repo (`Spec-project-environment.md` FR-012), so
 - 2026-08-04: Initial specification written, adding a client-simulated bearer-token session (3600s TTL, `sessionStorage`-persisted, proactive-timer + on-mount expiry detection, `Authorization` header injection in `src/app/api.ts`) on top of the existing demo-account login gate in `src/App.tsx` (`src/app/auth.ts` new; `src/app/types.ts`, `src/app/api.ts`, `src/App.tsx` modified). Amends `Spec-frontend-api-integration.md`'s authentication Out-of-Scope note (see that spec's own Change Log) and confirms the mock API (`Spec-mock-api-server.md`) remains fully unauthenticated.
 - 2026-08-04: Added FR-010 — `ACCOUNTS` in `App.tsx` now carries a fixed demo password per account, and `LoginModal.handleSubmit` compares the entered password against it (single generic "Invalid email or password." error on any mismatch), superseding the prior "Password validation or hashing: still none" Out-of-Scope line. Still a plaintext, fully client-side check — no hashing, no backend involvement.
 - 2026-08-13: After a successful password match, a Material 3 `Backdrop` + `CircularProgress` (`src/components/AuthLoadingOverlay.tsx`, `@mui/material`) covers the viewport until the session is written. Minimum overlay time is 500ms so mock login is visible. Session restore on reload does not show the overlay. Overlay render and `sessionStorage` persist/restore/expiry are covered by `npm test`.
+- 2026-08-30: Docs alignment. `ACCOUNTS` lives in `src/features/auth/accounts.ts`. Appendix no longer claims there is no test runner. API-mode Spring login/logout documented as FR-011 (does not change mock-mode FR-001–FR-010).

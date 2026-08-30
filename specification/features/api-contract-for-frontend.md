@@ -3,12 +3,12 @@
 | Field | Value |
 |-------|--------|
 | **Document type** | External-facing API contract (WHAT) — handoff to the web portal team |
-| **Status** | Proposed — describes the Spring Boot behavior once [`plan.md`](./plan.md) is implemented, not yet merged |
-| **Companion** | [`plan.md`](./plan.md) — the internal HOW/execution plan this contract is generated from |
-| **Supersedes** | Where this disagrees with `temp_web/Spec-rental-plan-cart-checkout.md` or `temp_web/Spec-rest-api-reference.md` (both slated for deletion once this work lands), this document wins — see inline notes below for what changed and why |
-| **Related, newer** | [`spring contract/rental-plan-site-address.md`](./spring%20contract/rental-plan-site-address.md) — accepted, not-yet-live change making `siteAddress` optional when creating a plan (this document doesn't itself specify the create-request's field requirements — see `Spec-rest-api-reference.md` §2.4.1 for that — but §2's `RentalPlanResponse` example below always shows `siteAddress` populated, which stops being guaranteed once the change lands) and adding `PATCH /rentalPlans/{id}` to set it later. §5's booking-creation contract is explicitly unaffected either way — still always required there. |
+| **Status** | As-built — this is the rental-plan checkout contract the portal codes against. The original companion `plan.md` is **not in this repository**. |
+| **Companion** | Frontend execution: [`Spec-rental-plan-cart-checkout.md`](./Spec-rental-plan-cart-checkout.md). Portal REST index: [`../Spec-rest-api-reference.md`](../Spec-rest-api-reference.md). |
+| **Supersedes** | Where this disagrees with older revisions of `Spec-rental-plan-cart-checkout.md` or `Spec-rest-api-reference.md`, this document wins for rental-plan checkout shapes — except `Spec-rest-api-reference.md` remains the portal-wide route index (and now matches this file on `/api/pricing/estimate`). |
+| **Related, newer** | [`spring contract/rental-plan-site-address.md`](./spring%20contract/rental-plan-site-address.md) — **live**: `siteAddress` is optional when creating a plan, and `PATCH /rentalPlans/{id}` sets it later. This document doesn't itself specify the create-request's field requirements — see `Spec-rest-api-reference.md` §2.4.1 — but §2's `RentalPlanResponse` example below is no longer guaranteed to have `siteAddress` populated. §5's booking-creation contract is unaffected — `siteAddress` is still always required there. |
 
-This is the literal request/response contract for the rental-plan checkout workflow. If you're implementing against this, everything below is what to code against — prose explanations of *why* live in `plan.md`, not here.
+This is the literal request/response contract for the rental-plan checkout workflow. If you're implementing against this, everything below is what to code against.
 
 ---
 
@@ -48,8 +48,8 @@ Returned by `POST /rentalPlans`, `GET /rentalPlans`, `GET /rentalPlans/{id}`, `P
 }
 ```
 
-- **New fields (not live today):** `updatedAt`, `createdAt`. Both ISO-8601 local-date-time strings (`YYYY-MM-DDTHH:mm:ss`), no timezone offset — this is Spring Boot's default `LocalDateTime` serialization, confirmed by grepping the codebase for any Jackson date-format override (none exists) and cross-checked against the one other DTO that already exposes a `LocalDateTime` today (`RecommendationSessionResponse.createdAt`), which uses the same format.
-- **Pending, not yet live:** `siteAddress` becomes nullable in this response once `spring contract/rental-plan-site-address.md` lands — a plan created via the "Skip for now" path (no address given at creation) comes back with `siteAddress: null` here, not the always-populated string the example above shows.
+- **`updatedAt` / `createdAt`:** ISO-8601 local-date-time strings (`YYYY-MM-DDTHH:mm:ss`), no timezone offset — Spring Boot's default `LocalDateTime` serialization. The frontend reads `updatedAt` for quote freshness (`Spec-dynamic-pricing-e2e.md`).
+- **`siteAddress` is nullable** once a plan is created via "Skip for now" (`spring contract/rental-plan-site-address.md`, live): the response has `siteAddress: null`, not the always-populated string the example above shows.
 - `updatedAt` is repurposed as **"last quoted at."** It's only meaningful once `status == "QUOTED"` — use it to compute the 24-hour quote-validity window: `now - updatedAt <= 24h` means checkout is allowed without re-quoting.
 - `totalAmount` is `null` whenever `status != "QUOTED"` — including immediately after an item add/remove reverts a previously-`QUOTED` plan back to `DRAFT` (§3).
 
@@ -142,7 +142,7 @@ price = asset.baseDailyRate × days
 days  = (endDate - startDate in whole days) + 1     // inclusive of both ends
 ```
 
-- `asset.baseDailyRate` — already returned by `GET /api/equipment` and `GET /api/equipment/{id}`.
+- `asset.baseDailyRate` — already returned by `GET /api/assets` and `GET /api/assets/{id}`.
 - **The `+1` is required.** The backend's own pricing (`DefaultPricingClient`, used both when an item is actually added and when a booking is priced) counts days inclusively. A client-side preview using an exclusive day count (no `+1`) will show a lower number than what actually gets charged once the item is added — worked example: `startDate: "2026-09-01"`, `endDate: "2026-09-05"` → 5 days, not 4.
 - This is a pure client-side calculation — no network call, no server round trip, and no risk of drifting from the real price, since both sides read the identical `baseDailyRate` field with no markup/discount logic in between.
 
@@ -153,3 +153,4 @@ days  = (endDate - startDate in whole days) + 1     // inclusive of both ends
 - 2026-08-15: **§4 reversed again.** Haystack-backed dynamic pricing on `POST /rentalPlans/{id}/quote` has shipped behind `pricing.dynamic-enabled` (off by default everywhere), superseding the 2026-08-14 "Spring-only, no Haystack" note (kept inline for history). Silent fallback to the same base-rate arithmetic whenever unavailable — response shape unchanged. Companion update: `Spec-rental-plan-cart-checkout.md` (web portal repo), and a new `Spec-dynamic-pricing-e2e.md` documenting the frontend's handling.
 - 2026-08-13: **Added `POST /api/rentalPlans/{id}/cancel` (§5.5).** New `CANCELLED` status value (§1); allowed from `DRAFT`/`SAVED`/`QUOTED`, blocked from `CONVERTED` (`409 already_converted`) and from an already-`CANCELLED` plan (`409 already_cancelled`); clears `totalAmount` and refreshes `updatedAt` the same way item mutation does. §7's one-active-plan filter now excludes `CANCELLED` alongside `CONVERTED`. Source of truth: `rental-plan-quote/spec.md` FR-RP-010 and `rental-plan-quote/contracts/checkout.md`, both already as-built on the Spring Boot side.
 - 2026-08-13: Initial contract, generated from `plan.md` v0.3.0. Covers status casing, the full `RentalPlanResponse` shape with new `updatedAt`/`createdAt` fields, the item-mutation revert-to-`DRAFT` behavior, the `rentalPlanId` checkout contract, the new `quote_not_ready`/`quote_expired` error codes, and the client-side single-item pricing formula (no `/api/pricing/estimate` endpoint).
+- 2026-08-30: Status header updated from "Proposed / plan.md not yet merged" to as-built. Optional nullable `siteAddress` marked live. Companion `plan.md` / `temp_web/` paths noted as not present in this repo. §8 catalog rate field sourced from `GET /api/assets`.
