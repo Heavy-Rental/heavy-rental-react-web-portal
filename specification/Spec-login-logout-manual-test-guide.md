@@ -2,12 +2,12 @@
 
 **Feature Area**: heavy-rental-react-web-portal
 **Created**: 2026-08-04
-**Status**: Draft
+**Status**: Current (mock-mode click-through)
 **Relates to**: `Spec-frontend-authentication.md` (feature under test), `Spec-mock-api-server.md` (mock server this guide starts)
 
 ## Purpose
 
-`Spec-frontend-authentication.md` already contains an "Appendix: Manual Testing" section, but its first step (start the mock server via a command named **"Mock it"**) does not match the command actually registered by the installed Thinker extension (`thinker.mock-server`, v21.2.1). This guide corrects that step and lays out the full local environment setup + walkthrough as a standalone, copy-pasteable procedure. Session persist and overlay *render* are also covered by `npm test` (`src/app/auth.test.ts`, `src/components/AuthLoadingOverlay.test.tsx`); this guide is still required for the click-through (including the 500ms overlay).
+This is the copy-pasteable mock-mode login/logout walkthrough. Session persist and overlay *render* are also covered by `npm test` (`src/app/auth.test.ts`, `src/components/AuthLoadingOverlay.test.tsx`); this guide is still required for the click-through (including the 500ms overlay). Start the mock server with **Mock Server: Start / Restart Server** (`thinker.mock-server`).
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@
   ```bash
   code --list-extensions --show-versions | grep mock-server
   ```
-- Working tree on the branch that implements this feature (`HR-61-implement-login-and-logout-process-in-web-portal` at time of writing).
+- Working tree on a current `develop`/`master` checkout of this portal (the original implementation branch name is historical).
 - Two things must run **simultaneously**, in two separate places — the mock API and the web app are started completely differently:
 
 | Component | How it's started | Where |
@@ -30,15 +30,15 @@
 3. Type `Start / Restart Server`.
 4. Select **"Mock Server: Start / Restart Server"** from the dropdown.
 
-   > Correction to `Spec-frontend-authentication.md`'s Appendix: that doc refers to a **"Mock it"** command. The extension's actual contributed command title is **"Start / Restart Server"** (command id `mock-server.startServer`) — there is no command literally named "Mock it" in v21.2.1.
+   > The extension command title is **"Start / Restart Server"** (command id `mock-server.startServer`). Older docs called this **"Mock it"**; that label is not in v21.2.1.
 
 5. The workspace's `.vscode/settings.json` / `.mockserverrc.cjs` are preconfigured to point the extension at `mock/db.json`, host `127.0.0.1`, port `4010`, base path `/api` — no manual config needed.
 
 **Verify it's running:**
 ```bash
-curl http://127.0.0.1:4010/api/equipment
+curl http://127.0.0.1:4010/api/assets
 ```
-Expect a JSON array of 4 equipment items. `curl: (7) Failed to connect` means the server did not actually start — repeat step 1–4 and watch for a notification or output panel from the extension.
+Expect a JSON array of 4 catalog items. `curl: (7) Failed to connect` means the server did not actually start — repeat step 1–4 and watch for a notification or output panel from the extension.
 
 ## Step 2 — Start the web portal (terminal)
 
@@ -118,3 +118,4 @@ _Fill in per test run — date, tester, outcome per step._
 
 - 2026-08-04: Initial guide written, correcting the mock-server startup command name from `Spec-frontend-authentication.md`'s Appendix ("Mock it" → "Mock Server: Start / Restart Server") and consolidating the full local setup + manual test walkthrough in one place.
 - 2026-08-04: First real test run against this guide found and fixed a Step 6 (reload persistence) bug — `view` state wasn't restored alongside `user` on mount, so a valid restored session landed on the marketing homepage instead of the correct role-based view. Fixed in `src/App.tsx` via a shared `viewForRole()` helper used by both `handleLogin` and the initial `view` state. See "Bugs Found & Fixed" above.
+- 2026-08-30: Status Current. Curl sanity check is `GET /api/assets`. Intro no longer claims the auth spec still says "Mock it". Branch name is historical.

@@ -2,10 +2,8 @@
 # Install into: heavy-rental-react-web-portal
 # Path:         .github/workflows/portal-cd-paid-caller.yml
 # =============================================================================
-# Also copy:
-#   deploy-pipeline/web-portal-cd-academy.yml → .github/workflows/
-#   deploy-pipeline/resolve-aws-profile/action.yml → .github/actions/resolve-aws-profile/
-#   deploy-pipeline/ansible/ → deploy-pipeline/ansible/
+# This repo already has web-portal-cd-academy.yml, resolve-aws-profile, and
+# deploy-pipeline/ansible/. There is no deploy-pipeline/resolve-aws-profile/ path.
 #
 # Portal app CD (paid / AWS_ACTUAL). OIDC only. No Vocareum keys. No Terraform.
 # Do not pass secrets: inherit (Semgrep yaml.github-actions.security.secrets-inherit).

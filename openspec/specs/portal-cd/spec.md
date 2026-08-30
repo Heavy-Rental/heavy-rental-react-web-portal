@@ -34,9 +34,10 @@ Reusable portal CD MUST authenticate with `.github/actions/resolve-aws-profile` 
 
 #### Scenario: Academy copy comments
 - GIVEN `.github/workflows/portal-cd-academy-caller.yml` header comments
-- WHEN an operator copies CD into this repo
-- THEN the listed action path is `deploy-pipeline/resolve-aws-profile/action.yml` → `.github/actions/resolve-aws-profile/action.yml`
-- AND the comments say not to copy `resolve-vocareum-aws`
+- WHEN an operator reads how CD is installed in this repo
+- THEN `resolve-aws-profile` already lives at `.github/actions/resolve-aws-profile/action.yml`
+- AND the comments say not to copy `resolve-vocareum-aws` into the portal CD path
+- AND they MUST NOT require a `deploy-pipeline/resolve-aws-profile/` source that this tree does not contain
 
 ### Requirement: Paid CD does not inherit repository secrets
 

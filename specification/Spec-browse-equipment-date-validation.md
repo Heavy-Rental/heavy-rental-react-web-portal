@@ -2,7 +2,7 @@
 
 **Feature Area**: heavy-rental-react-web-portal
 **Created**: 2026-08-07
-**Status**: Draft / Live Verification
+**Status**: Implemented (browse + shared-date behavior still current; Know/Browse wording updated 2026-08-30)
 **Purpose**: Capture the expected behavior for the browse-equipment experience and the shared date-range flow, and log any changes, fixes, or discrepancies discovered during validation.
 
 ## 1. Overview
@@ -28,9 +28,10 @@ This document is intended to be a living change log for the browse flow, especia
 
 ### Out of scope
 
-- Payment gateway integration
+- Payment gateway integration (see `Spec-stripe-payment-checkout.md`)
 - Production deployment behavior
 - Non-browse/admin workflows unless they directly affect the same booking dates
+- The retired "I'm Just Browsing" onboarding option — catalog browse is the "I Know What I Want" path (`Spec-customer-portal-bugfixes.md` CHANGE-07)
 
 ## 3. Expected Behavior
 
@@ -59,7 +60,7 @@ Resolution uses only:
 2. else `tentativeStartDate` + `days` (end = start + days − 1, inclusive)
 3. else `days` alone (start = today, end = today + days − 1)
 
-A start in the past is clamped to today, keeping the same duration. Know / Browse onboarding still leave the bar empty. After Add All, recommended machines appear in the specs banner and are added to the Rental Plan with those quote dates (`applySpecsRecsToPlan`). Delivery Details is not opened. Each card **Select** / **Selected** still toggles that machine (`toggleSpecsRecInPlan`). Thumbnails use quote `equipment.img` via `equipmentImageSrc`. Proceed to Deposit stays disabled until a delivery address is saved; the cart **Add** address control is highlighted while the plan has items and no address. This path does **not** set `pendingAutoAdd`. If the quote has no usable dates, the cart stays empty, the bar opens, and Select stays disabled until the user sets dates.
+A start in the past is clamped to today, keeping the same duration. Know-what-I-want onboarding still leaves the bar empty. After Add All, recommended machines appear in the specs banner and are added to the Rental Plan with those quote dates (`applySpecsRecsToPlan`). Delivery Details is not opened. Each card **Select** / **Selected** still toggles that machine (`toggleSpecsRecInPlan`). Thumbnails use quote `equipment.img` via `equipmentImageSrc`. Proceed to Deposit stays disabled until a delivery address is saved; the cart **Add** address control is highlighted while the plan has items and no address. This path does **not** set `pendingAutoAdd`. If the quote has no usable dates, the cart stays empty, the bar opens, and Select stays disabled until the user sets dates.
 
 ### 3.3 Cart and checkout
 
@@ -95,7 +96,7 @@ Use this checklist during local verification.
 - [ ] Verify that past dates are greyed out and cannot be selected in the shared date picker.
 - [ ] From Instant Quote, click Add All to Rental Plan and confirm the date bar is prefilled from `tentativeStartDate` / `tentativeEndDate` (mock: 2026-09-01 – 2026-09-21).
 - [ ] Confirm every specs-banner Select is enabled and clicking one adds only that machine.
-- [ ] Confirm Know / Browse still leave the date bar empty.
+- [ ] Confirm Know-what-I-want still leaves the date bar empty.
 - [ ] Select a shared start and end date.
 - [ ] Add one or more equipment items to the cart.
 - [ ] Confirm the cart reflects the shared date range.
@@ -122,5 +123,5 @@ Use this section to record any change made during validation or implementation.
 - 2026-08-13: Add All no longer queues `pendingAutoAdd`. Dates seed the bar so every specs-banner Select is enabled; the customer adds individual machines via existing `addToCart`.
 - 2026-08-13: Specs-banner Select toggles Rental Plan membership without opening Delivery Details. Quote `equipment.img` drives the card thumbnail. Cart **Proceed to Deposit** is disabled until a delivery address is saved; **Add** is highlighted when the plan has items and no address.
 - 2026-08-13: Add All to Rental Plan seeds quote dates and puts every recommended match into the Rental Plan (`applySpecsRecsToPlan`). Delivery Details is not opened; the customer can still toggle cards off. If quote dates are missing, the cart stays empty until dates are set.
-- 2026-08-13: After Add All (`onboardingMode === "specs"`), equipment-card and detail **Select** still use `addToCart` but skip the Delivery Details modal. Know / Browse still open it on first add.
+- 2026-08-13: After Add All (`onboardingMode === "specs"`), equipment-card and detail **Select** still use `addToCart` but skip the Delivery Details modal. Know-what-I-want still opens it on first add.
 - 2026-08-13: Automated coverage — `src/lib/dateFormat.test.ts` (`resolveQuoteDates`), `src/features/checkout/specsPlan.test.ts` (`buildQuoteCartItems`, `shouldPromptDeliveryDetails`, `toggleEquipmentInPlan`), `src/features/browse/equipmentImageSrc.test.ts`, `src/features/checkout/CartDrawer.test.tsx`. Run with `npm test`.

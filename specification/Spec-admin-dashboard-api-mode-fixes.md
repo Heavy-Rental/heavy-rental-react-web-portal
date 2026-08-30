@@ -13,6 +13,8 @@
 
 This document records three bugs found and fixed while getting the Admin Dashboard (and the Asset Records fetch that feeds it) working against the real backend in API mode (`npm run dev:api`), as opposed to the mock server (`npm run dev:mock`). All three bugs were invisible under mock mode and only surfaced once the frontend was pointed at the real backend — each is documented here with its root cause, fix, and any remaining approximation. This work pairs with backend changes on `heavy-rental-spring-rest-api`'s `36-link-rest-api-users-to-front-end` branch (the `UserController` addition referenced in FIX-03's prerequisites, and the `RentalPlanController`/booking-response shapes FIX-01 and FIX-03 adapt to) — that repo is not accessible from this session, so backend-side details here are inferred from live API responses, not source review.
 
+**Current names (2026-08-30):** the catalog client is `assetApi` → `/api/assets` (not `equipmentApi` / `/api/equipment`). FIX-02's abort-signal behavior still applies. ADD-01 (API-mode `POST /api/auth/logout`) and CHANGE-01 (Pricing tab removal) in this file are still current. Historical `/api/equipment` mentions in FIX write-ups below are the names used when those bugs were found.
+
 ---
 
 ## 1. Outcomes

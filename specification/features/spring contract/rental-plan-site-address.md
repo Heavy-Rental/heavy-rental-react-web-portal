@@ -2,9 +2,9 @@
 
 | Field | Value |
 |-------|--------|
-| **Change** | [`pricing-postal-distance`](../proposal.md) — implementation in progress |
-| **Status** | Both **implemented and tested** (tasks 11–14 done; 130+ automated tests, including a real HTTP + `@Valid` integration test, not just service-level). Not yet consumed by the frontend, not yet archived into `openspec/specs/rental-plan-quote/`. The behavior below matches the as-built code exactly — the "written ahead of code" caveat from the previous revision of this doc no longer applies. |
-| **Behavior** | [`../proposal.md`](../proposal.md) ("Follow-on" section) · [`../design.md`](../design.md) |
+| **Change** | Backend `pricing-postal-distance` (proposal/design live in the Spring repo, not this portal tree) |
+| **Status** | Backend **implemented and tested**. Frontend **consumes it** (`rentalPlanCartApi.create` with optional `siteAddress`; `rentalPlanCartApi.updateSiteAddress` → `PATCH /api/rentalPlans/{id}`). Manual `dev:api` verification of Phase 2 is still noted as outstanding in `postal-code-validation-execution-plan.md`. This file is a copied Spring handoff; `proposal.md` / `design.md` links in earlier revisions are not present here. |
+| **Behavior** | As documented below. Portal index: [`../../Spec-rest-api-reference.md`](../../Spec-rest-api-reference.md) §2.4. |
 
 ## `POST /api/rentalPlans` — `siteAddress` becomes optional
 

@@ -2,14 +2,14 @@
 
 **Feature Area**: heavy-rental-react-web-portal
 **Created**: 2026-08-13
-**Status**: In progress — PR 1 shipped (2026-08-13; three post-ship cart-hydration/duplicate-add bugs fixed 2026-08-17, see `Spec-cart-hydration-and-duplicate-add-fixes.md`); PR 4 minimal wiring shipped, polish open (2026-08-14); PR 2 partially shipped (quote wiring + dynamic-pricing display, 2026-08-15 — see `Spec-dynamic-pricing-e2e.md`; 24h validity UI still open); PR 3 partially shipped (booking conversion via `rentalPlanId`, 2026-08-15 — error-code branching still open)
+**Status**: Implemented for the shipped PRs — PR 1 done (plus 2026-08-17 hydration/duplicate-add fixes); PR 2 quote + 24h-validity (`quote_expired`) done (HR-205); PR 3 `rentalPlanId` conversion + `quote_not_ready`/`quote_expired` branching done (`conflict` still generic); PR 4 cancel wiring done, polish (confirm modal, error-code branching) still open. Cart/checkout logic lives in `src/features/customer/CustomerPortal.tsx`, not `App.tsx`.
 **Input**: A design conversation establishing that the current real-backend checkout (`createDepositBooking()` booking directly from ephemeral client cart state) should be replaced with a persisted `RentalPlan` lifecycle: `DRAFT` → `QUOTED` → `CONVERTED` (or → `CANCELLED` at any point before conversion), with a client-side estimate shown during cart-building and an authoritative Spring-only `quote` shown at checkout (**corrected 2026-08-14, reversed again 2026-08-15** — Haystack-backed dynamic pricing has since shipped behind a flag; see Clarifications and `Spec-dynamic-pricing-e2e.md`).
 
 **Revised 2026-08-13** against `api-contract-for-frontend.md` (this folder), the authoritative contract handed off from the Spring Boot side. That document explicitly states it wins over this one wherever they disagree — several assumptions below have been corrected accordingly rather than left as "unconfirmed." See inline notes and the Change Log.
 
 ## Overview
 
-Today, `npm run dev:api`'s checkout path books directly from `CartContext`'s in-memory cart ([App.tsx:1741-1747](../../src/App.tsx#L1741-L1747)) — no `RentalPlan` is created or read during real-backend checkout, `CartContext` has no persistence (`Spec-rest-api-reference.md` traced this: cart is lost on logout, reload, or navigating away from the Customer Portal), and `POST /api/rentalPlans/{id}/quote` / the item-level plan routes are documented as backend-live but frontend-unwired (`Spec-rest-api-reference.md` §2.4).
+**Historical framing (pre-PR 1):** `npm run dev:api`'s checkout booked directly from an in-memory cart with no persisted `RentalPlan`. **Current:** adding an item creates or reuses a server-side `RentalPlan`, quote is `POST /api/rentalPlans/{id}/quote`, and checkout converts via `rentalPlanId`. Implementation lives in `src/features/customer/CustomerPortal.tsx` + `rentalPlanCartApi` (`src/app/api.ts`). Line citations into `App.tsx` in later PR bullets are stale.
 
 This feature replaces that with a persisted cart: adding an item to cart creates (or reuses) a `RentalPlan` server-side and adds a `RentalPlanItem`, a pure client-side calculation shows a fast non-authoritative price (**not** a backend call — corrected below), "Get Quote" fetches an authoritative price and moves the plan to `QUOTED` (**corrected 2026-08-14**: Spring-only arithmetic, not Haystack — **reversed 2026-08-15**, see Clarifications), and "Proceed to Payment" converts the plan into a real `Booking`. This is a substantially different flow from what `Spec-stripe-payment-checkout.md` built — that spec's `onBeginPayment`/`createDepositBooking()` call site is what PR 3 below rewires.
 
@@ -122,7 +122,7 @@ Recommended over one combined PR: PR 1 no longer has *any* new-backend dependenc
 - Mock-mode (`npm run dev:mock`/`dev`) checkout — unaffected, continues creating a `RentalPlan` + `Booking` in one shot at checkout as it does today.
 - Deciding B4 unilaterally — flagged as likely-resolved-by-design but left for Spring Boot to confirm, not decided here.
 - Fixing the day-count mismatch (B2) from the frontend side — backend-owned; `daysBetweenISO()` already inclusive, no frontend change needed. (B6 was a candidate for this line but is resolved — already fixed, nothing to do.)
-- Correcting `Spec-rest-api-reference.md` §8.2's now-contradicted `/api/pricing/estimate` proposal — flagged, not done as part of this revision.
+- ~~Correcting `Spec-rest-api-reference.md` §8.2's now-contradicted `/api/pricing/estimate` proposal — flagged, not done as part of this revision.~~ **Done 2026-08-30** — that section is marked not planned.
 
 ## Change Log
 

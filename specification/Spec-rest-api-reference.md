@@ -19,13 +19,13 @@ Scope is **this web portal's perspective only**: routes owned by the mobile/driv
 
 - Q: The backend's index filed `POST /api/bookings` and `POST /api/payments/deposit-intent` under a "mobile-only" section, but this portal calls both directly (`Spec-stripe-payment-checkout.md`) — how should this reference handle that? → A: The frontend's usage is correct; the backend-side client label is what's wrong, and correcting it is a backend-side documentation fix (out of scope for this repo). This reference lists both routes under §2.4 (Bookings) / §2.5 (Payments) as web-used, and separately still excludes the genuinely mobile/driver-only routes (deliveries, returns, payment webhook) — see §4 — rather than importing the backend's client labels wholesale.
 - Q: Should this reference document the routes the frontend *calls but the real backend doesn't implement* (`/api/users`, depot/rental-plan/booking write routes beyond what's built) as something the frontend should stop calling, or as backend work still owed? → A: Backend work owed. The frontend's assumed contract (full CRUD on users, depots, rental plans; PATCH/DELETE on bookings) is treated as correct/intended here; §5 tracks each as a backend implementation gap, not a frontend bug.
-- Q: `POST /api/auth/logout` is a real, merged backend route, but this portal's `handleLogout` never calls it (purely local session clear, unchanged since `Spec-frontend-authentication.md`) — fix the frontend to call it, or drop the backend route? → A: Left open — recorded in §6 as an undecided item rather than resolved either way, since deciding requires knowing whether the backend route does anything server-side (session/refresh-token invalidation, audit logging) beyond what a stateless JWT scheme needs.
+- Q: `POST /api/auth/logout` is a real, merged backend route, but this portal's `handleLogout` never calls it (purely local session clear, unchanged since `Spec-frontend-authentication.md`) — fix the frontend to call it, or drop the backend route? → A: **Superseded.** The frontend now calls it in API mode (`Spec-admin-dashboard-api-mode-fixes.md` ADD-01). See §6.
 - Q: The backend already implemented the S2b recommender routes (`/api/recommendations/*`), but `CustomerOnboarding.tsx`/`Chatbot.tsx` still simulate recommendations entirely client-side — how should that gap be tracked? → A: As frontend work still owed (§7) — this portal intends to wire these endpoints eventually, replacing the client-simulated flow.
 
 ### Session 2026-08-13 (continued)
 
 - Q: Does `POST /api/rentalPlans/{id}/quote` reach Haystack, or is it Spring-only arithmetic? → A: It's intended to reach Haystack's quote endpoint for AI-informed pricing — this corrects an earlier speculative note in this document (§2.4) that guessed it was likely Spring-only because its contract lives in a separate spec from the Haystack client. See §8.1.
-- Q: The backend's index recorded a `POST /api/pricing/estimate` route as removed ("never built, no matching Haystack endpoint to proxy") — does this portal still need an endpoint like that? → A: Yes, as a deliberate new proposal, not a revival of that removed phantom. It's meant to be the Spring-only counterpart to the Haystack-backed quote in §8.1 — a fast price calculation that never reaches Haystack. See §8.2.
+- Q: The backend's index recorded a `POST /api/pricing/estimate` route as removed ("never built, no matching Haystack endpoint to proxy") — does this portal still need an endpoint like that? → A: **No. Superseded.** `api-contract-for-frontend.md` §8: there is no such route and none is planned. Cart preview is client-side. See §8.2.
 
 ## 1. Status legend
 
@@ -46,20 +46,23 @@ Scope is **this web portal's perspective only**: routes owned by the mobile/driv
 |---|---|---|---|
 | `GET` | `/api/auth/getBearerToken` | ✅ Backend live, frontend wired | `src/app/api.ts` `login()`, API mode only. See `Spec-frontend-authentication.md`. |
 | `POST` | `/api/auth/login` | ✅ Backend live, frontend wired | Same. |
-| `POST` | `/api/auth/logout` | ⚠️ / open question | Backend route exists; frontend `handleLogout` (`src/App.tsx`) never calls it, in any mode. See §6 — not resolved here. |
+| `POST` | `/api/auth/logout` | ✅ Backend live, frontend wired | `logout()` from `src/app/api.ts`; `App.tsx` `handleLogout` calls it in API mode (best-effort — local session still clears if it fails). Mock mode stays a local session clear. See §6. |
 
 There is one login flow, no web-vs-mobile distinction at the backend level (no `platform`/`audience` claim exists today).
 
-### 2.2 Equipment
+### 2.2 Assets (catalog / admin asset records)
+
+The frontend and mock seed use **`/api/assets`** (`assetApi` in `src/app/api.ts`, `mock/db.json` key `"assets"`). There is no `equipmentApi` and no `/api/equipment` caller in this portal. Older revisions of this table used `/api/equipment`; treat those as historical.
 
 | Method | Path | Status | Notes |
 |---|---|---|---|
-| `GET` | `/api/equipment` | ✅ Backend live, frontend wired | `equipmentApi.list()`, also accepts `startDate`/`endDate` query params from the frontend's call shape ([api.ts:82-88](../src/app/api.ts#L82-L88)) — availability-aware listing is a portal assumption, not independently re-verified against the real backend's `SPEC-equipment-browse-api.md` contract in this pass. |
-| `GET` | `/api/equipment/{id}` | ✅ Backend live, frontend wired | |
-| `POST` | `/api/equipment` | ✅ Backend live, frontend wired | Admin `AssetsTab`. |
-| `PUT` | `/api/equipment/{id}` | ✅ Backend live, frontend wired | |
-| `PATCH` | `/api/equipment/{id}` | ✅ Backend live, frontend wired | Admin `PricingTab` rate updates. |
-| `DELETE` | `/api/equipment/{id}` | ✅ Backend live, frontend wired | |
+| `GET` | `/api/assets` | ✅ Backend live, frontend wired | `assetApi.list()`, also accepts `startDate`/`endDate` query params for availability-aware listing. |
+| `GET` | `/api/assets/{id}` | ✅ Backend live, frontend wired | |
+| `POST` | `/api/assets` | ✅ Backend live, frontend wired | Admin `AssetsTab`. |
+| `PUT` | `/api/assets/{id}` | ✅ Backend live, frontend wired | |
+| `PATCH` | `/api/assets/{id}` | ✅ Backend live, frontend wired | Generic `assetApi.update()` (admin asset form). The admin **Pricing tab was removed** (`Spec-admin-dashboard-api-mode-fixes.md`); this is not a pricing-recommendation apply path. |
+| `DELETE` | `/api/assets/{id}` | ✅ Backend live, frontend wired | |
+| `PUT` | `/api/assets/{id}/image` | ✅ Backend live, frontend wired | `assetApi.uploadImage()` — API mode only; the mock has no nested image route (`Spec-admin-asset-records.md`). |
 
 ### 2.3 Depots
 
@@ -72,27 +75,27 @@ There is one login flow, no web-vs-mobile distinction at the backend level (no `
 
 | Method | Path | Status | Notes |
 |---|---|---|---|
-| `POST` | `/api/rentalPlans` | ✅ Backend live, frontend wired | `rentalPlanCartApi.create()` (`Spec-rental-plan-cart-checkout.md` PR 1) — mock-mode checkout still uses the separate generic `rentalPlanApi.create()`, unaffected. **Pending change (not yet live):** `siteAddress` is becoming optional at creation — see `spring contract/rental-plan-site-address.md` and `postal-code-validation-execution-plan.md` (Phase 2). Until that lands, `siteAddress` is still `@NotBlank` as described in §2.4.1 below. |
+| `POST` | `/api/rentalPlans` | ✅ Backend live, frontend wired | `rentalPlanCartApi.create()` (`Spec-rental-plan-cart-checkout.md` PR 1) — mock-mode checkout still uses the separate generic `rentalPlanApi.create()`, unaffected. `siteAddress` is optional at creation (omit it for "Skip for now" → `siteAddress: null`). When provided, it must still end in a 6-digit postal code. See `spring contract/rental-plan-site-address.md` and `postal-code-validation-execution-plan.md` (Phase 2, code-complete). |
 | `GET` | `/api/rentalPlans` | ✅ Backend live, frontend wired | |
 | `GET` | `/api/rentalPlans/{id}` | ✅ Backend live, frontend wired | |
 | `POST` | `/api/rentalPlans/{id}/items` | ✅ Backend live, frontend wired | `rentalPlanCartApi.addItem()` (PR 1). |
 | `DELETE` | `/api/rentalPlans/{id}/items/{itemId}` | ✅ Backend live, frontend wired | `rentalPlanCartApi.removeItem()` (PR 1). |
 | `POST` | `/api/rentalPlans/{id}/quote` | ✅ Backend live, frontend wired | `rentalPlanCartApi.quote()` (`Spec-dynamic-pricing-e2e.md`). Reaches Haystack for AI-informed pricing when `pricing.dynamic-enabled` is on (off by default everywhere today), with a silent fallback to base-rate arithmetic otherwise — see §8.1. |
-| `PATCH` | `/api/rentalPlans/{id}` | ⏳ Accepted by Spring, not yet live | **New, `siteAddress`-only** — not the generic update `rentalPlanApi.update()` assumes (see `PUT`/`DELETE` row below, still a real gap). Lets an already-created plan get `siteAddress` set/changed on its own record — accepts `{siteAddress}` only. **⚠️** setting it on a `QUOTED` plan reverts the plan to `DRAFT` and clears `totalAmount`, same rule as adding/removing a line item. See `spring contract/rental-plan-site-address.md` and `postal-code-validation-execution-plan.md` (Phase 2, Sub-task 7-8) for the full contract and frontend wiring plan. |
-| `PUT` / `DELETE` | `/api/rentalPlans/{id}` | ⚠️ Frontend calls it, backend doesn't have it | `rentalPlanApi.replace/remove` are part of the generic resource client; the real backend has no generic replace/delete on a plan, only the item-, quote-, and (once the row above lands) `siteAddress`-scoped mutations. See §5. |
+| `PATCH` | `/api/rentalPlans/{id}` | ✅ Backend live, frontend wired | **`siteAddress`-only** (`rentalPlanCartApi.updateSiteAddress()`) — not the generic update `rentalPlanApi.update()` assumes (see `PUT`/`DELETE` row below, still a real gap). Accepts `{siteAddress}` only. **⚠️** setting it on a `QUOTED` plan reverts the plan to `DRAFT` and clears `totalAmount`, same rule as adding/removing a line item. See `spring contract/rental-plan-site-address.md`. |
+| `PUT` / `DELETE` | `/api/rentalPlans/{id}` | ⚠️ Frontend calls it, backend doesn't have it | `rentalPlanApi.replace/remove` are part of the generic resource client; the real backend has no generic replace/delete on a plan, only the item-, quote-, cancel-, and `siteAddress`-scoped mutations. See §5. |
 
 ### 2.4.1 Field-level requirements for the cart/checkout workflow (`Spec-rental-plan-cart-checkout.md` PR 1-3)
 
 The table above only tracks route-level wiring status. `SPEC-rental-plan-quote.md` (backend-side) was never shared into this repo, but `POST /api/rentalPlans` and `POST /api/rentalPlans/{id}/items`'s field-level shapes are now **confirmed directly from the Spring Boot source** (`RentalPlanController.java`, `RentalPlanService.java`, `RentalPlanCreateRequest.java`, `RentalPlanItemRequest.java`, `RentalPlanItemResponse.java` — shared 2026-08-13, superseding this section's earlier speculation on those two routes). The rest of this section still marks what's **confirmed**, **unconfirmed** (needs a backend check), and **🔧 change required** (new behavior this workflow needs that almost certainly doesn't exist yet).
 
-- **`POST /api/rentalPlans`** (PR 1) — **Confirmed, as of today — pending a change, see below.** Request body is `RentalPlanCreateRequest { startDate: LocalDate | null, endDate: LocalDate | null, siteAddress: String }` — `siteAddress` is `@NotBlank` and must end in a 6-digit postal code (same pattern as `Booking.siteAddress`); `startDate`/`endDate` are unconstrained/nullable on this DTO. **There is no `status` field on the request** — the backend always creates at `status = "DRAFT"` regardless of what's sent, settling the old "must the client pass status" question as moot. On success (`201 Created`), the response is the full `RentalPlanResponse` (§2 of `api-contract-for-frontend.md`) with `items: []`, `totalAmount: null`, and **`updatedAt: null`** (only `createdAt` is set on creation — `updatedAt` stays genuinely absent until the plan is first quoted, not just "not yet meaningful" as the contract phrased it). The backend itself rejects a second `create()` with `409` while the caller already has an active (`DRAFT`/`SAVED`/`QUOTED`) plan — independent, server-side enforcement of B9/BR-06, not just a convention the frontend needs to uphold. A `siteAddress` validation failure short-circuits before the controller body runs: `400 {"error":"validation_failed","message":"siteAddress: <msg>"}`. **Pending, not yet live:** Spring has agreed to make `siteAddress` optional here (omit it entirely to create the plan with `siteAddress: null`) — validation stays exactly as strict whenever it *is* provided. See `spring contract/rental-plan-site-address.md`.
-- **`PATCH /api/rentalPlans/{id}`** — **new, not yet live.** Accepts `{siteAddress}` only. Lets a plan created without an address (via the pending change above) get one set later, before conversion to a booking. Same validation as `POST` when `siteAddress` is present. **Setting it on a `QUOTED` plan reverts the plan to `DRAFT` and clears `totalAmount`** — same rule already in place for adding/removing a line item on a quoted plan. See `spring contract/rental-plan-site-address.md`.
+- **`POST /api/rentalPlans`** (PR 1) — **Confirmed, including optional `siteAddress`.** Request body is `RentalPlanCreateRequest { startDate: LocalDate | null, endDate: LocalDate | null, siteAddress?: String }`. `siteAddress` may be omitted (`null` on the created plan — "Skip for now"). When provided, it must still end in a 6-digit postal code (same pattern as `Booking.siteAddress`). `startDate`/`endDate` are unconstrained/nullable on this DTO. **There is no `status` field on the request** — the backend always creates at `status = "DRAFT"` regardless of what's sent. On success (`201 Created`), the response is the full `RentalPlanResponse` (`api-contract-for-frontend.md` §2) with `items: []`, `totalAmount: null`, and **`updatedAt: null`** until the plan is first quoted. The backend itself rejects a second `create()` with `409` while the caller already has an active (`DRAFT`/`SAVED`/`QUOTED`) plan. A `siteAddress` validation failure short-circuits: `400 {"error":"validation_failed","message":"siteAddress: <msg>"}`. See `spring contract/rental-plan-site-address.md`.
+- **`PATCH /api/rentalPlans/{id}`** — **live, frontend wired.** Accepts `{siteAddress}` only (`rentalPlanCartApi.updateSiteAddress()`). Lets a plan created without an address get one set later, before conversion to a booking. Same validation as `POST` when `siteAddress` is present. **Setting it on a `QUOTED` plan reverts the plan to `DRAFT` and clears `totalAmount`** — same rule already in place for adding/removing a line item on a quoted plan.
 - **`GET /api/rentalPlans`** (PR 1, PR 2) — each plan needs `id`, `status`, and `updatedAt` in the array (PR 2 needs `updatedAt` on every read, not just right after quoting — e.g. reopening the app later and re-checking quote validity). **Unconfirmed**: whether it supports filtering to "the caller's one active (non-`converted`) plan" server-side, or PR 1 must fetch all of a user's plans and filter client-side (this is B9 — not necessarily a change, but worth confirming before it becomes a real cost as plan history grows).
 - **`GET /api/rentalPlans/{id}`** (PR 2) — same `status`/`updatedAt` requirement as above, for recomputing checkout-eligibility when the customer returns to a plan without having just quoted it. **Unconfirmed** whether these fields are already in the response (this is B8).
 - **`POST /api/rentalPlans/{id}/items`** (PR 1) — **Confirmed, and the old per-item-dates question is resolved.** Request body is `RentalPlanItemRequest { assetId: Long }` only — **no per-item `startDate`/`endDate`**, settling B11's original framing: a plan has exactly one shared date range, fixed at creation, and items never carry their own (matching `api-contract-for-frontend.md`'s Clarifications, now doubly confirmed from source). This route has **no `@Valid`** — a malformed/missing-`assetId` body falls through to Spring's default `HttpMessageNotReadableException` 400 (not the portal's `{"error":...}` shape); an `assetId` that doesn't resolve to a real `Asset` is a manual check returning `400 {"error":"bad_request","message":"Unknown assetId"}`; a plan that doesn't exist or isn't owned by the caller returns `404 {"error":"not_found","message":"Rental plan not found"}`. **Confirmed (B10)**: on success (`201 Created`), the response is the full, current `RentalPlanResponse` — if the plan was `QUOTED`, this same response already reflects the revert to `DRAFT` (`totalAmount: null`, `updatedAt` refreshed to now), not the stale pre-mutation state.
 - **`DELETE /api/rentalPlans/{id}/items/{itemId}`** (PR 1) — request/response shape not shown in the source excerpt reviewed 2026-08-13 (only `create`/`addItem` were); the revert-to-`DRAFT` behavior is very likely shared with `addItem` via the same `revertQuoteIfNeeded` service method, but that's an inference, not confirmed line-by-line the way the two rows above are. Treat as **🔧 change required (B10)** until independently checked.
 - **`POST /api/rentalPlans/{id}/quote`** (PR 2) — **Wired 2026-08-15** (`Spec-dynamic-pricing-e2e.md`), superseding the "change required" framing below: the frontend now calls this route and reads `totalAmount`/`status`/`updatedAt` straight off its response, with no follow-up call, matching what B7 asked for. The original bullet is kept for its historical framing of B7: this call must itself set `status = quoted` and refresh `updatedAt` as part of succeeding — this is new required behavior, not existing behavior we're just undocumented on. Response needs an authoritative price (recommend matching `Booking`'s existing `totalAmount`/`depositAmount`/`remainingBalance` naming for consistency) plus `status` and `updatedAt`, so the frontend can update UI immediately without a follow-up call.
-- **`PUT`/`DELETE /api/rentalPlans/{id}`** — unaffected by this workflow; still the removal candidates from §5. **`PATCH /api/rentalPlans/{id}`** is no longer in that category — see the new bullet above; it's a real, scoped (`siteAddress`-only) route Spring has agreed to build, not a removal candidate.
+- **`PUT`/`DELETE /api/rentalPlans/{id}`** — unaffected by this workflow; still the removal candidates from §5. **`PATCH /api/rentalPlans/{id}`** is the live `siteAddress`-only route, not a generic update.
 
 PR 3's needs (`POST /api/bookings` accepting `rentalPlanId`, deriving items/pricing from the plan per B1, and the `409` expired-quote response per B3) live in §2.5, not here — that section needs the same field-level pass, not done in this update.
 
@@ -102,8 +105,8 @@ PR 3's needs (`POST /api/bookings` accepting `rentalPlanId`, deriving items/pric
 |---|---|---|---|
 | `POST` | `/api/bookings` | ✅ Backend live, frontend wired | `createBookingFromPlan()` (renamed 2026-08-15 from `createDepositBooking()` — now sends `{ rentalPlanId, siteAddress, deliveryNotes }`, not raw `items`/dates; see `Spec-dynamic-pricing-e2e.md` §4.5) — real booking-creation contract, API mode only. See `Spec-stripe-payment-checkout.md`. Used by **this web portal directly**, despite being filed under the backend's "mobile" section (§ Clarifications above). |
 | `POST` | `/api/payments/deposit-intent` | ✅ Backend live, frontend wired | `paymentApi.createDepositIntent()`. Same web-usage note. |
-| `GET` | `/api/bookings` | ⏳ Backend live, frontend not wired | Real route exists; this portal's "My Rental Plans" / admin bookings views still read from the mock server only in API mode's current scope (`Spec-stripe-payment-checkout.md` Out of Scope). Relevant if API-mode parity is extended later. |
-| `GET` | `/api/bookings/{id}` | ⏳ Backend live, frontend not wired | Same. |
+| `GET` | `/api/bookings` | ✅ Backend live, frontend wired | `bookingApi.list()` — admin Bookings tab and customer **My Bookings** (`CustomerPortal` / `myBookings.ts`). The real backend scopes the list to the caller, so customer `userId` being `null` in API mode is not a blocker. |
+| `GET` | `/api/bookings/{id}` | ✅ Backend live, frontend wired | `getBooking()` / `waitForBookingConfirmed()` after Stripe `confirmPayment` (`Spec-stripe-payment-checkout.md` FR-008). |
 | `PUT` | `/api/bookings/{id}` | ⏳ Backend live, frontend not wired | Same — note this is a full-replace endpoint on the real backend, not a partial merge. |
 | `PATCH` | `/api/bookings/{id}/status` | ✅ Backend live, frontend wired | `bookingApi.updateStatus()` — admin `BookingsTab`'s status dropdown. Real route, `{ "bookingStatus": "..." }` body, any of the 6 `BookingStatus` values accepted with no transition restriction. Previously called the generic `bookingApi.update()` against plain `/api/bookings/{id}` (PATCH), which 405'd — see `Spec-admin-dashboard-api-mode-fixes.md`. |
 | `DELETE` | `/api/bookings/{id}` | 🚫 Not planned | `CANCELLED` is a real `BookingStatus` value, reachable via the status route above, and covers the "remove a booking" use case without a hard delete. `bookingApi.remove()` exists on the generic resource client but the admin UI never calls it for bookings. |
@@ -121,7 +124,7 @@ PR 3's needs (`POST /api/bookings` accepting `rentalPlanId`, deriving items/pric
 
 | Method | Path | Status | Notes |
 |---|---|---|---|
-| `GET` | `/api/users` | ✅ Backend live, frontend wired | Lists enabled users only (`enabled=true`), `{id, name, email, role}`. Called unconditionally on every login (`App.tsx` `handleLogin`) to resolve a numeric `userId`, and by the admin Users tab. |
+| `GET` | `/api/users` | ✅ Backend live, frontend wired | Lists enabled users only (`enabled=true`), `{id, name, email, role}`. **API-mode login only calls this for admin** (`App.tsx` `handleLogin` + `Spec-customer-portal-bugfixes.md` CHANGE-03) because the route is `ROLE_ADMIN`-only — customer/employee logins skip it and keep `id: null`. Admin Users tab also lists. Mock-mode login still resolves `userId` via this list for every role. |
 | `GET` | `/api/users/{id}` | ✅ Backend live, frontend wired | Not currently called by this portal's code (list is sufficient today), but exists and matches `userApi.get()`. |
 | `POST` | `/api/users` | ✅ Backend live, frontend wired | `{name, email}` only — role isn't accepted, always created as `role=USER`/`"customer"`. Response includes a server-generated one-time `temporaryPassword`, now surfaced to the admin via a confirmation modal after creation (`Spec-admin-dashboard-api-mode-fixes.md` FIX-06) rather than discarded. |
 | `PATCH` | `/api/users/{id}` | ✅ Backend live, frontend wired | Partial update, `{name?, email?, role?}` — used by the admin Users tab's Edit modal. |
@@ -166,21 +169,15 @@ The last one is a Stripe-to-backend server callback, not a route any frontend (w
 These are treated as backend work still owed, not frontend bugs to fix — the frontend's assumed contract is the intended one:
 
 - **`/api/depots` write routes** (`POST`/`PUT`/`PATCH`/`DELETE`) — real backend has GET-only stub, no `Depot` entity. Needed if depot management is ever exercised in API mode (currently only read via the stub, so no visible breakage yet — but any write path would fail).
-- **`/api/rentalPlans/{id}`** generic `PUT`/`DELETE` — real backend only has item-, quote-, and (once
-  `spring contract/rental-plan-site-address.md` lands) `siteAddress`-scoped mutations (§2.4). **`PATCH` is no
-  longer an open-ended gap** — Spring has agreed to build a `siteAddress`-only `PATCH` (not a generic update)
-  as part of §2.4's pending change; tracked there and in `postal-code-validation-execution-plan.md` Phase 2,
-  not here, once it lands.
+- **`/api/rentalPlans/{id}`** generic `PUT`/`DELETE` — real backend only has item-, quote-, cancel-, and
+  `siteAddress`-scoped `PATCH` mutations (§2.4). The `siteAddress`-only `PATCH` is **live and wired**.
 - **`/api/status-distribution`** — no real-backend equivalent at all; mock-only today.
 
-## 6. Open item — `POST /api/auth/logout`
+## 6. `POST /api/auth/logout` — wired in API mode
 
-Not resolved in this document. The route is real and merged on the backend, but this portal's logout has always been a purely local session clear (`Spec-frontend-authentication.md`, predates API mode) and was never updated to call it once API mode existed. Two ways this could go, neither decided here:
+**Resolved on the frontend** (`Spec-admin-dashboard-api-mode-fixes.md` ADD-01). `handleLogout` calls `logout()` → `POST /api/auth/logout` when `MODE === "api"`, then always clears the local session (including if the request fails). Mock mode remains a local session clear only.
 
-- Wire `handleLogout` to call it in API mode, treating it as a real server-side action (session/refresh-token invalidation, audit logging).
-- Confirm it's a no-op for this backend's stateless-JWT scheme and deprecate/remove the route.
-
-Whoever owns the backend's auth design should confirm which, since that determines whether the current frontend behavior is a gap or already correct.
+Whether the backend route does anything beyond a stateless JWT (audit log, denylist) is still a backend-owned question; it is no longer an open frontend wiring gap.
 
 ## 7. Frontend work owed — recommender wiring
 
@@ -203,11 +200,11 @@ Optional: `startDate`, `endDate`, `query`, `topK`. JWT supplies user identity. F
 
 **Response:** Instant Quotation DTO — `recommendationId`, `ingestId`, `quoteRef` (string), `confidenceScore`, `days`, `estimatedTotal`, `specSummary`, `rationale`, `items[]` with nested `equipment`, plus session fields (`needsSummary`, `expectedBudget`, `warnings`, `correlationId`, `tentativeStartDate`, `tentativeEndDate`).
 
-**Frontend date-bar binding:** After Add All to Rental Plan, the portal seeds the catalog `DateRangeBar` from `tentativeStartDate` / `tentativeEndDate`, falling back to `days` when a bound is missing (`resolveQuoteDates` in `src/lib/dateFormat.ts`). Know / Browse do not send dates. Locked by `src/lib/dateFormat.test.ts` (`npm test`).
+**Frontend date-bar binding:** After Add All to Rental Plan, the portal seeds the catalog `DateRangeBar` from `tentativeStartDate` / `tentativeEndDate`, falling back to `days` when a bound is missing (`resolveQuoteDates` in `src/lib/dateFormat.ts`). Know-what-I-want does not send dates. Locked by `src/lib/dateFormat.test.ts` (`npm test`).
 
-## 8. Pricing calls — quote (Haystack) vs. estimate (Spring-only)
+## 8. Pricing calls — quote vs. client-side cart estimate
 
-This portal needs two distinct pricing paths, not one: an AI-informed **quote** that consults Haystack, and a fast **estimate** that never leaves Spring. They are not interchangeable and must not be conflated into a single route.
+This portal uses **one** backend pricing path for an authoritative rental-plan price: `POST /api/rentalPlans/{id}/quote`. Pre-quote cart line prices are computed **client-side** from `asset.baseDailyRate × inclusive days`. There is no `POST /api/pricing/estimate` and none is planned (`api-contract-for-frontend.md` §8). The former §8.2 proposal below is retained only as history.
 
 ### 8.1 `POST /api/rentalPlans/{id}/quote` — reaches Haystack
 
@@ -215,11 +212,13 @@ This portal needs two distinct pricing paths, not one: an AI-informed **quote** 
 
 **Note (2026-08-14 → 2026-08-15):** `Spec-rental-plan-cart-checkout.md` briefly asserted the opposite (Spring-only, no Haystack) on 2026-08-14, sourced from a direct read of the backend as it stood that day — this document was not corrected to match at the time (flagged as out of scope in that doc's Change Log). That 2026-08-14 state has since been superseded again: Haystack-backed dynamic pricing has shipped behind a flag (`pricing.dynamic-enabled`, off by default everywhere), with a silent base-rate fallback when unavailable — i.e., this section's original claim is the currently-correct one. **Status updated: `✅ Backend live, frontend wired`** (§2.4) — see `Spec-dynamic-pricing-e2e.md` for the frontend's handling (quote display, "Smart Priced" badge, and keeping the charged amount in sync with the quoted amount).
 
-### 8.2 `POST /api/pricing/estimate` — proposed, Spring-only, never reaches Haystack
+### 8.2 `POST /api/pricing/estimate` — not planned (historical proposal)
 
-**Status: proposed, new route — does not exist on the backend today.** The backend's temporary index recorded a same-named route as removed: *"`/api/pricing/estimate` was never built and has no matching Haystack endpoint to proxy."* That removal was about a phantom placeholder with no design behind it. This is a fresh, deliberate proposal for the same path, scoped specifically as the **non-Haystack counterpart** to §8.1's quote: a fast, side-effect-free price calculation with no external AI call and no persisted resource — no `Booking`, no `RentalPlan`, no `AIRecommendation` row created.
+**Status: not planned. Do not implement this route and do not call it.** `api-contract-for-frontend.md` §8 is authoritative: cart preview is `price = asset.baseDailyRate × inclusive days` on the client. The text below is the 2026-08-13 proposal that that contract reversed.
 
-Purpose: let the web portal show an authoritative price for an ad-hoc set of equipment + dates before the user commits to a rental plan or booking — reusing the same pricing formula `POST /api/bookings` already computes server-side (sum of `baseDailyRate × days` per asset, minimum 1 day, 30%/70% deposit split, `HALF_UP` rounding to 2dp, same `DEPOSIT_RATE` constant) instead of the frontend's own client-side `calcDeposit()` estimate, which existing precedent (`Spec-stripe-payment-checkout.md`) already treats as non-authoritative ("never trust a client-supplied amount").
+~~**Status: proposed, new route — does not exist on the backend today.**~~ The backend's temporary index recorded a same-named route as removed: *"`/api/pricing/estimate` was never built and has no matching Haystack endpoint to proxy."* That removal was about a phantom placeholder with no design behind it. This was a fresh, deliberate proposal for the same path, scoped specifically as the **non-Haystack counterpart** to §8.1's quote: a fast, side-effect-free price calculation with no external AI call and no persisted resource — no `Booking`, no `RentalPlan`, no `AIRecommendation` row created.
+
+Purpose (of the withdrawn proposal): let the web portal show an authoritative price for an ad-hoc set of equipment + dates before the user commits to a rental plan or booking — reusing the same pricing formula `POST /api/bookings` already computes server-side (sum of `baseDailyRate × days` per asset, minimum 1 day, 30%/70% deposit split, `HALF_UP` rounding to 2dp, same `DEPOSIT_RATE` constant) instead of the frontend's own client-side `calcDeposit()` estimate, which existing precedent (`Spec-stripe-payment-checkout.md`) already treats as non-authoritative ("never trust a client-supplied amount").
 
 **Request:**
 
@@ -268,3 +267,4 @@ Same three fields `POST /api/bookings`'s response already carries — no new sha
 - 2026-08-13: Documented `tentativeStartDate` / `tentativeEndDate` on the Instant Quotation DTO and the frontend binding that seeds DateRangeBar from those fields (or `days`) after Add All to Rental Plan.
 - 2026-08-13: `resolveQuoteDates` field rules are locked by `src/lib/dateFormat.test.ts` (`npm test`).
 - 2026-08-14: §2.7/§5 corrected — `/api/users` was listed as a backend gap; that was stale. The real backend's `UserController`/`UserAdminService` fully implements `GET`/`POST`/`PATCH`/`DELETE` (no `PUT`, not called anyway), confirmed by reading the backend source. Removed from §5's gap list; §2.7 now documents each route's actual behavior (soft-delete on remove, `role` not settable on create, one-time `temporaryPassword` on create — see `Spec-admin-dashboard-api-mode-fixes.md` FIX-06 for the frontend fix that stopped discarding it).
+- 2026-08-30: Docs alignment. §2.2 retargeted from `/api/equipment` / `equipmentApi` / PricingTab to `/api/assets` / `assetApi`. §2.1/§6: API-mode logout is wired. §2.4/§2.4.1: optional `siteAddress` + `PATCH` are live. §2.5: `GET /bookings` and `GET /bookings/{id}` are wired. §2.7: `GET /users` only on admin login in API mode. §8.2: `/api/pricing/estimate` marked not planned (matches `api-contract-for-frontend.md` §8).

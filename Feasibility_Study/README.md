@@ -2,6 +2,8 @@
 
 Architecture and integration studies for `heavy-rental-react-web-portal` (docs only — not runtime source of truth).
 
+The Instant Quotation study below may still say `equipmentApi` / `mock/db.json` `equipment`. The running portal uses `assetApi` → `/api/assets` (`recommendationApi` for Instant Quote). Prefer `specification/` and `src/app/api.ts` for current names.
+
 ## How to read
 
 | Document | Topic | Version |

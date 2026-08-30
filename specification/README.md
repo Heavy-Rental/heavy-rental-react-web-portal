@@ -12,7 +12,15 @@ This folder is **detailed feature SDD**. Living behavior contracts, change propo
 
 On conflict: running code / `.github/workflows/` wins, then OpenSpec specs, then this folder. Fix the stale file in the same change.
 
+How to read a spec here:
+
+- **Living contract** — describes current behavior. Prefer the latest Change Log entry and any **Superseded** markers over the original Overview.
+- **Implemented bugfix / execution record** — a completed change set. Status "Implemented" means the work landed; later specs may supersede individual bullets.
+- **Backend handoff** — Spring-side contracts copied into `features/spring contract/`. Frontend consumption status is tracked in `Spec-rest-api-reference.md` and the matching execution plan, not only in the handoff header.
+
 Canonical GitHub repository: `Heavy-Rental/heavy-rental-react-web-portal`.
+
+Architecture studies (not a runtime source of truth): [`Feasibility_Study/`](../Feasibility_Study/).
 
 ## Environment and delivery
 
@@ -24,13 +32,13 @@ Canonical GitHub repository: `Heavy-Rental/heavy-rental-react-web-portal`.
 
 | Spec | Role |
 | --- | --- |
-| [Spec-ui-heavy-machinery-portal.md](Spec-ui-heavy-machinery-portal.md) | Singapore UI business rules |
+| [Spec-ui-heavy-machinery-portal.md](Spec-ui-heavy-machinery-portal.md) | Singapore UI business rules (living) |
 | [Spec-equipment-card-detail-changes.md](Spec-equipment-card-detail-changes.md) | Equipment card / detail |
 | [Spec-browse-equipment-date-validation.md](Spec-browse-equipment-date-validation.md) | Browse date validation |
-| [features/Spec-rental-plan-cart-checkout.md](features/Spec-rental-plan-cart-checkout.md) | Rental plan cart checkout |
-| [features/ask-rental-plan-optional-site-address.md](features/ask-rental-plan-optional-site-address.md) | Optional site address |
-| [Spec-site-address-postal-code-validation.md](Spec-site-address-postal-code-validation.md) | Postal code validation |
-| [features/postal-code-validation-execution-plan.md](features/postal-code-validation-execution-plan.md) | Postal code execution plan |
+| [features/Spec-rental-plan-cart-checkout.md](features/Spec-rental-plan-cart-checkout.md) | Rental plan cart checkout (API mode) |
+| [features/ask-rental-plan-optional-site-address.md](features/ask-rental-plan-optional-site-address.md) | Optional site address (ask; now implemented) |
+| [Spec-site-address-postal-code-validation.md](Spec-site-address-postal-code-validation.md) | Client-side postal derivation (historical; see execution plan) |
+| [features/postal-code-validation-execution-plan.md](features/postal-code-validation-execution-plan.md) | Postal code + optional-address frontend execution plan |
 | [features/spring contract/postal-code-validation.md](features/spring%20contract/postal-code-validation.md) | Spring postal-code contract |
 | [features/spring contract/rental-plan-site-address.md](features/spring%20contract/rental-plan-site-address.md) | Spring site-address contract |
 
@@ -38,13 +46,13 @@ Canonical GitHub repository: `Heavy-Rental/heavy-rental-react-web-portal`.
 
 | Spec | Role |
 | --- | --- |
-| [Spec-frontend-api-integration.md](Spec-frontend-api-integration.md) | Vite proxy / API mode |
-| [features/api-contract-for-frontend.md](features/api-contract-for-frontend.md) | Frontend API contract |
-| [Spec-rest-api-reference.md](Spec-rest-api-reference.md) | REST reference |
-| [Spec-frontend-authentication.md](Spec-frontend-authentication.md) | Auth session |
+| [Spec-frontend-api-integration.md](Spec-frontend-api-integration.md) | Vite proxy / API client (mock-oriented baseline) |
+| [features/api-contract-for-frontend.md](features/api-contract-for-frontend.md) | Rental-plan checkout API contract (as-built) |
+| [Spec-rest-api-reference.md](Spec-rest-api-reference.md) | Real-backend REST index from this portal's perspective |
+| [Spec-frontend-authentication.md](Spec-frontend-authentication.md) | Auth session (mock simulated + API-mode Spring login) |
 | [Spec-login-logout-manual-test-guide.md](Spec-login-logout-manual-test-guide.md) | Login/logout test guide |
 | [Spec-mock-api-server.md](Spec-mock-api-server.md) | Mock API (VS Code extension) |
-| [Spec-stripe-payment-checkout.md](Spec-stripe-payment-checkout.md) | Stripe deposit checkout |
+| [Spec-stripe-payment-checkout.md](Spec-stripe-payment-checkout.md) | Stripe deposit checkout (API mode) |
 | [Spec-dynamic-pricing-e2e.md](Spec-dynamic-pricing-e2e.md) | Dynamic pricing E2E |
 | [Spec-cart-hydration-and-duplicate-add-fixes.md](Spec-cart-hydration-and-duplicate-add-fixes.md) | Cart hydration |
 
@@ -52,10 +60,10 @@ Canonical GitHub repository: `Heavy-Rental/heavy-rental-react-web-portal`.
 
 | Spec | Role |
 | --- | --- |
-| [Spec-admin-asset-records.md](Spec-admin-asset-records.md) | Admin assets |
-| [Spec-admin-dashboard-api-mode-fixes.md](Spec-admin-dashboard-api-mode-fixes.md) | Admin API-mode fixes |
+| [Spec-admin-asset-records.md](Spec-admin-asset-records.md) | Admin assets (`/api/assets`) |
+| [Spec-admin-dashboard-api-mode-fixes.md](Spec-admin-dashboard-api-mode-fixes.md) | Admin API-mode fixes (includes Pricing-tab removal, API-mode logout) |
 | [Spec-admin-overview-real-data-wiring.md](Spec-admin-overview-real-data-wiring.md) | Admin overview wiring |
 | [Spec-asset-records-maintenance-status-fix.md](Spec-asset-records-maintenance-status-fix.md) | Maintenance status |
-| [Spec-customer-portal-bugfixes.md](Spec-customer-portal-bugfixes.md) | Customer portal bugfixes |
+| [Spec-customer-portal-bugfixes.md](Spec-customer-portal-bugfixes.md) | Customer portal bugfixes (My Bookings; browse-mode UI removed) |
 
 OpenSpec index: [`openspec/specs/product-features/spec.md`](../openspec/specs/product-features/spec.md).

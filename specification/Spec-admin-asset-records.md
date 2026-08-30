@@ -7,7 +7,7 @@
 | **Backend contract** | [`SPEC-equipment-browse-api.md`](./SPEC-equipment-browse-api.md) §7 (full request/response shapes, error codes) |
 | **Status** | Implemented in `heavy-rental-react-web-portal`. This document describes the current integration, not pending work — see the frontend repo's own history for how it got here. |
 
-This file lives in `heavy-rental-spring-rest-api` even though it describes frontend behavior, since the backend contract it documents originates here. Re-verify field names and endpoint shapes against the actual `heavy-rental-react-web-portal` working tree if this drifts — the two repos aren't versioned together.
+This file lives in **this** portal repository (`specification/Spec-admin-asset-records.md`) even though it describes a backend-originated contract. Linked `CHANGES-admin-asset-records.md` / `SPEC-admin-portal.md` / `SPEC-equipment-browse-api.md` are backend-repo documents and are **not** present in this tree — treat `assetApi` + `src/app/types.ts` `Asset` as the in-repo source of truth if those links 404.
 
 ---
 

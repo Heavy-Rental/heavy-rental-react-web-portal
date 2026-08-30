@@ -2,8 +2,8 @@
 
 **Feature Area**: heavy-rental-react-web-portal
 **Created**: 2026-08-08
-**Status**: Draft / Live Verification
-**Purpose**: Capture the changes made to the equipment catalog card (`EquipmentGrid.tsx`) and the equipment detail page (`App.tsx`) around uploaded-photo display, the "Ideal For" / "Features & Tags" sections, and the availability badge.
+**Status**: Implemented (display behavior still current; file paths updated 2026-08-30)
+**Purpose**: Capture the changes made to the equipment catalog card (`EquipmentGrid.tsx`) and the equipment detail page (`src/features/customer/EquipmentDetailPage.tsx`) around uploaded-photo display, the "Ideal For" / "Features & Tags" sections, and the availability badge.
 
 ## 1. Overview
 
@@ -14,13 +14,13 @@ This document records a set of related changes to how an equipment item's image,
 ### In scope
 
 - `src/features/browse/EquipmentGrid.tsx` — the equipment catalog card
-- `src/App.tsx` — the equipment detail page (hero image, thumbnail strip, "Ideal For", "Features & Tags", availability badge/spec row)
+- `src/features/customer/EquipmentDetailPage.tsx` — the equipment detail page (hero image, thumbnail strip, "Ideal For", "Features & Tags", availability badge/spec row). Photo URL helpers live in `src/features/browse/equipmentImageSrc.ts`.
 
 ### Out of scope
 
 - The mock/live API contract for `Equipment` (`Spec-mock-api-server.md`)
 - Date selection and checkout behavior (`Spec-browse-equipment-date-validation.md`)
-- REST API integration itself — `login()`, `equipmentApi.list()`'s date query params, mode-aware `handleLogin`, and other `src/app/api.ts`/backend-wiring changes are tracked in `Spec-frontend-api-integration.md`, not here. This doc only covers how the card/detail UI displays what it's given.
+- REST API integration itself — `login()`, `assetApi.list()`'s date query params, mode-aware `handleLogin`, and other `src/app/api.ts`/backend-wiring changes are tracked in `Spec-frontend-api-integration.md`, not here. This doc only covers how the card/detail UI displays what it's given.
 
 ## 3. Changes
 
@@ -29,8 +29,8 @@ This document records a set of related changes to how an equipment item's image,
 `item.img` / `detailItem.img` can now be either an Unsplash photo id (existing behavior — built into a `https://images.unsplash.com/...` URL) **or** a `data:` URI (an admin-uploaded photo). Every image render site now checks `img.startsWith("data:")` and, if true, uses it directly as the `src` instead of building an Unsplash URL:
 
 - `EquipmentGrid.tsx` — catalog card image
-- `App.tsx` — detail page hero image
-- `App.tsx` — detail page thumbnail strip (see 3.2)
+- `EquipmentDetailPage.tsx` — detail page hero image
+- `EquipmentDetailPage.tsx` — detail page thumbnail strip (see 3.2)
 
 ### 3.2 Thumbnail strip — simulated crops for uploaded photos
 
